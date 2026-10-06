@@ -98,8 +98,12 @@ async def sheets_check():
     client = SheetsClient(config)
     try:
         result = await client.check()
-        print(f"Đọc được đúng mẫu: {result['calendar_rows']} dòng lịch, {result['issue_rows']} dòng issue.")
-        print("Chỉ kiểm tra quyền đọc và tiêu đề tab; chưa kiểm tra quyền ghi, chưa tạo issue.")
+        if config.calendar_format == "lab":
+            print(f"Đọc được {len(config.calendar_tabs)} tab Lịch lab: {result['calendar_rows']} mục lịch.")
+        else:
+            print(f"Đọc được đúng mẫu: {result['calendar_rows']} dòng lịch.")
+        print("Issue đang tắt." if result['issue_rows'] is None else f"Đọc được {result['issue_rows']} dòng issue.")
+        print("Chỉ kiểm tra quyền đọc và cấu trúc; chưa kiểm tra quyền ghi, chưa tạo issue.")
     finally:
         await client.close()
 

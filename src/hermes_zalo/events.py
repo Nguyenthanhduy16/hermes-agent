@@ -51,7 +51,9 @@ def parse_update(update: dict) -> IncomingMessage | None:
     return IncomingMessage(chat_id, user_id, message_id, chat_type, text)
 
 
-def is_allowed(message: IncomingMessage, users: frozenset[str], groups: frozenset[str]) -> bool:
+def is_allowed(message: IncomingMessage, users: frozenset[str], groups: frozenset[str], *, group_members=False) -> bool:
+    if message.chat_type == "GROUP" and group_members and message.chat_id in groups:
+        return True
     return message.user_id in users and (
         message.chat_type == "PRIVATE" or message.chat_id in groups
     )

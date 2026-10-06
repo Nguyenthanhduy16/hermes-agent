@@ -1,6 +1,8 @@
 # Tài liệu, nhắc việc, Google Sheets và dùng thử
 
-Luồng nhắn riêng và nhớ tên trong cùng hội thoại đã được người dùng xác nhận. Các tính năng bên dưới có kiểm thử tự động, **chưa được xác nhận trên Zalo/Google Sheets thật**. Thử lần lượt, nhắn riêng trước rồi mới thử nhóm.
+Luồng nhắn riêng và nhớ tên trong cùng hội thoại đã được người dùng xác nhận. Các tính năng bên dưới có kiểm thử tự động. Tích hợp đọc lịch Lab được kiểm tra riêng với Google Sheets; luồng lịch qua Zalo, gửi nhắc và ghi issue vẫn cần thử thực tế. Thử lần lượt, nhắn riêng trước rồi mới thử nhóm.
+
+Người dùng đã phản hồi “oki rồi” sau bài thử lịch trên Zalo. Bản nâng cấp menu/ngày/bộ lọc mới cần thử lại sau khi khởi động bot. Xem [bảng lệnh dễ dùng](lenh-zalo.md), hoặc gửi `/menu`, `/help lich`, `/help nhac` trực tiếp cho bot.
 
 ## 1. Cập nhật và thử ngay
 
@@ -66,7 +68,8 @@ Bộ [10 câu hỏi mẫu và 3 câu không có thông tin](../examples/knowledg
 | `/nhac sau 1 phut \| Kiểm tra bot` | Nhắc sau một phút |
 | `/nhac sau 2 gio \| Gửi báo cáo` | Nhắc sau hai giờ |
 | `/nhac YYYY-MM-DD HH:MM \| Nội dung` | Nhắc vào ngày giờ cụ thể, thay phần ngày/giờ bằng số thật |
-| `/nhac xem` | Nhắc việc của chính bạn tại cuộc trò chuyện này, kèm trạng thái |
+| `/nhac xem` | Nhắc đang chờ/đang gửi của chính bạn tại cuộc trò chuyện này |
+| `/nhac lichsu` | Nhắc gần đây, gồm đã gửi, hủy hoặc lỗi |
 | `/nhac huy MA` | Hủy nhắc đang chờ, dùng mã bot đã trả |
 
 Múi giờ cố định: **giờ Việt Nam, UTC+7**. Trong nhóm, nhắc được gửi vào nhóm; nhắn riêng thì gửi vào cuộc trò chuyện riêng đó. Muốn nhắc riêng hãy tạo ở chat riêng. Không có lệnh gửi tới người/nhóm tùy ý. Trong nhóm nên **trả lời một tin của bot** rồi nhập lệnh để bot nhận được nguyên cú pháp.
@@ -79,7 +82,7 @@ Múi giờ cố định: **giờ Việt Nam, UTC+7**. Trong nhóm, nhắc đư�
 
 ## 4. Chuẩn bị Google Sheets cho lịch và issue
 
-Chưa có đường dẫn bảng và khóa thử nghiệm, vì vậy tích hợp mặc định tắt. Bạn không cần cấu hình Sheets để thử tài liệu hoặc nhắc việc.
+Tích hợp mặc định tắt khi chưa có ID bảng. Bạn không cần cấu hình Sheets để thử tài liệu hoặc nhắc việc. Chọn bảng mẫu hoặc cấu trúc Lịch lab hiện có theo hướng dẫn bên dưới.
 
 ### Tạo bảng thử nghiệm
 
@@ -141,6 +144,47 @@ ZALO_SHEETS_GROUPS=
 Tích hợp dùng [xác thực service account chính thức](https://developers.google.com/identity/protocols/oauth2/service-account), [Sheets values.get](https://developers.google.com/workspace/sheets/api/reference/rest/v4/spreadsheets.values/get) và [values.append](https://developers.google.com/workspace/sheets/api/reference/rest/v4/spreadsheets.values/append). Quyền OAuth áp dụng cấp bảng tính, không phải từng tab; adapter giới hạn thao tác trong hai tab đã cấu hình. Chỉ mẫu test trên máy được tạo tự động; chưa có thao tác nào tạo tài khoản hoặc ghi Google Sheets thật.
 
 ## 5. Thử lịch và issue
+
+### Đọc bảng Lịch lab hiện có
+
+Chế độ `lab` đọc bảng phân công hiện có mà không sửa Google Sheets. Cấu hình trong `.env`:
+
+```dotenv
+ZALO_CALENDAR_FORMAT=lab
+ZALO_CALENDAR_TABS_JSON=["Lịch lab 1009-2009","Lịch lab 2409-0210","Lịch lab 0210-1610"]
+ZALO_ISSUES_ENABLED=false
+```
+
+Giữ các biến ID bảng, đường dẫn khóa và danh sách quyền đã cấu hình. Danh sách JSON là tên tab chính xác, tối đa 4 tab; tab mới phải được thêm vào danh sách trên máy rồi khởi động lại bot. `ZALO_CALENDAR_TAB` chỉ dùng cho chế độ `standard`.
+
+Định dạng hỗ trợ: dòng ngày `Thứ 3 - 06/10/2026` hoặc `Chủ nhật - 04/10/2026`, sau đó là tiêu đề A:J `STT, Khóa, Session, Lab Coach, Key Coach, Phòng, Buổi, Sức chứa phòng, [ghi chú], Trạng thái`. Bot đọc tối đa 1.000 dòng mỗi tab. Thông tin khóa/session/phòng/buổi chỉ được dùng chung khi Google xác nhận là ô gộp; ô trống thông thường được ghi “Chưa ghi”. Dòng bổ sung không có STT chỉ được nhận khi nằm trong ô gộp Session thật.
+
+Bot trả khóa, session, buổi, phòng, Key Coach, Lab Coach và trạng thái nguyên văn, kèm tab, dòng và link nguồn. Không suy ra giờ cụ thể từ “Sáng/Chiều/Tối”, không tự hiểu trạng thái “Rảnh” là đã xác nhận tham gia. Ngày có ở nhiều tab được hiển thị riêng theo nguồn, không tự quyết định tab nào thay thế tab nào. Lệnh `/lich` mới hiển thị tối đa 5 mục mỗi trang và có lệnh xem tiếp giữ ngày/bộ lọc. Có thể tra tuần và lọc Coach/khóa/phòng/buổi theo [bảng lệnh](lenh-zalo.md).
+
+**Quyền chế độ lab áp dụng cho toàn bộ các tab đã chọn**, vì bảng hiện tại không có ID Zalo trên từng dòng. Người trong `ZALO_SHEETS_USERS` (và danh sách quyền bot) có thể tra lịch nhóm, không phải chỉ lịch cá nhân. Để `ZALO_SHEETS_GROUPS=` trống khi thử nhắn riêng; chỉ cấp quyền nhóm khi dữ liệu được phép hiển thị cho toàn bộ nhóm. Bot không tự ánh xạ tên Coach sang tài khoản Zalo.
+
+Khi `ZALO_ISSUES_ENABLED=false`, bot dùng quyền OAuth chỉ đọc, `SheetsCheck` không đòi tab `Issues`, lệnh `/issue` không tạo bản nháp hay ghi bảng. Để thử issue sau này cần chuẩn bị tab mẫu riêng và chủ động bật tính năng.
+
+```powershell
+.\scripts\run.ps1 Update
+.\scripts\run.ps1 SheetsCheck
+.\scripts\run.ps1 Start
+```
+
+Dừng cửa sổ bot cũ bằng `Ctrl+C` trước khi bật lại. Sau đó nhắn riêng cho bot:
+
+```text
+/lich 2026-10-06
+/lich 2026-09-24
+/lich 2026-09-10
+/lich homnay
+```
+
+Ngày chưa có trong bảng phải báo chưa có dữ liệu; ngày có tiêu đề nhưng không có dòng phân công phải báo không có dòng phân công. Mỗi lần tra đọc lại các tab được cấu hình; nếu một tab bị đổi tên, sai cấu trúc hoặc lỗi mạng, bot báo lỗi thay vì trả kết quả thiếu mà không thông báo.
+
+Phần đọc dùng [spreadsheets.get với ranges và fields](https://developers.google.com/workspace/sheets/api/reference/rest/v4/spreadsheets/get) và [thông tin merges của Sheet](https://developers.google.com/workspace/sheets/api/reference/rest/v4/spreadsheets/sheets). Nội dung bảng được xử lý trực tiếp, không đưa vào model AI. Chế độ này là tra lịch qua `/lich`, chưa phải hỏi đáp tài liệu Sheets bằng `/hoi`.
+
+### Bảng mẫu và tạo issue
 
 Lịch:
 

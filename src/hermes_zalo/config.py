@@ -44,6 +44,7 @@ class Settings:
     max_inbound_chars: int = 8000
     max_reply_chars: int = 12000
     knowledge_dir: Path = field(default_factory=lambda: Path("data/knowledge").resolve())
+    group_access: str = "allowlist"
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -59,10 +60,14 @@ class Settings:
         users = id_set(values.get("ZALO_ALLOWED_USERS", ""))
         if not users:
             raise ConfigError("Can it nhat mot ID trong ZALO_ALLOWED_USERS.")
+        group_access = values.get("ZALO_GROUP_ACCESS") or "allowlist"
+        if group_access not in ("allowlist", "members"):
+            raise ConfigError("ZALO_GROUP_ACCESS can la allowlist hoac members.")
         return cls(
             token=token,
             allowed_users=users,
             allowed_groups=id_set(values.get("ZALO_ALLOWED_GROUPS", "")),
             state_dir=Path(values.get("ZALO_STATE_DIR") or "data").resolve(),
             knowledge_dir=Path(values.get("ZALO_KNOWLEDGE_DIR") or "data/knowledge").resolve(),
+            group_access=group_access,
         )

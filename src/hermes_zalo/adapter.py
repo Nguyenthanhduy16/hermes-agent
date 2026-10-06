@@ -12,6 +12,7 @@ import logging
 from pathlib import Path
 from datetime import datetime
 import time
+from dataclasses import replace
 
 from gateway.config import Platform, PlatformConfig
 from gateway.platforms._shared import get_scoped_secret
@@ -22,6 +23,7 @@ from hermes_constants import get_hermes_home
 from .api import AuthenticationError, DeliveryUncertain, WebhookInspectionUnavailable, ZaloAPIError, ZaloClient
 from .config import ConfigError, Settings
 from .events import is_allowed, parse_update, split_text
+from .mentions import strip_bot_mention
 from .logging_utils import protect_logs
 from .state import StateStore
 from .work import WorkService
@@ -36,7 +38,7 @@ TURN_TIMEOUT_SECONDS = 300
 def scoped_settings() -> Settings:
     values = {
         name: get_scoped_secret(name, "") or ""
-        for name in ("ZALO_BOT_TOKEN", "ZALO_ALLOWED_USERS", "ZALO_ALLOWED_GROUPS", "ZALO_STATE_DIR", "ZALO_KNOWLEDGE_DIR")
+        for name in ("ZALO_BOT_TOKEN", "ZALO_ALLOWED_USERS", "ZALO_ALLOWED_GROUPS", "ZALO_STATE_DIR", "ZALO_KNOWLEDGE_DIR", "ZALO_GROUP_ACCESS")
     }
     if not values["ZALO_STATE_DIR"]:
         values["ZALO_STATE_DIR"] = str(Path(get_hermes_home()) / "zalo-state")
@@ -86,6 +88,7 @@ class ZaloAdapter(BasePlatformAdapter):
         self._reminder_task: asyncio.Task | None = None
         self.work: WorkService | None = None
         self._groups_supported = False
+        self._bot_names: tuple[str, ...] = ()
         self._current_event: MessageEvent | None = None
         self._current_outcome: str | None = None
         self._reply_chat: str | None = None
@@ -104,6 +107,12 @@ class ZaloAdapter(BasePlatformAdapter):
                 return False
             self.client = ZaloClient(self.settings.token)
             me = await self.client.get_me()
+            # account_name may be an internal bot.* handle. Group mentions use
+            # display_name, which is present in the live getMe response.
+            self._bot_names = tuple(dict.fromkeys(
+                value.strip() for key in ("display_name", "account_name")
+                if isinstance(value := me.get(key), str) and value.strip()
+            ))
             try:
                 webhook = await self.client.get_webhook_info()
             except WebhookInspectionUnavailable:
@@ -266,7 +275,8 @@ class ZaloAdapter(BasePlatformAdapter):
         message = parse_update(update)
         if message is None:
             return
-        if not is_allowed(message, self.settings.allowed_users, self.settings.allowed_groups):
+        if not is_allowed(message, self.settings.allowed_users, self.settings.allowed_groups,
+                          group_members=self.settings.group_access == "members"):
             logger.info("Zalo message ignored: sender/chat not authorized")
             if self.work:
                 self.work.pilot.record("access", "denied")
@@ -276,6 +286,10 @@ class ZaloAdapter(BasePlatformAdapter):
         if len(message.text) > self.settings.max_inbound_chars:
             logger.info("Zalo message ignored: input exceeds configured limit")
             return
+        # Official events do not document Telegram-style mention offsets.
+        # Accept the bot's display name or account handle only at the start.
+        if message.chat_type == "GROUP" and self._bot_names:
+            message = replace(message, text=strip_bot_mention(message.text, self._bot_names))
         assert_chat_only()
         if not self.store.reserve(message.key):
             logger.info("Zalo duplicate update ignored")
@@ -314,6 +328,10 @@ class ZaloAdapter(BasePlatformAdapter):
                     self.work.pilot.record("command", "ok" if delivered.success else "uncertain",
                                            (time.monotonic() - started) * 1000)
                     return
+            if message.chat_type == "GROUP" and message.user_id not in self.settings.allowed_users:
+                # Read-only group admission must never fall through to Hermes.
+                self.store.finish(message.key, "not_admitted")
+                return
             await self.handle_message(event)
             # handle_message returns before generation. Await the task owned by
             # the base adapter, including its guard cleanup, so a rapid follow-up
@@ -451,6 +469,6 @@ def register(ctx) -> None:
         trusted_inbound=False,
         display_tier="minimal",
         max_message_length=2000,
-        platform_hint="Reply in Vietnamese unless asked otherwise. Plain text only. You have no tools. Never claim to schedule reminders, read internal documents/calendar, or create issues yourself. The application handles explicit commands: /trogiup, /hoi QUESTION, /tailieu, /nhac sau 1 phut | TEXT, /nhac xem, /nhac huy ID, /lich homnay, /issue tao TITLE | BODY, /issue xacnhan ID, /phanhoi TEXT. Guide users to these commands for work tasks. Do not invent internal document contents. Issue creation always needs the application's draft confirmation.",
+        platform_hint="Reply in Vietnamese unless asked otherwise. Plain text only. You have no tools. Never claim to schedule reminders, read internal documents/calendar, or create issues yourself. The application handles commands: /menu, /help lich, /help nhac, /help tailieu, /hoi QUESTION, /tailieu, /nhac sau 1 phut | TEXT, /nhac mai 09:00 | TEXT, /nhac xem, /nhac lichsu, /nhac huy ID, /lich homnay, /lich mai, /lich tuan nay, /lich homnay | coach=NAME, /issue tao TITLE | BODY, /issue xacnhan ID, /phanhoi TEXT. A few explicit Vietnamese phrases such as 'lich hom nay' are handled by the application. Guide users to /menu or the relevant /help command for capabilities and current availability. Never assume issue creation is enabled, infer a user's roster name, or invent internal document contents. Issue creation always needs the application's draft confirmation.",
         emoji="💬",
     )

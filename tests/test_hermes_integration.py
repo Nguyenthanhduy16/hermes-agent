@@ -162,6 +162,22 @@ class RealHermesTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual("g1", self.adapter.client.send_text_chunk.await_args.args[0])
         self.assertIn("Nhắc thử", self.adapter.client.send_text_chunk.await_args.args[1])
 
+    async def test_native_group_member_work_read_never_falls_through_to_model(self):
+        import importlib
+        from dataclasses import replace
+        work_module = importlib.import_module(self.adapter.__class__.__module__.rsplit(".", 1)[0] + ".work")
+        self.adapter.settings = replace(self.adapter.settings, group_access="members")
+        self.adapter.work = work_module.WorkService(self.adapter.settings, environ={})
+        self.adapter._bot_names = ("Bot LabCoach", "bot.synthetic-handle")
+        await self.adapter._dispatch(self.update("group-1", user="new-member", text="@Bot LabCoach /menu"))
+        self.assertIn("MENU BOT", self.adapter.client.send_text_chunk.await_args.args[1])
+        await self.adapter._dispatch(self.update("group-2", user="new-member", text="Ngày mai mình có lịch gì?"))
+        self.assertEqual(2, self.adapter.client.send_text_chunk.await_count)
+        self.assertTrue(all(c.args[0] == "g1" for c in self.adapter.client.send_text_chunk.await_args_list))
+        self.handler.assert_not_awaited()
+        await self.adapter._dispatch(self.update("group-3", user="new-member", chat="not-approved", text="/menu"))
+        self.assertEqual(2, self.adapter.client.send_text_chunk.await_count)
+
 
 if __name__ == "__main__":
     unittest.main()

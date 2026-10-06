@@ -30,6 +30,10 @@ class SheetsSettings:
     issues_tab: str = "Issues"
     users: frozenset[str] = frozenset()
     groups: frozenset[str] = frozenset()
+    calendar_format: str = "standard"
+    calendar_tabs: tuple[str, ...] = ()
+    issues_enabled: bool = True
+    group_members: bool = False
 
     @classmethod
     def from_mapping(cls, values):
@@ -50,11 +54,32 @@ class SheetsSettings:
             if "*" in ids:
                 raise SheetsError("Quyền Sheets không chấp nhận dấu *.")
             acl.append(ids)
-        return cls(sid, Path(key).resolve(), *tabs, *acl)
+        layout = values.get("ZALO_CALENDAR_FORMAT") or "standard"
+        if layout not in ("standard", "lab"):
+            raise SheetsError("ZALO_CALENDAR_FORMAT cần là standard hoặc lab.")
+        try:
+            lab_tabs = json.loads(values.get("ZALO_CALENDAR_TABS_JSON") or "[]")
+        except (ValueError, TypeError):
+            raise SheetsError("ZALO_CALENDAR_TABS_JSON cần là danh sách JSON tên tab.") from None
+        if (not isinstance(lab_tabs, list) or len(lab_tabs) > 4 or
+                any(not isinstance(tab, str) or not re.fullmatch(r"[\w -]{1,80}", tab) for tab in lab_tabs) or
+                len(set(lab_tabs)) != len(lab_tabs) or (layout == "lab" and not lab_tabs)):
+            raise SheetsError("Chế độ lab cần 1–4 tên tab khác nhau trong ZALO_CALENDAR_TABS_JSON.")
+        enabled = values.get("ZALO_ISSUES_ENABLED") or ("false" if layout == "lab" else "true")
+        if enabled.lower() not in ("true", "false"):
+            raise SheetsError("ZALO_ISSUES_ENABLED cần là true hoặc false.")
+        if enabled.lower() == "true" and tabs[1] in lab_tabs:
+            raise SheetsError("Tab issue phải khác các tab lịch.")
+        return cls(sid, Path(key).resolve(), *tabs, *acl, layout, tuple(lab_tabs), enabled.lower() == "true",
+                   values.get("ZALO_GROUP_ACCESS") == "members")
 
     def allows(self, user_id, chat_id, chat_type):
         return user_id in self.users and (chat_type == "PRIVATE" or
                (chat_type == "GROUP" and chat_id in self.groups))
+
+    def allows_calendar(self, user_id, chat_id, chat_type):
+        return self.allows(user_id, chat_id, chat_type) or (
+            self.group_members and chat_type == "GROUP" and chat_id in self.groups)
 
 
 class GoogleTokenProvider:
@@ -74,8 +99,10 @@ class GoogleTokenProvider:
                 info = json.loads(path.read_text(encoding="utf-8-sig"))
                 if info.get("type") != "service_account" or info.get("token_uri") != "https://oauth2.googleapis.com/token":
                     raise ValueError()
-                self.credentials = service_account.Credentials.from_service_account_info(
-                    info, scopes=["https://www.googleapis.com/auth/spreadsheets"])
+                scope = "https://www.googleapis.com/auth/spreadsheets"
+                if not self.settings.issues_enabled:
+                    scope += ".readonly"
+                self.credentials = service_account.Credentials.from_service_account_info(info, scopes=[scope])
             if not self.credentials.valid:
                 request = Request()
                 def bounded_request(url, method="GET", body=None, headers=None, **kwargs):
@@ -137,8 +164,12 @@ class SheetsClient:
         return [row + [""] * (len(header) - len(row)) for row in rows[1:] if any(row)]
 
     async def calendar(self, day, user_id, chat_id, chat_type):
-        if not self.settings.allows(user_id, chat_id, chat_type):
+        if not self.settings.allows_calendar(user_id, chat_id, chat_type):
             return "Bạn hoặc cuộc trò chuyện này chưa được cấp quyền tra lịch Sheets."
+        if self.settings.calendar_format == "lab":
+            from .lab_calendar import format_calendar
+            schedules = await self._lab_schedules()
+            return format_calendar(schedules, day, self.settings.spreadsheet_id)
         rows = await self._rows(self.settings.calendar_tab, CALENDAR_HEADER)
         start = datetime.combine(day, daytime.min, VIETNAM_TZ)
         end = start + timedelta(days=1)
@@ -169,12 +200,56 @@ class SheetsClient:
         suffix = "\nChỉ hiển thị 20 lịch đầu." if len(found) > 20 else ""
         return f"Lịch {day:%d/%m/%Y} (giờ Việt Nam):\n" + "\n".join(lines) + suffix + f"\nNguồn: Google Sheets, tab {self.settings.calendar_tab}."
 
+    async def _lab_schedules(self):
+        from .lab_calendar import parse_sheet
+        # Explicit allowlist; no discovery or access to unrelated workbook tabs.
+        params = [("ranges", f"'{tab}'!A1:J1001") for tab in self.settings.calendar_tabs]
+        params.append(("fields", "sheets(properties(sheetId,title,gridProperties(rowCount)),merges,"
+                       "data(startRow,startColumn,rowData(values(formattedValue))))"))
+        url = f"https://sheets.googleapis.com/v4/spreadsheets/{self.settings.spreadsheet_id}"
+        data = await self._request("GET", url, params=params)
+        try:
+            sheets = data["sheets"]
+            by_title = {sheet["properties"]["title"]: sheet for sheet in sheets}
+            if len(by_title) != len(sheets) or set(by_title) != set(self.settings.calendar_tabs):
+                raise ValueError()
+            return [parse_sheet(by_title[tab]) for tab in self.settings.calendar_tabs]
+        except (KeyError, TypeError, ValueError, IndexError):
+            raise SheetsError("Tab Lịch lab sai cấu trúc hoặc vượt 1.000 dòng; kiểm tra tiêu đề, ngày và ô gộp.") from None
+
+    async def lab_calendar(self, query, user_id, chat_id, chat_type):
+        if not self.settings.allows_calendar(user_id, chat_id, chat_type):
+            return "Bạn hoặc cuộc trò chuyện này chưa được cấp quyền tra lịch Sheets."
+        from .lab_calendar import format_query
+        return format_query(await self._lab_schedules(), query, self.settings.spreadsheet_id)
+
+    async def coach_name(self, name, user_id, chat_id, chat_type):
+        if not self.settings.allows_calendar(user_id, chat_id, chat_type):
+            raise SheetsError("Bạn/cuộc trò chuyện này chưa được cấp quyền tra lịch.")
+        if self.settings.calendar_format != "lab":
+            raise SheetsError("Đăng ký tên Coach hiện dành cho bảng Lịch lab.")
+        from .commands import normalized
+        names = set()
+        for schedule in await self._lab_schedules():
+            for event in schedule.events:
+                names.update([event.key_coach] + [person.split(" [", 1)[0] for person in event.coaches])
+        matches = {item.casefold(): item for item in sorted(names) if normalized(item) == normalized(name)}
+        if len(matches) != 1:
+            raise SheetsError("Chưa tìm thấy một tên Coach duy nhất khớp tên bạn nhập. Hãy dùng đầy đủ họ tên đúng trong bảng.")
+        return next(iter(matches.values()))
+
     async def check(self):
-        calendar = await self._rows(self.settings.calendar_tab, CALENDAR_HEADER)
-        issues = await self._rows(self.settings.issues_tab, ISSUE_HEADER)
-        return {"calendar_rows": len(calendar), "issue_rows": len(issues)}
+        if self.settings.calendar_format == "lab":
+            schedules = await self._lab_schedules()
+            count = sum(len(schedule.events) for schedule in schedules)
+        else:
+            count = len(await self._rows(self.settings.calendar_tab, CALENDAR_HEADER))
+        issues = await self._rows(self.settings.issues_tab, ISSUE_HEADER) if self.settings.issues_enabled else None
+        return {"calendar_rows": count, "issue_rows": len(issues) if issues is not None else None}
 
     async def append_issue(self, row):
+        if not self.settings.issues_enabled:
+            raise SheetsError("Tạo issue đang tắt; bảng này hiện chỉ dùng để đọc lịch.")
         existing = await self._rows(self.settings.issues_tab, ISSUE_HEADER)
         for item in existing:
             if str(item[0]) == row[0]:

@@ -34,6 +34,14 @@ class FeatureAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("handbook.md", args[1])
         self.assertFalse(self.adapter._session_tasks)
 
+    async def test_menu_typos_and_natural_calendar_are_app_commands_not_model_prompts(self):
+        for index, text in enumerate(("/menu", "/help nhac", "/lichh", "lịch hôm nay")):
+            await self.adapter._dispatch(contract.update(str(index), text=text))
+        self.handler.assert_not_awaited()
+        self.assertEqual(4, self.adapter.client.send_text_chunk.await_count)
+        await self.adapter._dispatch(contract.update("denied", user="stranger", text="/menu"))
+        self.assertEqual(4, self.adapter.client.send_text_chunk.await_count)
+
     async def test_group_cannot_retrieve_private_document(self):
         await self.adapter._dispatch(contract.update(chat="g1", kind="GROUP", text="/hoi Giờ làm việc là khi nào?"))
         output = self.adapter.client.send_text_chunk.await_args.args[1]

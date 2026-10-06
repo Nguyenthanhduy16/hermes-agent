@@ -1,10 +1,10 @@
 # Checklist dùng thử cho 2–3 người
 
-Trạng thái hiện tại: **người dùng đã xác nhận** bot trả lời tin nhắn riêng và nhớ tên trong cùng cuộc trò chuyện. Chưa xác nhận chạy thật trong nhóm hoặc nhớ tên sau khi khởi động lại. Các tính năng mới bên dưới mới qua kiểm thử mô phỏng; chưa có kết quả Zalo/Google Sheets thật. Xem [hướng dẫn chạy](../README.md) và [ghi nhận kiểm thử](validation.md).
+Trạng thái hiện tại: **người dùng đã xác nhận** bot trả lời tin nhắn riêng và nhớ tên trong cùng cuộc trò chuyện, đã phản hồi “oki rồi” sau bài thử lịch. Đọc lịch Google Sheets thật đã được kiểm tra; chưa xác nhận chạy thật trong nhóm hoặc nhớ tên sau khi khởi động lại. Bản nâng cấp menu/bộ lọc cần thử lại trên Zalo. Xem [bảng lệnh](lenh-zalo.md), [hướng dẫn chạy](../README.md) và [ghi nhận kiểm thử](validation.md).
 
 Chọn người A làm quản trị, người B được cấp quyền thử và tùy chọn người C chưa được cấp quyền. Dùng tài liệu, lịch và issue giả. Kiểm tra lại danh sách người/nhóm trước khi bắt đầu; tài liệu trả trong nhóm phải được phép chia sẻ cho mọi thành viên nhóm. Khi thử nhóm, trả lời một tin của bot rồi gõ lệnh. Đánh dấu từng dòng sau khi quan sát kết quả thật; ghi giờ, người thử và lỗi nếu có.
 
-Máy chạy bot phải bật, có mạng và chỉ chạy một phiên bot. Tất cả giờ hẹn dùng **giờ Việt Nam, UTC+7**. Khi máy tắt hoặc mất mạng, bot không bảo đảm gửi đúng giờ; nhắc quá hạn hoặc kết quả gửi chưa rõ cần kiểm tra bằng `/nhac xem`, không mặc định đã gửi thành công.
+Máy chạy bot phải bật, có mạng và chỉ chạy một phiên bot. Tất cả giờ hẹn dùng **giờ Việt Nam, UTC+7**. Khi máy tắt hoặc mất mạng, bot không bảo đảm gửi đúng giờ; nhắc quá hạn hoặc kết quả gửi chưa rõ cần kiểm tra bằng `/nhac lichsu`, không mặc định đã gửi thành công.
 
 Các tính năng công việc dùng lệnh ứng dụng rõ ràng; model trò chuyện không được tự gọi công cụ để đọc lịch, đặt nhắc hoặc tạo issue. Tra tài liệu hiện trả trích đoạn theo từ khóa, không tự suy diễn câu trả lời bằng AI.
 

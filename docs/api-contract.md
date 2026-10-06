@@ -19,6 +19,8 @@ Client dùng POST JSON UTF-8, không theo redirect. Token nằm trong URL nên l
 | `getUpdates` | `{"timeout":30}` | Một event trong `result` | [getUpdates](https://docs.zaloplatforms.com/docs/BOT/apis/getUpdates) |
 | `sendMessage` | `{"chat_id":"...","text":"..."}` | `message_id`, `date` | [sendMessage](https://docs.zaloplatforms.com/docs/BOT/apis/sendMessage) |
 
+Kiểm tra `getMe` thật ngày 06/10/2026 thấy thêm `display_name`, khác với `account_name` dạng handle nội bộ. Trường này chưa xuất hiện trong response mẫu trên tài liệu tại thời điểm đối chiếu. Adapter nhận cả hai tên để tách mention ở đầu tin nhóm; nếu thiếu `display_name` vẫn dùng được `account_name` hoặc lệnh gửi bằng Trả lời tin bot. Không suy đoán tên từ người gửi hoặc bỏ một mention bất kỳ.
+
 `getUpdates` chỉ tài liệu hóa tham số `timeout`; không có `offset`, `update_id`, danh sách batch hay cursor xác nhận theo kiểu Telegram. Bảng tham số ghi String nhưng code mẫu truyền số `30`; adapter theo code mẫu. HTTP read timeout đặt dài hơn thời gian polling.
 
 Polling và webhook loại trừ nhau. Startup đọc `getWebhookInfo`, dừng nếu có webhook. Dự án không tự gỡ webhook. Zalo khuyến nghị polling cho phát triển và webhook cho vận hành thường xuyên. [Nguồn: getUpdates](https://docs.zaloplatforms.com/docs/BOT/apis/getUpdates)

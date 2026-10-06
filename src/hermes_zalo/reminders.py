@@ -23,8 +23,9 @@ MAX_ACTIVE = 30
 MAX_HORIZON = 90 * 86400
 MAX_LATENESS = 86400
 REMINDER_HELP = (
-    "Dùng /nhac YYYY-MM-DD HH:MM | nội dung (giờ Việt Nam), "
-    "/nhac sau 10 phut | nội dung, /nhac xem hoặc /nhac huy ID."
+    "Chưa hiểu thời gian hoặc nội dung nhắc. Ví dụ:\n"
+    "/nhac sau 10 phut | Gửi báo cáo\n/nhac mai 09:00 | Họp nhóm\n"
+    "Nhớ dấu | giữa thời gian và nội dung. Xem chi tiết: /help nhac"
 )
 
 
@@ -103,9 +104,13 @@ def parse_reminder_command(text: str, now: float | None = None) -> ReminderComma
     normalized_body = _fold(body)
     if normalized_body == "xem":
         return ReminderCommand("list")
+    if normalized_body in ("lichsu", "lich su"):
+        return ReminderCommand("history")
     match = re.fullmatch(r"huy\s+([a-z0-9]{1,64})", normalized_body)
     if match:
         return ReminderCommand("cancel", reminder_id=match.group(1).upper())
+    if normalized_body == "huy" or normalized_body.startswith("huy "):
+        raise ValueError("Cần mã nhắc để hủy. Gửi /nhac xem, rồi sao chép mã vào /nhac huy MÃ_NHẮC.")
 
     schedule, separator, content = body.partition("|")
     if not separator and not folded.startswith("/"):
@@ -120,10 +125,21 @@ def parse_reminder_command(text: str, now: float | None = None) -> ReminderComma
         units = {"phut": 60, "gio": 3600, "ngay": 86400}
         due_at = now + amount * units[relative.group(2)]
     else:
-        if not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}\s+[0-9]{2}:[0-9]{2}", schedule):
+        match = re.fullmatch(r"(.+?)\s+([0-9]{2}:[0-9]{2})", schedule)
+        if not match:
             raise ValueError(REMINDER_HELP)
         try:
-            due_at = datetime.strptime(schedule, "%Y-%m-%d %H:%M").replace(tzinfo=VIETNAM_TZ).timestamp()
+            day_part, clock = match.groups()
+            local_now = datetime.fromtimestamp(now, VIETNAM_TZ)
+            if day_part in ("mai", "ngay mai", "homnay", "hom nay"):
+                day = local_now.date() + timedelta(days=1 if day_part in ("mai", "ngay mai") else 0)
+            elif re.fullmatch(r"\d{2}/\d{2}/\d{4}", day_part):
+                day = datetime.strptime(day_part, "%d/%m/%Y").date()
+            elif re.fullmatch(r"\d{4}-\d{2}-\d{2}", day_part):
+                day = datetime.strptime(day_part, "%Y-%m-%d").date()
+            else:
+                raise ValueError()
+            due_at = datetime.combine(day, datetime.strptime(clock, "%H:%M").time(), VIETNAM_TZ).timestamp()
         except (ValueError, OverflowError, OSError) as exc:
             raise ValueError("Ngày hoặc giờ không hợp lệ. " + REMINDER_HELP) from exc
     return ReminderCommand("create", _validate_due(due_at, now), content)

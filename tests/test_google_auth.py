@@ -1,5 +1,6 @@
 """Google authentication boundaries without real keys or network access."""
 import json
+from dataclasses import replace
 from pathlib import Path
 import tempfile
 from types import SimpleNamespace
@@ -52,6 +53,13 @@ class GoogleAuthTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(SheetsError) as caught:
                 await GoogleTokenProvider(self.settings)()
         self.assertNotIn("PRIVATE-KEY", str(caught.exception))
+
+    async def test_disabled_issues_use_readonly_oauth_scope(self):
+        self.path.write_text(json.dumps({"type": "service_account", "token_uri": "https://oauth2.googleapis.com/token"}), encoding="utf-8")
+        credentials = SimpleNamespace(valid=True, token="fake-local-token")
+        with patch("google.oauth2.service_account.Credentials.from_service_account_info", return_value=credentials) as create:
+            await GoogleTokenProvider(replace(self.settings, issues_enabled=False))()
+        self.assertEqual(["https://www.googleapis.com/auth/spreadsheets.readonly"], create.call_args.kwargs["scopes"])
 
 
 if __name__ == "__main__":

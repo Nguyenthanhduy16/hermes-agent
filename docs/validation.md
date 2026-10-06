@@ -61,3 +61,39 @@ Giờ lỗi 404 riêng của phương thức này được phân loại là **kh
 - Còn cần người dùng: tài liệu thật, bảng Sheets thử nghiệm và khóa service account lưu trên máy; chạy [checklist thử thật](pilot-checklist.md). Không xem kết quả mô phỏng là tính năng đã chạy thành công ngoài thực tế.
 
 ---
+# Kiểm tra bổ sung: đọc lịch Lab có ô gộp — 06/10/2026
+
+- Người dùng chọn đọc cả ba tab Lịch lab hiện có. Đã cấu hình danh sách tab rõ ràng trên máy; issue tắt, OAuth chỉ đọc, quyền nhóm Sheets vẫn trống.
+- `SheetsCheck` với Google thật: thành công, 3 tab / 324 mục lịch tại thời điểm kiểm tra. Số mục có thể thay đổi khi người dùng cập nhật bảng.
+- Lệnh `/lich` chạy qua `WorkService` với Google thật: các ngày 06/10, 24/09 và 10/09/2026 đều có phản hồi kèm tab, dòng và link nguồn đúng tab mong đợi. Kiểm tra này không gửi tin Zalo, không gọi AI, không ghi Google Sheets.
+- Bộ cục bộ sau khi bổ sung parser: 150 bài, 144 đạt, 6 bỏ qua (5 bài Hermes chạy riêng và 1 bài symlink cần quyền hệ điều hành). Sau đó thêm bài OAuth chỉ đọc và chạy lại 4/4 bài xác thực thành công.
+- 15 bài mới cho lịch Lab bao gồm ô gộp, ô trống thật, dòng Coach thiếu STT, ngày trùng ở nhiều tab, ngày thiếu dữ liệu, giới hạn phản hồi, cấu hình sai, phân quyền trước HTTP, dữ liệu nguồn thay đổi, lỗi mạng và chặn issue. Thêm 1 bài xác nhận OAuth chỉ đọc.
+- `TestHermes`: 5/5 đạt với Hermes thật, Zalo/AI mô phỏng. Plugin đã được cập nhật vào runtime. `git diff --check` đạt.
+- Giới hạn: chưa kiểm tra nhận/gửi lệnh lịch qua Zalo thật; không tự ánh xạ tên Coach với người dùng Zalo; người được cấp quyền Sheets xem lịch của toàn bộ các tab đã chọn. Ô nguồn thiếu tên khóa được báo thiếu, không suy diễn.
+- Dữ liệu kiểm tra riêng nằm trong `data/sheets-inspection/`, không đưa vào Git; fixtures của kiểm thử chỉ chứa dữ liệu giả.
+# Kiểm tra bổ sung: lệnh và hướng dẫn dễ dùng — 06/10/2026
+
+- Menu theo tính năng và trạng thái cấu hình/quyền; mẫu câu tiếng Việt xác định trước; lệnh sai không đi vào model. Lệnh cũ tiếp tục dùng được.
+- Lịch: ngày Việt Nam, ngày/tháng có hoặc không năm, tuần, khoảng tối đa 7 ngày; bộ lọc Coach/khóa/phòng/buổi; phân trang 5 mục, lệnh xem tiếp giữ nguyên ngày/bộ lọc. Tên Coach tìm theo từ và bỏ dấu, không tìm trong trạng thái.
+- Nhắc: thêm `mai HH:MM`, `DD/MM/YYYY HH:MM`, danh sách đang chờ và lịch sử riêng; không tự chuyển giờ đã qua sang ngày khác. Issue vẫn cần xác nhận chính xác và vẫn tắt trong cấu hình hiện tại.
+- Kiểm thử: 166 bài cục bộ, 160 đạt, 6 bỏ qua (5 Hermes chạy riêng + 1 symlink cần quyền). Trong đó 15 bài mới kiểm tra lệnh/giao diện, giới hạn phản hồi, phân quyền, sai ngày/bộ lọc, dữ liệu thiếu, không gọi model và không tạo nhắc khi thiếu thông tin. `TestHermes` 5/5 đạt.
+- Google Sheets thật, chỉ đọc: mẫu câu `xem lịch 06/10/2026 | phòng=H201`, khoảng 05–11/10 trang 1 và trang 2 đều qua `WorkService` thành công. Không gửi tin Zalo, không gọi AI, không ghi bảng trong kiểm tra này.
+- Plugin đã cập nhật trong Hermes. Người dùng cần khởi động lại và thử `/menu`, `/help lich`, `lịch hôm nay` trên Zalo để xác nhận bản nâng cấp mới. Mỗi trang đọc lại dữ liệu nên việc sửa bảng giữa các lần xem có thể làm đổi kết quả.
+# Kiểm tra bổ sung: thành viên nhóm và câu hỏi tự nhiên — 06/10/2026
+
+- Người dùng chọn mọi thành viên trong nhóm được cho phép được hỏi lịch/quy định, đăng ký tên để hỏi lịch cá nhân. Đã bật `ZALO_GROUP_ACCESS=members` cho nhóm hiện có trong danh sách và cấp nhóm đó quyền lịch Sheets; không mở quyền nhóm lạ, nhắn riêng hoặc tác vụ ghi cho người mới.
+- Tên Coach tự khai được kiểm tra với Sheets, lưu theo user + chat + loại chat. `/dangky`, `/hoso`, `/hoso xoa`, `/lichcuatoi` hỗ trợ hồ sơ bền vững; hồ sơ chỉ là bộ lọc, không phải xác minh danh tính hay quyền tài liệu.
+- Câu tự nhiên tra lịch/quy định đi qua bộ xử lý trực tiếp. Câu hỏi nhóm không rơi xuống model để bịa quy định. Cách diễn đạt mơ hồ về ngày được hướng dẫn dùng lệnh; không tự thực thi thay đổi lịch hoặc xác nhận issue.
+- `Test`: 181 bài, 174 đạt, 7 bỏ qua (6 bài Hermes chạy riêng, 1 bài symlink cần quyền). 14 bài nhóm mới kiểm tra phân quyền, hồ sơ theo từng người/chat, tài liệu riêng, dữ liệu thiếu, đăng ký lỗi, câu tự nhiên, chặn ghi, định tuyến và khử trùng.
+- `TestHermes`: 6/6 đạt, gồm thành viên mới qua adapter của Hermes thật; mạng Zalo/AI vẫn mô phỏng.
+- Google Sheets thật: thành viên giả lập trong nhóm đã cấp quyền đăng ký tên có trong bảng, hỏi lịch cá nhân có nguồn, người khác vẫn chưa có hồ sơ. Chỉ đọc, dùng SQLite tạm, không gửi Zalo/AI và không tạo hồ sơ production.
+- Kiểm tra dữ liệu hiện tại: 1 tài liệu được cấu hình, 0 tài liệu được cấp quyền nhóm. Cần bổ sung quy định thật và quyền nhóm trước khi kết luận hỏi đáp quy định có dữ liệu.
+- Plugin đã cập nhật; `git diff --check` đạt. Cần người dùng khởi động lại bot và thử với các thành viên trên Zalo thật. Chưa xác nhận nhận/gửi luồng nhóm thật trong lượt này. Hướng dẫn: [dùng trong nhóm](dung-trong-nhom.md).
+
+## Sửa nhận lệnh sau mention tên hiển thị — 06/10/2026
+
+- Người dùng báo `@Bot LabCoach /menu` nhận câu trả lời thiếu tài liệu: đây là xác nhận bot đã nhận và trả lời trong nhóm, nhưng lệnh menu bị nhận nhầm.
+- Kiểm tra `getMe` thật, chỉ đọc thông tin bot: có `display_name=Bot LabCoach`, khác `account_name` dạng handle nội bộ. Code cũ chỉ dùng handle nên không bỏ được phần gọi tên hiển thị.
+- Adapter nhận cả hai tên, chỉ tách mention ở đầu tin nhóm; hỗ trợ khác biệt chữ hoa, khoảng trắng Unicode và dấu tiếng Việt. Giữ nguyên nội dung phía sau, phân quyền và hành vi tin riêng.
+- Kiểm thử cục bộ: **193 bài, 186 đạt, 7 bỏ qua** (6 bài Hermes chạy riêng + 1 symlink cần quyền). Có 12 bài mới về tên hiển thị/handle, nội dung menu, câu tự nhiên, Unicode, tên khác, vị trí mention và tin riêng. Mock kết nối kiểm tra lấy đúng tên từ `getMe`.
+- `TestHermes`: **6/6 đạt**, dùng Hermes thật với mạng Zalo/AI mô phỏng. Plugin đã đồng bộ vào runtime. Cần khởi động lại bot và gửi lại mention để xác nhận bản sửa trên Zalo; lần chẩn đoán này không lấy tin polling hoặc tự gửi tin.

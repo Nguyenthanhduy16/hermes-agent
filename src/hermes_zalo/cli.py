@@ -105,6 +105,8 @@ def main() -> int:
         if args.command == "check":
             config = Settings.from_env()
             print(f"Cấu hình hợp lệ: {len(config.allowed_users)} người, {len(config.allowed_groups)} nhóm.")
+            print("Quyền nhóm: mọi thành viên được đọc nội dung đã chia sẻ." if config.group_access == "members"
+                  else "Quyền nhóm: chỉ người có trong danh sách được cấp quyền.")
             print("Chỉ kiểm tra cấu hình, chưa xác thực Zalo hoặc model.")
             return 0
         if not 1 <= args.seconds <= 300:

@@ -2,9 +2,15 @@
 
 Bot hỗ trợ công việc trên **Zalo Bot Platform chính thức**, dùng Hermes Agent để xử lý hội thoại: **tin Zalo → Hermes → trả lời đúng cuộc trò chuyện**.
 
-Người dùng đã xác nhận nhắn riêng nhận được câu trả lời và bot nhớ tên trong cùng hội thoại. Đã bổ sung lệnh tra tài liệu có nguồn, nhắc việc, đọc lịch và tạo issue qua Google Sheets có xác nhận, cùng báo cáo dùng thử. **Các tính năng mới đang được kiểm chứng bằng mô phỏng; chưa thử Google Sheets và nhắc việc thật.** Chưa triển khai máy chủ.
+Người dùng đã xác nhận nhắn riêng nhận được câu trả lời và bot nhớ tên trong cùng hội thoại. Đã bổ sung lệnh tra tài liệu có nguồn, nhắc việc, đọc lịch và tạo issue qua Google Sheets có xác nhận, cùng báo cáo dùng thử. Phần đọc lịch hỗ trợ bảng mẫu và các tab **Lịch lab có ô gộp**; xem [cấu hình lịch hiện có](docs/huong-dan-tinh-nang.md#đọc-bảng-lịch-lab-hiện-có). Luồng lịch qua Zalo, nhắc việc và ghi issue vẫn cần người dùng thử thực tế. Chưa triển khai máy chủ.
 
 **Bot đã chạy được?** Xem [hướng dẫn tính năng mới theo từng bước](docs/huong-dan-tinh-nang.md). Bản tài liệu hiện tìm trích đoạn `.md`/`.txt` theo từ khóa, chưa có PDF/Word hoặc hỏi đáp ngữ nghĩa.
+
+**Dùng lệnh dễ hơn:** gửi `/menu` hoặc `/help lich`, `/help nhac`. Có thể nhắn `lịch hôm nay`, dùng ngày `06/10`, lọc lịch theo Coach/phòng/khóa và sao chép lệnh xem trang tiếp theo. Xem [bảng lệnh và ví dụ](docs/lenh-zalo.md).
+
+**Thành viên nhóm:** hỗ trợ chế độ mọi thành viên trong nhóm được cho phép có thể hỏi lịch/tài liệu chung; đăng ký tên bằng `/dangky` rồi hỏi `Ngày mai mình có lịch gì?`. Hướng dẫn [dùng bot trong nhóm](docs/dung-trong-nhom.md) giải thích quyền nhóm, cách cấp tài liệu và các bài thử. Tên đăng ký chỉ dùng lọc lịch, không xác minh danh tính.
+
+Ngày 06/10/2026: đã kiểm tra đọc thật 3 tab Lịch lab và lệnh `/lich` cục bộ cho ba ngày thuộc ba tab. Tạo issue đang tắt trong cấu hình máy thử. Cần khởi động lại bot rồi gửi `/lich 2026-10-06` trên Zalo để xác nhận luồng trả lời thực tế.
 
 ## 1. Chuẩn bị
 
