@@ -1,0 +1,20 @@
+name: zalo-platform
+label: Zalo Bot Platform (official)
+kind: platform
+version: 0.1.0
+description: Official Zalo long-polling transport for Hermes; phase 1 chat only.
+author: hermes-zalo-bot
+requires_env:
+  - name: ZALO_BOT_TOKEN
+    description: Bot Token from Zalo Bot Manager
+    password: true
+  - name: ZALO_ALLOWED_USERS
+    description: Comma-separated exact Zalo sender IDs allowed to use this bot
+    password: false
+optional_env:
+  - name: ZALO_ALLOWED_GROUPS
+    description: Comma-separated exact group IDs; empty disables all groups
+    password: false
+  - name: ZALO_STATE_DIR
+    description: Local directory for deduplication state
+    password: false

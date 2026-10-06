@@ -1,0 +1,23 @@
+{
+  "description": "10 câu hỏi có đáp án từ tài liệu minh họa. Kiểm tra trích dẫn, không dùng AI và không gọi Zalo.",
+  "user_id": "u_demo",
+  "chat_id": "private_demo",
+  "chat_type": "PRIVATE",
+  "cases": [
+    {"question": "Thời gian làm việc của nhóm là gì?", "expected_excerpt": "08:30–17:30", "source": "so-tay-mau.md"},
+    {"question": "Lịch họp nhóm khi nào?", "expected_excerpt": "09:00 thứ Hai", "source": "so-tay-mau.md"},
+    {"question": "Đăng ký nghỉ phép như thế nào?", "expected_excerpt": "biểu mẫu NGHI-01", "source": "so-tay-mau.md"},
+    {"question": "Ai là người duyệt mua thiết bị?", "expected_excerpt": "Nguyễn An", "source": "so-tay-mau.md"},
+    {"question": "Hạn gửi báo cáo tuần là khi nào?", "expected_excerpt": "16:00 thứ Sáu", "source": "so-tay-mau.md"},
+    {"question": "Kênh báo lỗi hệ thống là gì?", "expected_excerpt": "Hỗ trợ thử nghiệm", "source": "so-tay-mau.md"},
+    {"question": "Cách đặt tên tài liệu như thế nào?", "expected_excerpt": "YYYY-MM-DD_TenNgan_vN", "source": "so-tay-mau.md"},
+    {"question": "Quy tắc chia sẻ dữ liệu là gì?", "expected_excerpt": "thành viên được cấp quyền", "source": "so-tay-mau.md"},
+    {"question": "Thời hạn phản hồi yêu cầu hỗ trợ là bao lâu?", "expected_excerpt": "1 ngày làm việc", "source": "so-tay-mau.md"},
+    {"question": "Mức phụ cấp ăn trưa bao nhiêu?", "expected_excerpt": "35.000 đồng", "source": "so-tay-mau.md"}
+  ],
+  "no_match": [
+    "Doanh thu quý bốn là bao nhiêu?",
+    "Ngân sách quảng cáo năm sau là bao nhiêu?",
+    "Trưởng nhóm có số điện thoại gì?"
+  ]
+}

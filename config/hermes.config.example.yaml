@@ -1,0 +1,20 @@
+# Model tools remain disabled. The adapter handles explicit work commands.
+platform_toolsets:
+  zalo: []
+  cli: []
+gateway:
+  multiplex_profiles: false
+  delivery_ledger: false
+  group_sessions_per_user: true
+  thread_sessions_per_user: true
+  platforms:
+    zalo:
+      enabled: true
+memory:
+  memory_enabled: false
+  user_profile_enabled: false
+display:
+  streaming: false
+plugins:
+  enabled:
+    - zalo-platform
