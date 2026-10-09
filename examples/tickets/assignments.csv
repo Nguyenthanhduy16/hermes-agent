@@ -1,0 +1,4 @@
+assignment_id,member_id,member_name,start,end,course,room,period
+LAB-TEST-001,A,An,2035-10-10T08:00:00+07:00,2035-10-10T10:00:00+07:00,Lab thử 1,P101,Sáng
+LAB-TEST-002,B,Bình,2035-10-11T08:00:00+07:00,2035-10-11T10:00:00+07:00,Lab thử 2,P102,Sáng
+LAB-TEST-003,C,Chi,2035-10-12T13:00:00+07:00,2035-10-12T15:00:00+07:00,Lab thử 3,P103,Chiều

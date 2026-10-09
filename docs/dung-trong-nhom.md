@@ -4,6 +4,8 @@
 
 Trong nhóm được quản trị cho phép, gõ `@`, **chọn Bot LabCoach trong danh sách**, rồi nhập `/menu`: `@Bot LabCoach /menu`. Hoặc **trả lời một tin của bot** rồi nhập `/menu`. Bot chỉ nhận những tin được Zalo chuyển tới qua mention/reply, không đọc mọi tin trong nhóm. [Hướng dẫn Zalo](https://docs.zaloplatforms.com/docs/BOT/best-practices/build-bot-interaction-with-group)
 
+Bạn có thể dùng lệnh, hỏi tự nhiên hoặc trò chuyện bình thường: `Giải thích Python là gì?`, `Viết giúp mình lời chúc sinh nhật`. Phần trò chuyện do Hermes trả lời. Lịch và quy định vẫn được tra từ nguồn đã cấp quyền; các bước đổi ca, nhắc việc và issue vẫn theo quy trình riêng.
+
 Adapter nhận tên hiển thị (`display_name`) và tên tài khoản (`account_name`) từ Zalo, chỉ bỏ phần gọi tên bot ở đầu tin nhắn. Tên tài khoản nội bộ có thể khác tên hiển thị trong nhóm. Nếu đã cập nhật code mà `/menu` vẫn trả lời về tài liệu, dừng bot bằng **Ctrl+C**, chạy `Update` rồi `Start` để nạp bản sửa. Nếu đổi tên bot trên Zalo cũng cần khởi động lại để đọc tên mới.
 
 | Muốn làm gì | Dùng lệnh | Hỏi tự nhiên |
@@ -12,10 +14,13 @@ Adapter nhận tên hiển thị (`display_name`) và tên tài khoản (`accoun
 | Lịch theo phòng | `/lich homnay \| phong=H201` | `Hôm nay phòng H201 có lớp nào?` |
 | Đăng ký tên | `/dangky Nguyễn Văn An` | `Tôi là Nguyễn Văn An` |
 | Lịch của mình | `/lichcuatoi mai` | `Ngày mai mình có lịch gì?` |
+| Ca của mình ngày mai | `/lichcuatoi mai` | `Mai mình có ca nào?`, `Ngày mai tôi trực không?` |
 | Lịch cá nhân trong tuần | `/lichcuatoi tuan nay` | `Tuần này tôi dạy ca nào?` |
 | Hỏi quy định | `/hoi Xin nghỉ phép cần báo ai?` | `Xin nghỉ phép cần báo ai?` |
 | Xem tài liệu được chia sẻ | `/tailieu` | `Xem tài liệu` |
 | Xem hướng dẫn nhóm | `/help nhom` | `hướng dẫn nhóm` |
+| Xem menu bot | `/menu` | `Bot làm được gì?` |
+| Hướng dẫn thông báo | `/thongbao` | `Xem thông báo` |
 
 Tên trên là ví dụ; thay bằng **họ tên đầy đủ đúng trong Sheets**. Bot kiểm tra tên có trong lịch trước khi lưu. Tên chưa khớp hoặc có nhiều cách viết trùng khi bỏ dấu sẽ được yêu cầu nhập lại, không tự chọn người gần giống.
 
@@ -23,9 +28,15 @@ Tên trên là ví dụ; thay bằng **họ tên đầy đủ đúng trong Sheet
 
 **Đăng ký tên chỉ là chọn bộ lọc lịch, không phải xác minh danh tính.** Không dùng hồ sơ này để cấp tài liệu cá nhân, xác nhận chấm công hoặc thực hiện thay người khác. Lịch cá nhân hiện chọn các buổi có tên đó ở Lab Coach/Key Coach; phản hồi vẫn chứa phân công của buổi học. Tin trả trong nhóm hiển thị cho cả nhóm.
 
+`Ngày mai mình rảnh không?` cũng tra lịch đã phân công cho tên đăng ký. Không thấy ca trong bảng không có nghĩa bạn chắc chắn rảnh hoặc không có công việc khác.
+
+Để đổi ca, nhắn riêng `Mình muốn đổi ca` để mở hoặc tiếp tục `/tickets`; `Ai đang chờ mình xác nhận?` mở `/choxacnhan`, `Xem yêu cầu đổi ca của mình` mở `/yeucau`. Trong nhóm, bot hướng dẫn chuyển sang chat riêng. `Nhắc lịch giúp mình` và yêu cầu tạo issue tự nhiên chỉ mở hướng dẫn; tạo nhắc có thời gian rõ ràng vẫn dùng mẫu `nhắc mình sau 10 phút: Gửi báo cáo`.
+
 ## Quyền của thành viên
 
-Với `ZALO_GROUP_ACCESS=members`, thành viên không cần có tên trong danh sách user để hỏi tại **nhóm được cho phép**. Họ có thể đọc lịch/tài liệu được chia sẻ với nhóm, đăng ký/xóa tên của mình, gửi góp ý. Nhắc việc và issue vẫn cần quyền cá nhân riêng. Việc đăng ký không mở quyền nhắn riêng với bot.
+Với `ZALO_GROUP_ACCESS=members`, thành viên không cần có tên trong danh sách user để hỏi tại **nhóm được cho phép**. Họ có thể đọc lịch/tài liệu được chia sẻ với nhóm, đăng ký/xóa tên của mình, gửi góp ý và trò chuyện với Hermes khi @bot hoặc trả lời tin bot. Nhắc việc và issue vẫn cần quyền cá nhân riêng; đổi ca cần liên kết đã xác minh. Việc đăng ký không mở quyền nhắn riêng với bot.
+
+Phiên Hermes tách theo **người gửi và cuộc trò chuyện**, không dùng chung lịch sử giữa hai thành viên hoặc giữa các nhóm. Model không được mở công cụ để tự đọc dữ liệu riêng, sửa lịch, gửi tin thay bạn hoặc tạo issue. Tin trả lời trong nhóm vẫn hiện với mọi người trong nhóm.
 
 Nhóm chưa được quản trị cho phép không được xử lý. Những người rời nhóm không có quyền truy cập qua nhắn riêng nhờ đăng ký trước đó. Thành viên mới chỉ đọc tài liệu có quyền nhóm phù hợp; quyền cá nhân trên từng tài liệu vẫn được giữ nguyên.
 
@@ -70,7 +81,7 @@ Nhiều ID cách nhau dấu phẩy. Không dùng `*`. `ZALO_ALLOWED_USERS` vẫn
 
 `users: []` và `groups` có ID nghĩa là chia sẻ nội dung cho thành viên nhóm đó; chưa cho đọc trong chat riêng. Nếu `users` có ID, chỉ những người đó trong nhóm được hỏi tài liệu. Chỉ chia sẻ tài liệu phù hợp cho cả nhóm vì mọi người có thể nhìn thấy câu trả lời.
 
-Bot trích đoạn từ tài liệu được cấp quyền và nêu nguồn. Chưa có tài liệu/không tìm thấy thông tin thì báo rõ. **Lịch Sheets không tự chứa quy định**, và sổ tay mẫu không thay thế quy định thật. Các câu hỏi nhóm được xử lý bằng dữ liệu được cấp quyền, không gửi sang model để tự suy diễn chính sách. Trò chuyện thông thường trong chat riêng vẫn dùng Hermes.
+Bot trích đoạn từ tài liệu được cấp quyền và nêu nguồn. Chưa có tài liệu/không tìm thấy thông tin thì báo rõ. **Lịch Sheets không tự chứa quy định**, và sổ tay mẫu không thay thế quy định thật. Câu hỏi quy định hoặc công việc nội bộ được nhận diện sẽ tra dữ liệu được cấp quyền; câu chưa khớp lệnh nhưng vẫn có từ ngữ công việc nội bộ tiếp tục tra tài liệu. Không để model tự suy diễn chính sách. Hermes xử lý trò chuyện thông thường trong cả nhóm được phép và chat riêng đã cấp quyền.
 
 ## Các bài thử cần đạt
 
@@ -79,5 +90,7 @@ Bot trích đoạn từ tài liệu được cấp quyền và nêu nguồn. Ch�
 - Hỏi quy định có trong file được chia sẻ → có trích đoạn và nguồn; hỏi quy định không có hoặc tài liệu riêng → không bịa và không lộ dữ liệu.
 - Đổi tên/xóa hồ sơ ở nhóm A không thay đổi hồ sơ ở nhóm B.
 - Thành viên chỉ có quyền đọc thử tạo nhắc/issue → bot báo cần quyền riêng.
+- Thành viên trong nhóm được phép @bot hỏi kiến thức chung hoặc lời chúc → Hermes trả lời; hỏi quy định nội bộ → vẫn tra tài liệu và nêu nguồn.
+- Hai thành viên trò chuyện riêng với bot trong cùng nhóm → không dùng lẫn lịch sử phiên; lời yêu cầu sửa lịch không được model tự thực hiện.
 
 Ngôn ngữ tự nhiên dùng các mẫu nhận diện rõ ràng, không phải mọi cách diễn đạt đều được hiểu. Khi thời gian mơ hồ (ví dụ “thứ hai”, “sắp tới”), bot hướng dẫn nhập ngày cụ thể. Lệnh `/lich` và `/hoi` luôn là cách dùng rõ ràng khi câu tự nhiên chưa được nhận đúng. Không có luồng tự thực thi xóa/sửa lịch hoặc xác nhận issue từ câu nói tự do.

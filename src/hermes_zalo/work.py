@@ -1,6 +1,8 @@
 """Explicit app commands, separate from the general-purpose model's tools."""
+import asyncio
 from datetime import datetime
 from hashlib import sha256
+import logging
 import os
 from pathlib import Path
 import time
@@ -10,9 +12,18 @@ from .issues import IssueStore, issue_target, preview
 from .knowledge import KnowledgeBase, NO_MATCH, NO_SOURCES, UNAVAILABLE
 from .reminders import ReminderStore, VIETNAM_TZ, parse_reminder_command
 from .sheets import SheetsClient, SheetsError, SheetsSettings
-from .commands import normalized, help_text, help_topic, parse_calendar
-from .natural import interpret
+from .commands import normalized, help_text, help_topic, parse_calendar, route, TICKETS_COMMANDS, TICKETS_TOPICS, TICKETS_DM_GUIDE
+from .events import is_allowed
+from .natural import interpret, is_work_question
 from .profiles import ProfileStore
+
+
+logger = logging.getLogger(__name__)
+_LAZY_TICKETS = object()
+_TICKETS_UNAVAILABLE = ("Tính năng đổi ca qua chat chưa sẵn sàng. Nhờ quản trị kiểm tra cấu hình và liên kết tài khoản. "
+                        "Các lệnh tra lịch, tài liệu và nhắc việc vẫn dùng như trước.\n/tickets — hướng dẫn")
+_TICKETS_FAILURE = ("Bot chưa xác định được kết quả xử lý yêu cầu đổi ca này. "
+                    "Hãy kiểm tra /yeucau trước khi gửi lại thao tác; nếu vẫn lỗi, nhờ quản trị kiểm tra.")
 
 
 def state_prefix(settings):
@@ -20,10 +31,16 @@ def state_prefix(settings):
 
 
 class WorkService:
-    def __init__(self, settings, *, sheets_client=None, environ=None):
+    def __init__(self, settings, *, sheets_client=None, environ=None, tickets_chat=_LAZY_TICKETS):
         values = os.environ if environ is None else environ
         prefix = state_prefix(settings)
         self.settings = settings
+        self._tickets_values = dict(values)
+        self._tickets_chat = None if tickets_chat is _LAZY_TICKETS else tickets_chat
+        self._tickets_initialized = tickets_chat is not _LAZY_TICKETS
+        self._tickets_error = False
+        self._tickets_notifications_error = False
+        self._tickets_lock = asyncio.Lock()
         self.profiles = ProfileStore(prefix.with_suffix(".profiles.sqlite3"))
         self.knowledge = KnowledgeBase(settings.knowledge_dir)
         self.reminders = ReminderStore(prefix.with_suffix(".reminders.sqlite3"))
@@ -44,6 +61,12 @@ class WorkService:
         self.issues.recover()
 
     async def close(self):
+        if self._tickets_chat is not None:
+            chat, self._tickets_chat = self._tickets_chat, None
+            try:
+                await asyncio.to_thread(chat.close)
+            except Exception:
+                logger.warning("Tickets chat cleanup failed; no request details logged")
         if self.sheets:
             await self.sheets.close()
         self.reminders.close()
@@ -51,15 +74,121 @@ class WorkService:
         self.pilot.close()
         self.profiles.close()
 
+    async def _open_tickets(self):
+        """A broken optional Tickets configuration must not disable work tools."""
+        if self._tickets_initialized:
+            return self._tickets_chat
+        async with self._tickets_lock:
+            if self._tickets_initialized:
+                return self._tickets_chat
+            if (self._tickets_values.get("TICKETS_CHAT_MODE") or "off").strip().lower() == "off":
+                self._tickets_initialized = True
+                return None
+            try:
+                from .tickets.runtime import open_chat
+                opening = asyncio.create_task(asyncio.to_thread(open_chat, self.settings, self._tickets_values))
+                try:
+                    self._tickets_chat = await asyncio.shield(opening)
+                except asyncio.CancelledError:
+                    # Cancelling the await cannot stop its worker thread. Take
+                    # ownership of the result before the gateway closes, so a
+                    # just-opened database/process lock cannot be orphaned.
+                    try:
+                        chat = await opening
+                        if chat is not None:
+                            await asyncio.to_thread(chat.close)
+                    except Exception:
+                        logger.warning("Tickets chat interrupted during initialization; resources withheld")
+                    raise
+            except Exception:
+                self._tickets_error = True
+                logger.warning("Tickets chat unavailable; verify its configuration locally")
+            finally:
+                self._tickets_initialized = True
+            return self._tickets_chat
+
+    async def claim_ticket_notification(self):
+        """Only the verified Tickets queue can supply an outbound destination."""
+        if self._tickets_notifications_error:
+            return None
+        chat = await self._open_tickets()
+        if chat is None:
+            return None
+        try:
+            return await asyncio.to_thread(chat.claim_notification, self.settings.allowed_users)
+        except Exception:
+            # Optional notification failures must not disable normal bot commands.
+            # Stop this queue until restart instead of repeatedly claiming work.
+            self._tickets_notifications_error = True
+            logger.warning("Tickets notifications stopped; inspect local storage and restart. No request details logged")
+            return None
+
+    async def finish_ticket_notification(self, notification_id, status):
+        chat = self._tickets_chat
+        if chat is None:
+            raise RuntimeError("Tickets notification runtime is closed")
+        await asyncio.to_thread(chat.finish_notification, notification_id, status)
+
+    async def _handle_tickets(self, message, command, argument):
+        ticket_help = command == "/trogiup" and normalized(" ".join(argument.split())).lstrip("/") in TICKETS_TOPICS
+        requested = command in TICKETS_COMMANDS or ticket_help
+        allowed = is_allowed(message, self.settings.allowed_users, self.settings.allowed_groups,
+                             group_members=self.settings.group_access == "members")
+        if not allowed:
+            return "Bạn hoặc cuộc trò chuyện này chưa được cấp quyền dùng bot. Nhờ quản trị cấp quyền trước." if requested else None
+        if message.chat_type != "PRIVATE":
+            return TICKETS_DM_GUIDE if requested else None
+        natural_reminder = normalized(message.text).strip().split(maxsplit=2)[:2] == ["nhac", "minh"]
+        # Fuzzy document keywords such as "xin nghỉ phép" can be a reason.
+        # Explicit commands and calendar/reminder intents retain precedence.
+        reason_candidate = command == "/hoi" and not route(message.text)[0]
+        if not requested and (natural_reminder or command and not reason_candidate):
+            return None
+        chat = await self._open_tickets()
+        if chat is not None:
+            try:
+                if reason_candidate:
+                    has_reason_context = getattr(chat, "has_reason_context", None)
+                    if has_reason_context is None or not await asyncio.to_thread(has_reason_context, message):
+                        return None
+                # Preserve raw text and key for wizard choices, confirmations,
+                # idempotency and the member binding enforced by TicketsChat.
+                response = await asyncio.to_thread(chat.handle, message)
+            except Exception:
+                logger.warning("Tickets chat request failed; response details withheld")
+                # Plain text could be an active wizard step. Do not pass it to
+                # the model after a potentially successful remote mutation.
+                return _TICKETS_FAILURE
+            if response is not None:
+                return response
+        if requested:
+            if ticket_help or command == "/tickets" and help_topic(argument):
+                return self.help("tickets", message)
+            if self._tickets_error:
+                return _TICKETS_UNAVAILABLE
+            if chat is not None:
+                return self.help("tickets", message)
+            return (self.help("tickets", message) +
+                    "\n\nĐổi ca qua chat chưa được bật cho bot này. Nhờ quản trị bật tính năng và xác minh tài khoản.")
+        return None
+
     def help(self, topic, message):
         state = "invalid" if self.sheets_error else "not_configured"
         if self.sheets:
             state = "ready" if self.sheets.settings.allows_calendar(message.user_id, message.chat_id, message.chat_type) else "denied"
+        can_write = is_allowed(message, self.settings.allowed_users, self.settings.allowed_groups)
+        issue_access = bool(can_write and self.sheets and
+                            self.sheets.settings.allows(message.user_id, message.chat_id, message.chat_type))
         answer = help_text(topic, sheets_state=state,
                          lab=bool(self.sheets and self.sheets.settings.calendar_format == "lab"),
-                         issues=bool(self.sheets and self.sheets.settings.allows(message.user_id, message.chat_id, message.chat_type)
-                                     and self.sheets.settings.issues_enabled))
-        if message.chat_type == "GROUP" and message.user_id not in self.settings.allowed_users:
+                         issues=bool(issue_access and self.sheets.settings.issues_enabled),
+                         issue_access=issue_access, reminders=can_write,
+                         tickets=bool(not self._tickets_error and can_write and
+                                      (self._tickets_chat is not None or
+                                       str(self._tickets_values.get("TICKETS_CHAT_MODE") or "off").strip().lower()
+                                       in ("sheets_test", "lab_live", "lab_live_test"))),
+                         private_chat=message.chat_type == "PRIVATE")
+        if topic.strip() and message.chat_type == "GROUP" and message.user_id not in self.settings.allowed_users:
             answer += "\nQuyền của bạn tại nhóm: hỏi lịch/tài liệu đã chia sẻ và đăng ký tên. Nhắc việc/tạo issue cần cấp quyền riêng."
         return answer
 
@@ -74,6 +203,10 @@ class WorkService:
         kind = "chat"
         outcome = "ok"
         try:
+            ticket_response = await self._handle_tickets(message, command, argument)
+            if ticket_response is not None:
+                kind = "command"
+                return ticket_response
             # New group members can read only within explicitly shared scopes.
             # Self-registration never adds IDs to any global or resource ACL.
             member_only = (message.chat_type == "GROUP" and self.settings.group_access == "members"
@@ -83,6 +216,8 @@ class WorkService:
                 return "Bạn có thể hỏi lịch và tài liệu đã chia sẻ với nhóm. Nhắc việc/tạo issue cần quản trị cấp quyền riêng.\n/menu — hướng dẫn"
             if command == "/trogiup":
                 return self.help(argument, message)
+            if command == "/thongbao":
+                return self.help("thongbao", message)
             if command in ("/dangky", "/hoso"):
                 kind = "command"
                 if command == "/hoso":
@@ -210,12 +345,13 @@ class WorkService:
             if command.startswith("/"):
                 outcome = "error"
                 kind = "command"
-                return "Mình chưa nhận ra lệnh này.\nGửi /menu để xem các lệnh, hoặc /help lich, /help nhac để xem ví dụ."
+                return "Mình chưa nhận ra lệnh này.\nGửi /menu để xem các mục đang dùng."
             if message.chat_type == "GROUP":
-                # Group work questions stay grounded in the authorized corpus;
-                # generic model answers must not invent internal policies.
-                if normalized(message.text.strip()).rstrip("!?.,") in ("xin chao", "chao bot", "bot oi", "hello"):
-                    return self.help("", message)
+                # General chat may use Hermes after normal group admission.
+                # Unrecognized internal-work questions remain grounded; missing
+                # documents never become permission to invent an internal answer.
+                if not is_work_question(message.text):
+                    return None
                 kind = "documents"
                 response = self.knowledge.answer(message.text, message.user_id, message.chat_id, message.chat_type)
                 if response in (NO_MATCH, NO_SOURCES, UNAVAILABLE):

@@ -1,4 +1,4 @@
-"""Launch the isolated Hermes instance; never echo environment values."""
+"""Launch the isolated Hermes instance or local tickets preview; hide secrets."""
 import os
 from pathlib import Path
 import subprocess
@@ -11,6 +11,9 @@ ROOT = Path(__file__).resolve().parent.parent
 
 def main():
     load_env(ROOT / ".env")
+    if sys.argv[1:] in (["tickets", "demo"], ["tickets", "sheets_test"]):
+        return subprocess.call([sys.executable, "-m", "hermes_zalo.tickets.cli", "serve",
+                                "--mode", sys.argv[2], "--port", "8765"], cwd=ROOT)
     hermes_home = ROOT / ".runtime" / "hermes-home"
     # A UTF-8 .cmd wrapper loses accented paths on legacy Windows code pages.
     # Native launchers pass Unicode paths directly to Windows process creation.
@@ -21,7 +24,7 @@ def main():
         print("Thiếu launcher Hermes native (hermes.exe). Chạy scripts/install-hermes.ps1 để hoàn tất hoặc sửa cài đặt.")
         return 2
     if sys.argv[1:] not in (["model"], ["gateway", "run"]):
-        print("Chỉ hỗ trợ model hoặc gateway run.")
+        print("Chỉ hỗ trợ model, gateway run hoặc tickets demo|sheets_test.")
         return 2
     if sys.argv[1] == "gateway":
         Settings.from_env()
@@ -31,6 +34,7 @@ def main():
     child_env["GATEWAY_MULTIPLEX_PROFILES"] = "false"
     child_env["PYTHONUTF8"] = "1"
     child_env["PYTHONIOENCODING"] = "utf-8"
+    child_env["TICKETS_PROJECT_ROOT"] = str(ROOT)
     # Keep this bot on its dedicated home and project working directory.
     return subprocess.call([str(launcher), *sys.argv[1:]], cwd=ROOT, env=child_env)
 

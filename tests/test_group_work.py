@@ -239,7 +239,77 @@ class GroupAdapterTests(unittest.IsolatedAsyncioTestCase):
             await self.adapter._dispatch(contract.update(str(index), user="new-a", chat="g1", kind="GROUP", text=text))
         self.assertEqual(3, self.adapter.client.send_text_chunk.await_count)
         self.assertTrue(all("MENU BOT" not in call.args[1] for call in self.adapter.client.send_text_chunk.await_args_list))
+        # Other mentions remain ordinary text, never a privileged menu command.
+        self.assertEqual(3, self.handler.await_count)
+
+    async def test_mentioned_ordinary_chat_reaches_hermes_once_for_allowed_group_member(self):
+        update = contract.update('ordinary', user='new-a', chat='g1', kind='GROUP',
+                                 text='@Bot LabCoach Giải thích Python là gì?')
+        await self.adapter._dispatch(update)
+        await self.adapter._dispatch(update)
+        self.handler.assert_awaited_once()
+        event = self.handler.await_args.args[0]
+        self.assertEqual('Giải thích Python là gì?', event.text)
+        self.assertEqual(('g1', 'new-a', 'group'),
+                         (event.source.chat_id, event.source.user_id, event.source.chat_type))
+        self.assertFalse(event.allow_gateway_control)
+        self.assertEqual([], self.adapter.toolsets_for_source(event.source))
+        self.adapter.client.send_text_chunk.assert_awaited_once_with('g1', 'Xin chào bạn')
+        self.assertFalse(self.adapter._session_tasks)
+
+    async def test_group_member_conversation_sessions_stay_separate_by_group_and_user(self):
+        self.adapter.settings = replace(self.adapter.settings, allowed_groups=frozenset({'g1', 'g2'}))
+        for index, (user, group) in enumerate((('new-a', 'g1'), ('new-b', 'g1'), ('new-a', 'g2'))):
+            # A plain text event models a reply delivered by the official API.
+            await self.adapter._dispatch(contract.update(str(index), user=user, chat=group, kind='GROUP',
+                                                         text='Viết giúp mình lời chúc sinh nhật'))
+        self.assertEqual(3, self.handler.await_count)
+        events = [call.args[0] for call in self.handler.await_args_list]
+        self.assertEqual(3, len({self.adapter._event_session_key(event) for event in events}))
+        self.assertEqual(['g1', 'g1', 'g2'], [call.args[0] for call in self.adapter.client.send_text_chunk.await_args_list])
+        for event in events:
+            self.assertEqual([], self.adapter.toolsets_for_source(event.source))
+            self.assertFalse(event.allow_gateway_control)
+
+    async def test_general_chat_does_not_admit_member_into_unapproved_group_or_private_chat(self):
+        for index, (group, kind) in enumerate((('g2', 'GROUP'), ('dm-new', 'PRIVATE'))):
+            await self.adapter._dispatch(contract.update(str(index), user='new-a', chat=group, kind=kind,
+                                                         text='@Bot LabCoach Giải thích Python là gì?'))
         self.handler.assert_not_awaited()
+        self.adapter.client.send_text_chunk.assert_not_awaited()
+
+    async def test_member_conversation_fails_closed_when_work_boundary_is_missing(self):
+        await self.adapter.work.close()
+        self.adapter.work = None
+        await self.adapter._dispatch(contract.update('missing-work', user='new-a', chat='g1', kind='GROUP',
+                                                     text='@Bot LabCoach Giải thích Python là gì?'))
+        self.handler.assert_not_awaited()
+        self.adapter.client.send_text_chunk.assert_not_awaited()
+        self.assertEqual('not_admitted', self.adapter.store.connection.execute('SELECT status FROM messages').fetchone()[0])
+
+    async def test_group_work_reads_and_unknown_slash_commands_stay_in_application(self):
+        for index, text in enumerate(('Quy định xin nghỉ phép thế nào?', 'Ngày mai mình có lịch gì?',
+                                      'Ai phụ trách phòng lab?', '/unknown-action', '/dongy 1234',
+                                      '/nhac sau 1 phut | Nội dung thử', '/issue tao Tiêu đề | Mô tả')):
+            await self.adapter._dispatch(contract.update(str(index), user='new-a', chat='g1', kind='GROUP',
+                                                         text='@Bot LabCoach ' + text))
+        self.handler.assert_not_awaited()
+        self.assertEqual(7, self.adapter.client.send_text_chunk.await_count)
+        self.assertEqual([], self.adapter.work.reminders.list_for('new-a', 'g1', 'GROUP'))
+        self.assertEqual(0, self.adapter.work.issues.db.execute('SELECT COUNT(*) FROM drafts').fetchone()[0])
+
+    async def test_group_model_reply_cannot_send_to_a_private_or_other_group_destination(self):
+        denied = []
+        async def handler(event):
+            for chat in ('dm-new', 'g2'):
+                denied.append(await self.adapter.send(chat, 'Synthetic wrong destination', reply_to=event.message_id))
+            return 'Câu trả lời chung'
+        self.handler.side_effect = handler
+        await self.adapter._dispatch(contract.update('route', user='new-a', chat='g1', kind='GROUP',
+                                                     text='@Bot LabCoach Giải thích Python là gì?'))
+        self.assertEqual(2, len(denied))
+        self.assertTrue(all(not result.success for result in denied))
+        self.adapter.client.send_text_chunk.assert_awaited_once_with('g1', 'Câu trả lời chung')
 
     async def test_repeated_registration_event_and_unknown_question_do_not_call_model(self):
         update = contract.update(user="new", chat="g1", kind="GROUP", text="Ngày mai mình có lịch gì?")

@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#102c3b">
+  <meta name="description" content="LabCoach Tickets — tạo, xác nhận và theo dõi yêu cầu đổi ca của bạn.">
+  <title>LabCoach Tickets · Đổi ca</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Đến nội dung chính</a>
+  <div class="app-shell">
+    <aside class="sidebar" aria-label="Điều hướng chính">
+      <a class="brand" href="/" aria-label="LabCoach Tickets, trang chủ">
+        <span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><path d="M8 4v5l-4.1 7.2A2.5 2.5 0 0 0 6.1 20h11.8a2.5 2.5 0 0 0 2.2-3.8L16 9V4M7 4h10M7 14h10" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><path d="m10 16 1.5 1.5L15 14" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></span>
+        <span>LabCoach<small>TICKETS</small></span>
+      </a>
+      <div class="workspace-label"><span class="live-dot"></span> Không gian làm việc của nhóm</div>
+      <p class="nav-caption">ĐỔI CA</p>
+      <nav id="navigation">
+        <button class="nav-item" data-view="create"><span class="nav-icon" aria-hidden="true">＋</span><span>Tạo yêu cầu</span></button>
+        <button class="nav-item" data-view="pending"><span class="nav-icon" aria-hidden="true">◷</span><span>Chờ tôi xác nhận</span><span class="nav-count" id="pending-count" hidden>0</span></button>
+        <button class="nav-item is-active" data-view="mine" aria-current="page"><span class="nav-icon" aria-hidden="true">▤</span><span>Yêu cầu của tôi</span></button>
+        <button class="nav-item" data-view="history"><span class="nav-icon" aria-hidden="true">↺</span><span>Lịch sử</span></button>
+      </nav>
+      <div class="sidebar-note"><span class="note-icon" aria-hidden="true">↔</span><strong>Mỗi lần đổi, một nơi theo dõi.</strong><p>Hai bên xác nhận rõ ràng. Lịch được kiểm tra trước khi cập nhật.</p></div>
+      <div class="sidebar-bottom"><span class="small-avatar" id="sidebar-avatar">LC</span><div><strong id="sidebar-name">LabCoach Tickets</strong><small id="sidebar-role">Đăng nhập để bắt đầu</small></div></div>
+    </aside>
+    <div class="workspace">
+      <header class="topbar">
+        <div class="breadcrumb">Không gian nhóm <span aria-hidden="true">/</span> <strong>Đổi ca</strong></div>
+        <div class="topbar-actions"><span id="mode-badge" class="mode-badge">Đang kết nối</span><button id="refresh-button" class="icon-button" aria-label="Tải lại dữ liệu" title="Tải lại dữ liệu" hidden>↻</button><button id="account-button" class="button button-small button-outline" hidden>Tài khoản</button></div>
+      </header>
+      <main id="main" tabindex="-1">
+        <div id="environment-note" class="environment-note" hidden></div>
+        <div id="global-message" class="message" role="alert" hidden></div>
+        <section id="login-section" class="login-section" aria-labelledby="login-heading" hidden>
+          <div class="login-intro"><span class="eyebrow">LABCOACH · QUẢN LÝ ĐỔI CA</span><h1 id="login-heading">Đổi ca rõ ràng.<br>Cả nhóm yên tâm.</h1><p>Từ đề nghị đến xác nhận, theo dõi mọi bước tại một nơi — ngay cả khi tin nhắn nhóm đã trôi.</p><div class="login-steps"><span><b>01</b> Chọn hai ca</span><span><b>02</b> Cùng xác nhận</span><span><b>03</b> Cập nhật lịch</span></div></div>
+          <div class="login-card"><div class="card-symbol" aria-hidden="true">↔</div><h2 id="login-card-title">Bắt đầu trải nghiệm</h2><p id="login-description" class="muted"></p><div id="demo-accounts" class="demo-accounts"></div><form id="credentials-form" hidden><label for="username">Tên đăng nhập</label><input id="username" name="username" autocomplete="username" required maxlength="100"><label for="password">Mật khẩu</label><input id="password" name="password" type="password" autocomplete="current-password" required><button class="button button-primary button-full" type="submit">Đăng nhập</button></form><p id="login-message" class="message message-error" role="alert" hidden></p></div>
+        </section>
+        <section id="dashboard" hidden>
+          <div class="page-heading"><div><span class="eyebrow">LỊCH LÀM VIỆC, LINH HOẠT HƠN</span><h1 id="page-title">Yêu cầu của tôi</h1><p id="page-description">Theo dõi những yêu cầu bạn đã gửi.</p></div><button id="new-ticket-button" class="button button-primary"><span aria-hidden="true">＋</span> Tạo yêu cầu</button></div>
+          <div class="metrics" aria-label="Tổng quan yêu cầu"><div class="metric"><div><span>Đang chờ xử lý</span><strong id="metric-active">0</strong></div><span class="metric-symbol mint" aria-hidden="true">↔</span></div><div class="metric"><div><span>Cần bạn xác nhận</span><strong id="metric-pending">0</strong></div><span class="metric-symbol amber" aria-hidden="true">◷</span></div><div class="metric"><div><span>Đã hoàn tất</span><strong id="metric-completed">0</strong></div><span class="metric-symbol blue" aria-hidden="true">✓</span></div></div>
+          <section id="create-panel" class="create-grid" hidden aria-label="Tạo yêu cầu đổi ca">
+            <form id="swap-form" class="panel create-form"><div class="panel-heading"><h2>Chọn ca muốn đổi</h2><span class="subtle-badge">Bước 1 / 2</span></div><div class="form-step"><div class="step-number">1</div><div class="form-fields"><label for="own-assignment">Ca của bạn</label><p class="field-help">Chỉ những ca bạn được phép đổi mới xuất hiện.</p><select id="own-assignment" required><option value="">Chọn ca của bạn</option></select><div id="own-assignment-info" class="assignment-preview" hidden></div></div></div><div class="form-divider"></div><div class="form-step"><div class="step-number">2</div><div class="form-fields"><label for="other-member">Bạn muốn đổi với ai?</label><select id="other-member" required><option value="">Chọn thành viên</option></select><label for="other-assignment" class="label-spaced">Ca muốn nhận</label><select id="other-assignment" required disabled><option value="">Chọn thành viên trước</option></select><div id="other-assignment-info" class="assignment-preview" hidden></div></div></div><div class="form-footer"><span>Lịch chưa thay đổi ở bước này.</span><button type="submit" id="preview-button" class="button button-primary">Xem trước <span aria-hidden="true">→</span></button></div><div id="form-message" class="message message-error" role="alert" hidden></div></form>
+            <aside class="how-panel"><span class="eyebrow">TRƯỚC KHI GỬI</span><h2>Một đề nghị.<br>Hai bên cùng rõ.</h2><ol><li><strong>Kiểm tra hai ca</strong><p>Đúng ngày, giờ, lớp và phòng trước khi gửi.</p></li><li><strong>Chờ người nhận phản hồi</strong><p>Đồng ý hoặc từ chối ngay trong trang yêu cầu.</p></li><li><strong>Xác nhận kết quả</strong><p id="approval-help">Lịch chỉ được cập nhật sau khi đủ xác nhận.</p></li></ol><div class="how-footnote">Nếu lịch thay đổi trong lúc chờ, yêu cầu cần được kiểm tra lại.</div></aside>
+          </section>
+          <section id="tickets-panel" class="panel tickets-panel" aria-labelledby="list-heading"><div class="list-toolbar"><h2 id="list-heading">Danh sách yêu cầu <span id="list-count" class="list-count">0</span></h2><label class="search-field"><span aria-hidden="true">⌕</span><input id="ticket-search" type="search" placeholder="Tìm mã, tên hoặc lớp…" aria-label="Tìm yêu cầu theo mã, tên hoặc lớp"></label></div><div id="ticket-list"></div><div id="empty-state" class="empty-state" hidden><span class="empty-symbol" aria-hidden="true">↔</span><h3 id="empty-title">Chưa có yêu cầu nào</h3><p id="empty-description">Khi cần đổi ca, bạn có thể bắt đầu bằng một đề nghị.</p><button id="empty-create-button" class="button button-outline">Tạo yêu cầu đầu tiên</button></div></section>
+        </section>
+        <div id="loading-state" class="loading-state" role="status"><span class="spinner" aria-hidden="true"></span><span>Đang mở không gian đổi ca…</span></div>
+        <footer class="page-footer"><span>LabCoach Tickets</span><span>Rõ người xác nhận · Rõ lịch thay đổi</span></footer>
+      </main>
+    </div>
+  </div>
+  <dialog id="preview-dialog" aria-labelledby="preview-title"><div class="dialog-top"><div><span class="eyebrow">KIỂM TRA TRƯỚC KHI GỬI</span><h2 id="preview-title">Xem trước yêu cầu</h2></div><button class="icon-button" data-close="preview-dialog" aria-label="Đóng bản xem trước">×</button></div><div class="dialog-body"><div id="preview-comparison"></div><p id="preview-approval" class="callout"></p><label for="swap-reason">Lý do <span class="muted">(không bắt buộc)</span></label><textarea id="swap-reason" maxlength="500" rows="3" placeholder="Chia sẻ ngắn gọn để người nhận dễ cân nhắc…"></textarea><p id="preview-expiry" class="field-help"></p><div id="preview-message" class="message message-error" role="alert" hidden></div></div><div class="dialog-footer"><button class="button button-outline" data-close="preview-dialog">Quay lại chỉnh sửa</button><button id="submit-ticket-button" class="button button-primary">Xác nhận gửi yêu cầu</button></div></dialog>
+  <dialog id="detail-dialog" aria-labelledby="detail-title"><div class="dialog-top"><div><span class="eyebrow" id="detail-code"></span><h2 id="detail-title">Chi tiết đổi ca</h2></div><button class="icon-button" data-close="detail-dialog" aria-label="Đóng chi tiết yêu cầu">×</button></div><div id="detail-content" class="dialog-body"></div><div id="detail-actions" class="dialog-footer"></div></dialog>
+  <dialog id="account-dialog" class="account-dialog" aria-labelledby="account-title"><div class="dialog-top"><h2 id="account-title">Tài khoản</h2><button class="icon-button" data-close="account-dialog" aria-label="Đóng tài khoản">×</button></div><div class="dialog-body"><p id="account-summary"></p><p id="account-demo-note" class="field-help"></p><button id="logout-button" class="button button-outline button-full">Đăng xuất</button></div></dialog>
+  <div id="toast" class="toast" role="status" hidden></div>
+</body>
+</html>

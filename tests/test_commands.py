@@ -1,11 +1,12 @@
 """User-facing commands tested without credentials, real chat or model calls."""
 from copy import deepcopy
+from dataclasses import replace
 from datetime import date, datetime, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 import unicodedata
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import httpx
 
@@ -64,7 +65,17 @@ class CommandParsingTests(unittest.TestCase):
         self.assertEqual("history", parse_reminder_command("/nhac lịch sử", now=NOW).action)
 
     def test_menu_is_honest_about_disabled_and_unconfigured_features(self):
-        self.assertIn("chưa kết nối", help_text())
+        for state in ("not_configured", "denied", "invalid"):
+            menu = help_text(sheets_state=state)
+            self.assertNotIn("/lich", menu)
+            self.assertNotIn("/doica", menu)
+        menu = help_text(sheets_state="ready", lab=True, tickets=True, issues=True, reminders=True)
+        for command in ("/lich homnay", "/lichcuatoi homnay", "/doica", "/dangky", "/nhac", "/thongbao", "/issue"):
+            self.assertIn(command, menu)
+        for hidden in ("/tailieu", "/hoi", "/phanhoi"):
+            self.assertNotIn(hidden, menu)
+        self.assertLess(len(menu), 500)
+        self.assertIn("chưa được cấp quyền", help_text("lich", sheets_state="denied"))
         self.assertIn("chưa bật", help_text("issue"))
         self.assertNotIn("/issue tao", help_text("issue"))
         self.assertIn("chưa tạo issue", help_text("issue", issues=True))
@@ -141,11 +152,68 @@ class CommandServiceTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_menu_empty_commands_and_unknown_command_never_contact_google(self):
         for text, expected in (("/menu", "MENU"), ("/nhac", "NHẮC VIỆC"), ("/hoi", "HỎI TÀI LIỆU"),
-                               ("/issue", "chưa bật"), ("/phanhoi", "GỬI GÓP Ý"), ("/lichh", "chưa nhận ra")):
+                               ("/thongbao", "THÔNG BÁO"), ("/issue", "chưa bật"),
+                               ("/phanhoi", "GỬI GÓP Ý"), ("/lichh", "chưa nhận ra")):
             self.assertIn(expected, await self.send(text))
+        self.assertFalse(self.calls)
+        menu = await self.send("/menu")
+        self.assertIn("/lich homnay", menu)
+        self.assertIn("/lichcuatoi homnay", menu)
+        self.assertIn("Nhắc lịch: /nhac", menu)
+        self.assertIn("Thông báo: /thongbao", menu)
+        self.assertIn("Tạo issue: /issue (chưa bật)", menu)
+        self.assertNotIn("/doica", menu)  # Tickets is off in this fixture.
+        self.assertNotIn("/lich", await self.send("/menu", user="u2"))
         self.assertFalse(self.calls)
         self.assertEqual([], self.service.reminders.list_for("u1", "dm", "PRIVATE"))
         self.assertIsNone(await self.send("Xin chào"))
+
+    async def test_menu_and_notifications_do_not_open_tickets_or_create_work(self):
+        self.service._tickets_values["TICKETS_CHAT_MODE"] = "lab_live_test"
+        with patch("hermes_zalo.tickets.runtime.open_chat", side_effect=AssertionError("must not open")):
+            for command in ("/menu", "/thongbao", "/help thongbao"):
+                response = await self.send(command)
+                self.assertIn("/nhac", response)
+                self.assertIn("/doica" if command == "/menu" else "/choxacnhan", response)
+        self.assertFalse(self.calls)
+        self.assertFalse(self.service._tickets_initialized)
+        self.assertEqual([], self.service.reminders.list_for("u1", "dm", "PRIVATE"))
+        self.assertEqual(0, self.service.issues.db.execute("SELECT COUNT(*) FROM drafts").fetchone()[0])
+
+    async def test_group_readers_do_not_gain_write_menu_or_notification_details(self):
+        self.service.settings = replace(self.service.settings, allowed_groups=frozenset({"g1"}), group_access="members")
+        self.client.settings = replace(self.client.settings, groups=frozenset({"g1"}), group_members=True, issues_enabled=True)
+        self.service._tickets_values["TICKETS_CHAT_MODE"] = "lab_live_test"
+        menu = await self.send("/menu", user="reader", chat="g1", kind="GROUP")
+        self.assertIn("/lich homnay", menu)
+        for command in ("/nhac", "/thongbao", "/issue", "/doica"):
+            self.assertNotIn(command, menu)
+        notice = await self.send("/thongbao", user="reader", chat="g1", kind="GROUP")
+        for command in ("/nhac xem", "/nhac lichsu", "/choxacnhan"):
+            self.assertNotIn(command, notice)
+        self.assertIn("Chưa có mục thông báo", notice)
+        for chat, kind in (("g2", "GROUP"), ("dm", "PRIVATE")):
+            menu = await self.send("/menu", user="reader", chat=chat, kind=kind)
+            self.assertNotIn("/issue", menu)
+            self.assertNotIn("/nhac", menu)
+        writer = await self.send("/thongbao", chat="g1", kind="GROUP")
+        self.assertIn("/nhac xem", writer)
+        self.assertIn("/choxacnhan", writer)
+        self.assertIn("nhắn riêng cho bot", writer)
+        self.assertFalse(self.calls)
+
+    async def test_issue_entry_tracks_sheet_permission_and_enabled_state(self):
+        self.client.settings = replace(self.client.settings, issues_enabled=True)
+        menu = await self.send("/menu")
+        self.assertIn("Tạo issue: /issue", menu)
+        self.assertNotIn("chưa bật", menu)
+        self.assertIn("/issue xacnhan", await self.send("/issue"))
+        self.client.settings = replace(self.client.settings, users=frozenset())
+        self.assertNotIn("/issue", await self.send("/menu"))
+        self.assertNotIn("/issue tao", await self.send("/issue"))
+        self.assertIn("/nhac", await self.send("/menu"))
+        self.assertFalse(self.calls)
+        self.assertEqual(0, self.service.issues.db.execute("SELECT COUNT(*) FROM drafts").fetchone()[0])
 
     async def test_read_alias_and_filters_route_to_same_calendar_with_permissions(self):
         reply = await self.send("xem lịch 06/10/2026 | phòng=R101")

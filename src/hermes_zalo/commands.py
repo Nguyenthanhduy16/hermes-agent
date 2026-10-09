@@ -1,8 +1,10 @@
 """Small deterministic command vocabulary; prose never grants tool access."""
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
+from ipaddress import ip_address
 import re
 import unicodedata
+from urllib.parse import urlsplit
 
 from .reminders import VIETNAM_TZ
 
@@ -12,9 +14,106 @@ def normalized(text):
                    if not unicodedata.combining(c))
 
 
+TICKETS_COMMANDS = frozenset((
+    "/tickets", "/doica", "/yeucau", "/choxacnhan", "/lichsudoica", "/choduyet",
+    "/dongy", "/tuchoi", "/huydoica", "/duyet", "/doisoat",
+))
+TICKETS_TOPICS = frozenset(("tickets", "doica", "doi ca", "yeucau", "yeu cau", "choxacnhan",
+                          "lichsudoica", "choduyet", "dongy", "tuchoi", "huydoica", "duyet", "doisoat"))
+TICKETS_DM_GUIDE = ("Đổi ca được xử lý trong tin nhắn riêng với bot. "
+                    "Hãy mở cuộc trò chuyện riêng và gửi /doica để chọn ca. "
+                    "Quản trị cần xác minh và liên kết tài khoản của bạn trước khi dùng; "
+                    "đăng ký tên tra lịch không cấp quyền đổi ca.")
+
+
+def ticket_route(text):
+    """Recognize chat tickets deterministically, without inferring an action.
+
+    A vague swap request opens instructions; only canonical commands or the
+    explicit phrases below can start a workflow or select an existing ticket.
+    Arguments retain their original case, accents and confirmation code.
+    """
+    text = unicodedata.normalize("NFC", text).strip()
+    pieces = text.split(maxsplit=1)
+    head, argument = (pieces + [""])[:2] if pieces else ("", "")
+    if head.startswith("/"):
+        command = normalized(head)
+        return (command, argument) if command in TICKETS_COMMANDS else None
+    folded = normalized(text)
+    phrase = " ".join(folded.split()).rstrip(".!?").rstrip()
+    exact = {
+        "toi muon doi ca": "/tickets", "tickets": "/tickets", "doi ca": "/tickets",
+        "minh muon doi ca": "/tickets", "em muon doi ca": "/tickets",
+        "cho minh doi ca": "/tickets", "cho toi doi ca": "/tickets", "giup minh doi ca": "/tickets",
+        "mo trang doi ca": "/tickets", "mo trang tickets": "/tickets", "trang doi ca": "/tickets",
+        "tao yeu cau doi ca": "/doica",
+        "yeu cau cua toi": "/yeucau",
+        "xem yeu cau doi ca cua minh": "/yeucau", "xem yeu cau doi ca cua toi": "/yeucau",
+        "yeu cau doi ca cua minh": "/yeucau", "yeu cau doi ca cua toi": "/yeucau",
+        "co yeu cau nao cho toi khong": "/choxacnhan", "yeu cau cho toi": "/choxacnhan",
+        "minh co yeu cau doi ca nao dang cho khong": "/choxacnhan",
+        "toi co yeu cau doi ca nao dang cho khong": "/choxacnhan",
+        "ai dang cho minh xac nhan": "/choxacnhan", "ai dang cho toi xac nhan": "/choxacnhan",
+        "xem yeu cau dang cho minh xac nhan": "/choxacnhan",
+        "lich su doi ca cua toi": "/lichsudoica",
+        "cac yeu cau cho duyet": "/choduyet",
+    }
+    if phrase in exact:
+        return exact[phrase], ""
+    detail = re.fullmatch(r"xem\s+yeu\s+cau\s+(dc-[a-z0-9-]+)[.!?]?", folded)
+    if detail:
+        return "/yeucau", text[detail.start(1):detail.end(1)]
+    # Policy questions remain document reads. Unstructured action requests
+    # receive a safe menu instead of being interpreted as a write by the model.
+    vague_swap = re.match(
+        r"^(?:(?:(?:toi|minh|em)\s+(?:(?:muon|can|xin)\s+)?)|(?:(?:cho|giup)\s+(?:toi|minh|em)\s+))?doi\s+ca\b"
+        r"|^(?:tao|gui|xin)\s+yeu\s+cau\s+doi\s+ca\b", folded)
+    if vague_swap and not re.search(r"\b(?:quy dinh|quy trinh|noi quy)\b", folded):
+        return "/tickets", ""
+    return None
+
+
+def public_tickets_url(value):
+    """Validate an administrator-supplied public link without fetching it.
+
+    A valid URL does not prove the site is deployed or authenticate its users.
+    Never expose a local preview, a credential-bearing URL or malformed host.
+    """
+    value = value.strip()
+    if not value or len(value) > 2048 or "\\" in value or any(c.isspace() or ord(c) < 32 or ord(c) == 127 for c in value):
+        return None
+    try:
+        parsed = urlsplit(value)
+        host = parsed.hostname
+        if (parsed.scheme != "https" or not host or parsed.username is not None or
+                parsed.password is not None or parsed.port == 0 or "%" in host):
+            return None
+        try:
+            address = ip_address(host)
+        except ValueError:
+            host = host.rstrip(".").encode("idna").decode("ascii").lower()
+            labels = host.split(".")
+            if (len(labels) < 2 or len(host) > 253 or
+                    any(not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", label) for label in labels) or
+                    not re.fullmatch(r"[a-z]{2,63}|xn--[a-z0-9-]+", labels[-1]) or
+                    labels[-1] in {"localhost", "local", "localdomain", "localnet", "internal", "intranet", "intra", "corp", "lan", "home", "private", "test", "invalid", "example", "onion"} or
+                    host == "home.arpa" or host.endswith(".home.arpa")):
+                return None
+        else:
+            if (not address.is_global or address.is_multicast or address.is_reserved or
+                    (address.version == 6 and address.ipv4_mapped is not None and not address.ipv4_mapped.is_global)):
+                return None
+        return value
+    except (ValueError, UnicodeError):
+        return None
+
+
 def route(text):
     """Return a canonical command and original arguments, or ordinary prose."""
     text = unicodedata.normalize("NFC", text).strip()
+    ticket = ticket_route(text)
+    if ticket:
+        return ticket
     pieces = text.split(maxsplit=1)
     head, argument = (pieces + [""])[:2] if pieces else ("", "")
     command = normalized(head)
@@ -22,6 +121,18 @@ def route(text):
     if command.startswith("/"):
         return aliases.get(command, command), argument
     folded = normalized(text)
+    # Exact read/navigation phrases only. Longer policy questions or ordinary
+    # prose containing these words retain their normal interpretation.
+    phrase = " ".join(folded.split()).rstrip(".!?").rstrip()
+    navigation = {
+        "thong bao": "/thongbao", "xem thong bao": "/thongbao",
+        "minh co thong bao gi khong": "/thongbao", "toi co thong bao gi khong": "/thongbao",
+        "cho minh xem thong bao": "/thongbao",
+        "bot lam duoc gi": "/trogiup", "cho minh xem menu": "/trogiup",
+        "cho toi xem menu": "/trogiup", "xem menu": "/trogiup", "bot co tinh nang gi": "/trogiup",
+    }
+    if phrase in navigation:
+        return navigation[phrase], ""
     for phrase, command in (("xem lich", "/lich"), ("lich", "/lich"),
                             ("hoi tai lieu", "/hoi"), ("tro giup", "/trogiup"),
                             ("huong dan", "/trogiup"), ("menu", "/trogiup")):
@@ -42,7 +153,8 @@ def help_topic(argument):
     return normalized(" ".join(argument.split())).lstrip("/") in ("help", "trogiup", "tro giup", "huong dan", "?")
 
 
-def help_text(topic="", *, sheets_state="not_configured", lab=False, issues=False):
+def help_text(topic="", *, sheets_state="not_configured", lab=False, issues=False,
+              issue_access=False, reminders=False, tickets=False, private_chat=True):
     topic = normalized(" ".join(topic.split())).lstrip("/")
     tomorrow = (datetime.now(VIETNAM_TZ) + timedelta(days=1)).strftime("%d/%m/%Y")
     if topic in ("lich", "lichcuatoi", "calendar"):
@@ -67,7 +179,22 @@ def help_text(topic="", *, sheets_state="not_configured", lab=False, issues=Fals
             "invalid": "Cấu hình lịch cần người quản lý bot kiểm tra.",
             "not_configured": "Lịch chưa được kết nối."}[sheets_state]
         return result
-    if topic in ("nhac", "nhac viec"):
+    if topic in ("thongbao", "thong bao"):
+        lines = ["THÔNG BÁO", ""]
+        if reminders:
+            lines += ["Nhắc lịch của bạn tại chat này:",
+                      "/nhac xem — các nhắc đang chờ",
+                      "/nhac lichsu — nhắc gần đây và kết quả gửi", ""]
+        if tickets:
+            lines += ["Yêu cầu đổi ca:",
+                      "/choxacnhan — yêu cầu đang chờ bạn đồng ý" +
+                      (" (nhắn riêng cho bot)" if not private_chat else ""),
+                      "Bot gửi thông báo riêng khi có yêu cầu mới cho tài khoản đã liên kết.", ""]
+        if not reminders and not tickets:
+            lines += ["Chưa có mục thông báo được mở cho bạn tại đây.", ""]
+        lines.append("/menu — trở về menu")
+        return "\n".join(lines)
+    if topic in ("nhac", "nhac viec", "nhac lich"):
         return ("NHẮC VIỆC\n"
                 "1. Tạo nhắc:\n/nhac sau 10 phut | Gửi báo cáo\n"
                 "/nhac mai 09:00 | Họp nhóm\n"
@@ -78,7 +205,8 @@ def help_text(topic="", *, sheets_state="not_configured", lab=False, issues=Fals
                 "4. Hủy: /nhac huy MÃ_NHẮC\n"
                 "Thay MÃ_NHẮC bằng mã bot gửi khi tạo hoặc trong danh sách.\n"
                 "Dấu | ngăn thời gian và nội dung. Giờ Việt Nam; bot nhắc tại chính chat tạo nhắc. "
-                "Máy chạy bot cần bật và có mạng.")
+                "Máy chạy bot cần bật và có mạng.\n"
+                "Bạn tự đặt từng nhắc; bot chưa tự tạo nhắc từ lịch Sheets.")
     if topic in ("hoi", "tailieu", "tai lieu"):
         return ("HỎI TÀI LIỆU\n/tailieu — xem tài liệu bạn được phép đọc\n"
                 "/hoi Giờ làm việc của nhóm là khi nào?\n"
@@ -87,6 +215,11 @@ def help_text(topic="", *, sheets_state="not_configured", lab=False, issues=Fals
                 "Tra lịch Google Sheets dùng /lich.\n/menu — trở về hướng dẫn chung")
     if topic == "issue":
         if not issues:
+            if issue_access:
+                return ("TẠO ISSUE — hiện chưa bật.\n"
+                        "Nhờ người quản lý bật tính năng và chuẩn bị tab nhận issue trên Sheets.\n"
+                        "Khi bật, bot sẽ đưa bản nháp để bạn xác nhận trước khi tạo.\n"
+                        "/menu — trở về menu")
             return "TẠO ISSUE — hiện chưa bật hoặc bạn chưa được cấp quyền.\nDùng /menu để xem tính năng có thể dùng."
         return ("TẠO ISSUE\n1. Gửi nội dung:\n/issue tao Lỗi nút lưu | Bấm Lưu nhưng dữ liệu chưa cập nhật\n"
                 "2. Đọc bản nháp bot gửi; lúc này chưa tạo issue.\n"
@@ -98,6 +231,21 @@ def help_text(topic="", *, sheets_state="not_configured", lab=False, issues=Fals
         return ("GỬI GÓP Ý\n/phanhoi Lịch ngày 06/10 thiếu phòng\n"
                 "Ghi rõ lệnh bạn dùng, kết quả nhận được và điều bạn mong muốn. "
                 "Góp ý được lưu trên máy chạy bot để người quản lý tổng hợp.")
+    if topic in TICKETS_TOPICS:
+        return ("ĐỔI CA QUA TIN NHẮN RIÊNG\n"
+                "1. Người tạo nhắn /doica, chọn hai ca tương lai và kiểm tra nội dung.\n"
+                "2. Gửi lệnh /doica gui kèm mã bot cấp. Chờ thông báo Đã gửi yêu cầu.\n"
+                "3. Bot gửi thông báo riêng cho người đổi cùng đã được liên kết.\n"
+                "4. Đọc hai ca rồi gửi /dongy hoặc /tuchoi kèm mã 4 số bot cấp.\n\n"
+                "Không nhận được tin hoặc mã hết hạn: /choxacnhan\n"
+                "Danh sách dài: /doica trang 2; quay về: /doica trang 1.\n"
+                "Bản xem trước và mã xác nhận có hiệu lực tối đa 15 phút.\n"
+                "Bot chỉ đổi lịch sau khi đủ các bước xác nhận; có bước quản lý nếu được cấu hình.\n\n"
+                "/tickets — menu hoặc tiếp tục bước đang nhập\n"
+                "/yeucau — xem hoặc hủy yêu cầu của tôi\n"
+                "/lichsudoica — lịch sử\n"
+                "/choduyet — dành cho quản lý\n\n"
+                "Cần quản trị liên kết tài khoản trước khi đổi ca; /dangky chỉ lưu tên tra lịch.")
     if topic in ("dangky", "hoso", "nhom"):
         return ("DÙNG BOT TRONG NHÓM\n"
                 "Trả lời một tin của bot hoặc gọi @bot, rồi hỏi lịch/quy định.\n"
@@ -107,19 +255,35 @@ def help_text(topic="", *, sheets_state="not_configured", lab=False, issues=Fals
                 "Tên chỉ dùng để lọc lịch tại chat này, không xác minh danh tính hay cấp quyền.\n"
                 "Chỉ đọc lịch và tài liệu được quản trị chia sẻ với nhóm. Câu trả lời hiển thị cho cả nhóm.")
     if topic:
-        return "Chưa có mục hướng dẫn này. Dùng /menu hoặc /help lich, /help nhac, /help tailieu, /help issue, /help phanhoi."
-    state = {"ready": "đã cấu hình", "denied": "chưa có quyền ở chat này", "invalid": "cần kiểm tra cấu hình",
-             "not_configured": "chưa kết nối"}[sheets_state]
-    return ("MENU BOT\n"
-            f"1. Lịch ({state}): /lich homnay\n"
-            "2. Nhắc việc: /nhac sau 10 phut | Gửi báo cáo\n"
-            "3. Tài liệu: /tailieu hoặc /hoi Câu hỏi\n"
-            "4. Góp ý: /phanhoi Nội dung\n"
-            f"5. Issue: {'/help issue' if issues else 'hiện chưa bật hoặc chưa có quyền'}\n\n"
-            "Lịch của bạn: /dangky Họ tên đầy đủ → /lichcuatoi homnay\n"
-            "Xem chi tiết: /help nhom · /help lich · /help nhac · /help tailieu · /help phanhoi\n"
-            "Có thể viết có dấu hoặc không dấu. Ví dụ: lịch hôm nay, xem nhắc việc.\n"
-            "Trong nhóm: trả lời một tin của bot rồi nhập lệnh. Nhắn /menu bất cứ lúc nào để xem lại.")
+        return "Chưa có mục hướng dẫn này. Gửi /menu để xem các mục đang dùng."
+    # Menu entries reflect this user's access. Disabled issue creation stays
+    # visible to eligible users with an explicit status, never enabling writes.
+    entries = []
+    if sheets_state == "ready":
+        entries.append("Tra lịch: /lich homnay")
+        if lab:
+            entries.append("Lịch của tôi: /lichcuatoi homnay")
+    if tickets:
+        entries.append("Đổi ca: /doica" + (" (nhắn riêng cho bot)" if not private_chat else ""))
+    if reminders:
+        entries.append("Nhắc lịch: /nhac")
+    if reminders or tickets:
+        entries.append("Thông báo: /thongbao")
+    if issues or issue_access:
+        entries.append("Tạo issue: /issue" + ("" if issues else " (chưa bật)"))
+    lines = ["MENU BOT", ""] + [f"{index}. {entry}" for index, entry in enumerate(entries, 1)]
+    if sheets_state == "ready" and lab:
+        lines += ["", "Chưa đăng ký tên? /dangky Họ tên đầy đủ"]
+    if sheets_state == "ready":
+        lines += ["", "Có thể hỏi: Mai mình có ca nào?" if lab else "Có thể hỏi: Mai có lịch gì?"]
+    if tickets:
+        lines += ["Đổi ca tự nhiên: Mình muốn đổi ca"]
+    if not entries:
+        lines += ["Bạn có thể nhắn trực tiếp để trò chuyện." if private_chat else
+                  "Chưa có mục nào được mở tại nhóm này. Nhờ quản trị kiểm tra quyền."]
+    if not private_chat:
+        lines += ["", "Trong nhóm: @bot hoặc trả lời tin của bot để hỏi hay trò chuyện."]
+    return "\n".join(lines)
 
 
 @dataclass(frozen=True)

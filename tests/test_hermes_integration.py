@@ -178,6 +178,33 @@ class RealHermesTests(unittest.IsolatedAsyncioTestCase):
         await self.adapter._dispatch(self.update("group-3", user="new-member", chat="not-approved", text="/menu"))
         self.assertEqual(2, self.adapter.client.send_text_chunk.await_count)
 
+    async def test_native_group_conversation_for_members_keeps_scopes_and_tools(self):
+        import importlib
+        from dataclasses import replace
+        from gateway.session import build_session_key
+
+        work_module = importlib.import_module(self.adapter.__class__.__module__.rsplit(".", 1)[0] + ".work")
+        self.adapter.settings = replace(self.adapter.settings, group_access="members")
+        self.adapter.work = work_module.WorkService(self.adapter.settings, environ={})
+        self.adapter._bot_names = ("Bot LabCoach",)
+        for index, user in enumerate(("new-a", "new-b")):
+            event = self.update(f"conversation-{index}", user=user, text="@Bot LabCoach Giải thích Python là gì?")
+            await self.adapter._dispatch(event)
+            await self.adapter._dispatch(event)
+        self.assertEqual(2, self.handler.await_count)
+        events = [call.args[0] for call in self.handler.await_args_list]
+        self.assertEqual({"new-a", "new-b"}, {e.source.user_id for e in events})
+        self.assertTrue(all(e.source.chat_id == "g1" and not e.allow_gateway_control for e in events))
+        self.assertEqual(2, len({build_session_key(e.source, group_sessions_per_user=True) for e in events}))
+        for event in events:
+            self.assertEqual([], self.adapter.toolsets_for_source(event.source))
+        self.assertTrue(all(call.args[0] == "g1" for call in self.adapter.client.send_text_chunk.await_args_list))
+        for index, (chat, kind) in enumerate((("not-approved", "GROUP"), ("dm-new-a", "PRIVATE"))):
+            await self.adapter._dispatch(self.update(f"denied-chat-{index}", user="new-a", chat=chat, kind=kind,
+                                                     text="Giải thích Python là gì?"))
+        self.assertEqual(2, self.handler.await_count)
+        self.assertEqual(2, self.adapter.client.send_text_chunk.await_count)
+
 
 if __name__ == "__main__":
     unittest.main()

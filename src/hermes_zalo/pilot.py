@@ -8,7 +8,7 @@ import time
 import uuid
 
 
-KINDS = frozenset(("chat", "documents", "reminders", "calendar", "issues", "feedback", "poll", "access", "command"))
+KINDS = frozenset(("chat", "documents", "reminders", "calendar", "issues", "feedback", "poll", "access", "command", "tickets_notification"))
 OUTCOMES = frozenset((
     "ok", "error", "denied", "blocked", "uncertain", "created", "cancelled", "sent",
     "not_found", "unsupported", "pending", "expired", "timeout", "rate_limited", "ignored", "duplicate",
@@ -129,7 +129,8 @@ def _money(value) -> str:
 
 def format_report(report: dict) -> str:
     kinds = {"chat": "hội thoại", "documents": "tài liệu", "reminders": "nhắc việc", "calendar": "lịch",
-             "issues": "issue", "feedback": "góp ý", "poll": "nhận tin", "access": "phân quyền", "command": "lệnh"}
+             "issues": "issue", "feedback": "góp ý", "poll": "nhận tin", "access": "phân quyền", "command": "lệnh",
+             "tickets_notification": "thông báo đổi ca"}
     outcomes = {"ok": "thành công", "error": "lỗi", "denied": "từ chối", "blocked": "đã chặn",
                 "uncertain": "chưa rõ kết quả", "created": "đã tạo", "cancelled": "đã hủy", "sent": "đã gửi",
                 "not_found": "không tìm thấy", "unsupported": "chưa hỗ trợ", "pending": "đang chờ",

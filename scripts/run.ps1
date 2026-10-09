@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Position=0)]
-    [ValidateSet('Setup', 'SetupSheets', 'SheetsCheck', 'Update', 'PrepareDocs', 'PrepareSheets', 'FeatureDemo', 'Report', 'Check', 'Demo', 'Test', 'TestHermes', 'ZaloCheck', 'Discover', 'Model', 'Start')]
+    [ValidateSet('Setup', 'SetupSheets', 'SheetsCheck', 'Update', 'PrepareDocs', 'PrepareSheets', 'FeatureDemo', 'Report', 'Check', 'Demo', 'Test', 'TestHermes', 'TicketsDemo', 'TicketsTest', 'TicketsChatDemo', 'TicketsLabCheck', 'TicketsLinkUsers', 'ZaloCheck', 'Discover', 'Model', 'Start')]
     [string]$Action = 'Check'
 )
 $ErrorActionPreference = 'Stop'
@@ -73,6 +73,11 @@ try {
             }
             'ZaloCheck' { & $taskPython -m hermes_zalo.cli probe }
             'Discover' { & $taskPython -m hermes_zalo.cli discover }
+            'TicketsDemo' { & $taskPython scripts\launch.py tickets demo }
+            'TicketsTest' { & $taskPython scripts\launch.py tickets sheets_test }
+            'TicketsChatDemo' { & $taskPython -m hermes_zalo.tickets.chat_demo }
+            'TicketsLabCheck' { & $taskPython -m hermes_zalo.tickets.cli check-lab }
+            'TicketsLinkUsers' { & $taskPython -m hermes_zalo.tickets.cli import-zalo-users --mode lab_live }
             'Model' { & $taskPython scripts\launch.py model }
             'Start' { & $taskPython scripts\launch.py gateway run }
         }

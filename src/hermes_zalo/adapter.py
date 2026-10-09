@@ -86,6 +86,7 @@ class ZaloAdapter(BasePlatformAdapter):
         self.store: StateStore | None = None
         self._poll_task: asyncio.Task | None = None
         self._reminder_task: asyncio.Task | None = None
+        self._tickets_task: asyncio.Task | None = None
         self.work: WorkService | None = None
         self._groups_supported = False
         self._bot_names: tuple[str, ...] = ()
@@ -130,6 +131,7 @@ class ZaloAdapter(BasePlatformAdapter):
             self._mark_connected()
             self._poll_task = asyncio.create_task(self._poll_loop(), name="zalo-long-poll")
             self._reminder_task = asyncio.create_task(self._reminder_loop(), name="zalo-reminders")
+            self._tickets_task = asyncio.create_task(self._tickets_loop(), name="zalo-ticket-notifications")
             logger.info("Zalo adapter connected; group capability=%s", self._groups_supported)
             return True
         except AuthenticationError:
@@ -157,6 +159,11 @@ class ZaloAdapter(BasePlatformAdapter):
             reminder_task.cancel()
             with suppress(asyncio.CancelledError):
                 await reminder_task
+        tickets_task, self._tickets_task = self._tickets_task, None
+        if tickets_task and tickets_task is not asyncio.current_task():
+            tickets_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await tickets_task
         await self.cancel_background_tasks()
         if self.work:
             await self.work.close()
@@ -222,6 +229,52 @@ class ZaloAdapter(BasePlatformAdapter):
                 raise
             self.work.reminders.finish(reminder.id, status)
             self.work.pilot.record("reminders", "error" if status == "failed" else status,
+                                   (time.monotonic() - started) * 1000)
+            if self.has_fatal_error:
+                await self._notify_fatal_error()
+                break
+
+    async def _tickets_loop(self) -> None:
+        try:
+            while self._running:
+                await self._deliver_ticket_notifications()
+                await asyncio.sleep(1)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            # Tickets can still be reviewed manually through /choxacnhan.
+            # Keep unrelated work available if this optional sender stops.
+            logger.error("Tickets notification sender stopped; check local storage and restart. No request details logged")
+
+    async def _deliver_ticket_notifications(self) -> None:
+        if self.work is None or self.client is None or self.has_fatal_error:
+            return
+        for _ in range(20):
+            notice = await self.work.claim_ticket_notification()
+            if notice is None:
+                break
+            # User/chat IDs originate from administrator-verified DM bindings.
+            # This separate transport path is not available to Hermes/model sends.
+            if notice['user_id'] not in self.settings.allowed_users:
+                await self.work.finish_ticket_notification(notice['id'], 'blocked')
+                continue
+            started = time.monotonic()
+            try:
+                for chunk in split_text(notice['text']):
+                    await self.client.send_text_chunk(notice['chat_id'], chunk)
+                status = 'sent'
+            except AuthenticationError:
+                status = 'failed'
+                self._set_fatal_error('zalo_auth', 'Token rejected when delivering ticket notification.', retryable=False)
+            except DeliveryUncertain:
+                status = 'uncertain'
+            except ZaloAPIError:
+                status = 'failed'
+            except BaseException:
+                await self.work.finish_ticket_notification(notice['id'], 'uncertain')
+                raise
+            await self.work.finish_ticket_notification(notice['id'], status)
+            self.work.pilot.record('tickets_notification', 'error' if status == 'failed' else status,
                                    (time.monotonic() - started) * 1000)
             if self.has_fatal_error:
                 await self._notify_fatal_error()
@@ -328,8 +381,11 @@ class ZaloAdapter(BasePlatformAdapter):
                     self.work.pilot.record("command", "ok" if delivered.success else "uncertain",
                                            (time.monotonic() - started) * 1000)
                     return
-            if message.chat_type == "GROUP" and message.user_id not in self.settings.allowed_users:
-                # Read-only group admission must never fall through to Hermes.
+            if (message.chat_type == "GROUP" and message.user_id not in self.settings.allowed_users
+                    and self.work is None):
+                # WorkService must distinguish ordinary conversation from
+                # scoped work reads before a group member reaches Hermes.
+                # If that boundary is unavailable, remain closed.
                 self.store.finish(message.key, "not_admitted")
                 return
             await self.handle_message(event)
@@ -469,6 +525,15 @@ def register(ctx) -> None:
         trusted_inbound=False,
         display_tier="minimal",
         max_message_length=2000,
-        platform_hint="Reply in Vietnamese unless asked otherwise. Plain text only. You have no tools. Never claim to schedule reminders, read internal documents/calendar, or create issues yourself. The application handles commands: /menu, /help lich, /help nhac, /help tailieu, /hoi QUESTION, /tailieu, /nhac sau 1 phut | TEXT, /nhac mai 09:00 | TEXT, /nhac xem, /nhac lichsu, /nhac huy ID, /lich homnay, /lich mai, /lich tuan nay, /lich homnay | coach=NAME, /issue tao TITLE | BODY, /issue xacnhan ID, /phanhoi TEXT. A few explicit Vietnamese phrases such as 'lich hom nay' are handled by the application. Guide users to /menu or the relevant /help command for capabilities and current availability. Never assume issue creation is enabled, infer a user's roster name, or invent internal document contents. Issue creation always needs the application's draft confirmation.",
+        platform_hint=("Reply in Vietnamese unless asked otherwise. Plain text only. Ordinary conversation, writing help and "
+                       "general knowledge questions are welcome in private chats and authorized groups. You have no tools. "
+                       "Do not infer company-specific facts, a user's roster identity, internal rules or document contents. "
+                       "Never claim to read internal documents/calendar, schedule reminders, exchange shifts, send notifications "
+                       "or create issues yourself, and never claim a command completed. The application handles work commands "
+                       "and supported Vietnamese work requests with their existing permissions. Guide users to /menu, /help lich, "
+                       "/help nhac, /help tailieu, /help tickets or /help issue when they need those capabilities. "
+                       "Commands include /hoi QUESTION, /tailieu, /lich homnay, /lichcuatoi mai, /nhac, /thongbao, /doica "
+                       "and /issue. Never assume a feature is enabled; issue creation and shift exchanges require the application's "
+                       "own confirmation flow. For private work details, direct users to their authorized application commands."),
         emoji="💬",
     )

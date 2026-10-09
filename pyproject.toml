@@ -17,3 +17,6 @@ zalo-bot = "hermes_zalo.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+"hermes_zalo.tickets" = ["static/*.html", "static/*.css", "static/*.js"]
