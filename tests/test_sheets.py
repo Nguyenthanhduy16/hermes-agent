@@ -2,6 +2,7 @@ from datetime import date
 import json
 from pathlib import Path
 import unittest
+from unittest.mock import AsyncMock
 
 import httpx
 
@@ -57,6 +58,31 @@ class SheetsHTTPTests(unittest.IsolatedAsyncioTestCase):
         client = self.client(no_request)
         result = await client.calendar(date(2026, 10, 5), "u3", "g1", "GROUP")
         self.assertIn("chưa được cấp quyền", result)
+
+    async def test_dynamic_member_calendar_grant_preserves_row_acl_and_static_permissions(self):
+        rows = [CALENDAR_HEADER, calendar_row(users='new-user', title='Member meeting'),
+                calendar_row(identity='hidden', users='other-user', title='Hidden confidential', start='invalid-hidden')]
+        client = self.client(lambda request: httpx.Response(200, json={'values': rows}), users=frozenset())
+        client.calendar_authorizer = AsyncMock(side_effect=lambda user, chat, kind:
+                                                (user, chat, kind) == ('new-user', 'dm-new', 'PRIVATE'))
+        reply = await client.calendar(date(2026, 10, 5), 'new-user', 'dm-new', 'PRIVATE')
+        self.assertIn('Member meeting', reply)
+        self.assertNotIn('Hidden confidential', reply)
+        self.assertEqual(frozenset(), client.settings.users)
+        self.assertFalse(client.settings.allows('new-user', 'dm-new', 'PRIVATE'))
+        self.assertIn('chưa được cấp quyền', await client.calendar(date(2026, 10, 5), 'new-user', 'g1', 'GROUP'))
+
+    async def test_local_revocation_during_calendar_fetch_suppresses_data(self):
+        active = True
+        def handler(request):
+            nonlocal active
+            active = False
+            return httpx.Response(200, json={'values': [CALENDAR_HEADER, calendar_row(title='Suppressed calendar')]})
+        client = self.client(handler)
+        client.calendar_access_guard = lambda *args: active
+        reply = await client.calendar(date(2026, 10, 5), 'u1', 'dm-u1', 'PRIVATE')
+        self.assertNotIn('Suppressed calendar', reply)
+        self.assertIn('chưa được cấp quyền', reply)
 
     async def test_calendar_row_acl_filters_before_parsing_private_information(self):
         rows = [CALENDAR_HEADER,
@@ -151,6 +177,67 @@ class SheetsHTTPTests(unittest.IsolatedAsyncioTestCase):
         client = self.client(handler)
         await client.append_issue(row)
         self.assertEqual(["GET", "POST"], [request.method for request in calls])
+
+    async def test_issue_access_guard_denial_prevents_credentials_and_http(self):
+        row = ['member-draft', 'now', 'title', 'body', 'open', 'member', 'member-dm', 'PRIVATE']
+        def no_request(request):
+            self.fail('Denied issue must not contact Sheets')
+        client = self.client(no_request)
+        client.token_provider = AsyncMock(return_value='synthetic-token')
+        with self.assertRaises(SheetsError):
+            await client.append_issue(row, access_guard=lambda: False)
+        client.token_provider.assert_not_awaited()
+
+    async def test_issue_revocation_during_header_read_prevents_post(self):
+        active = True
+        methods = []
+        row = ['member-draft', 'now', 'title', 'body', 'open', 'member', 'member-dm', 'PRIVATE']
+        def handler(request):
+            nonlocal active
+            methods.append(request.method)
+            self.assertEqual('GET', request.method)
+            active = False
+            return httpx.Response(200, json={'values': [ISSUE_HEADER]})
+        client = self.client(handler)
+        with self.assertRaises(SheetsError):
+            await client.append_issue(row, access_guard=lambda: active)
+        self.assertEqual(['GET'], methods)
+
+    async def test_issue_revocation_during_write_credential_refresh_prevents_post(self):
+        active = True
+        methods, refreshes = [], []
+        row = ['member-draft', 'now', 'title', 'body', 'open', 'member', 'member-dm', 'PRIVATE']
+        def handler(request):
+            methods.append(request.method)
+            self.assertEqual('GET', request.method)
+            return httpx.Response(200, json={'values': [ISSUE_HEADER]})
+        async def refresh_token():
+            nonlocal active
+            refreshes.append(True)
+            if len(refreshes) == 2:
+                active = False
+            return 'synthetic-token'
+        client = self.client(handler)
+        client.token_provider = refresh_token
+        with self.assertRaises(SheetsError):
+            await client.append_issue(row, access_guard=lambda: active)
+        self.assertEqual(2, len(refreshes))
+        self.assertEqual(['GET'], methods)
+
+    async def test_issue_dynamic_guard_allows_single_write_without_changing_static_lists(self):
+        methods = []
+        row = ['member-draft', 'now', 'title', 'body', 'open', 'member', 'member-dm', 'PRIVATE']
+        def handler(request):
+            methods.append(request.method)
+            if request.method == 'GET':
+                return httpx.Response(200, json={'values': [ISSUE_HEADER]})
+            self.assertEqual([row], json.loads(request.content)['values'])
+            return httpx.Response(200, json={'updates': {'updatedRows': 1}})
+        client = self.client(handler, users=frozenset())
+        await client.append_issue(row, access_guard=lambda: True)
+        self.assertEqual(['GET', 'POST'], methods)
+        self.assertEqual(frozenset(), client.settings.users)
+        self.assertFalse(client.settings.allows('member', 'member-dm', 'PRIVATE'))
 
     async def test_existing_id_and_invalid_header_never_append(self):
         row = ["draft-1", "now", "title", "body", "open", "u1", "p1", "PRIVATE"]

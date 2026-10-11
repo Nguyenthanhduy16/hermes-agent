@@ -205,6 +205,76 @@ class RealHermesTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(2, self.handler.await_count)
         self.assertEqual(2, self.adapter.client.send_text_chunk.await_count)
 
+    async def test_native_registration_bootstrap_approval_and_revocation_keep_private_scope(self):
+        import importlib
+        from dataclasses import replace
+
+        package = self.adapter.__class__.__module__.rsplit('.', 1)[0]
+        work_module = importlib.import_module(package + '.work')
+        sheets_module = importlib.import_module(package + '.sheets')
+        workload_module = importlib.import_module(package + '.workload')
+        self.adapter.settings = replace(self.adapter.settings, group_access='allowlist')
+        values = dict(REGISTRATION_ENABLED='true', REGISTRATION_ADMIN_USERS='u1',
+                      REGISTRATION_WORKLOAD_TAB='Synthetic Workload',
+                      REGISTRATION_WORKLOAD_NAME_COLUMN='A', REGISTRATION_WORKLOAD_PHONE_COLUMN='B',
+                      REGISTRATION_WORKLOAD_HEADER_ROW='1', REGISTRATION_WORKLOAD_NAME_HEADER='Họ tên',
+                      REGISTRATION_WORKLOAD_PHONE_HEADER='Số điện thoại')
+        sheets = SimpleNamespace(settings=sheets_module.SheetsSettings(
+            'synthetic-registration-sheet', self.home / 'unused-registration-key.json',
+            users=frozenset({'u1'}), calendar_format='lab', calendar_tabs=('Synthetic Lab',), issues_enabled=False),
+            close=AsyncMock(), _request=AsyncMock(side_effect=AssertionError('Real API forbidden')))
+        config = workload_module.WorkloadSettings.from_mapping(values, sheets.settings)
+        person = workload_module.WorkloadPerson('Người Thử Native', '0900000001', config.source_key,
+                                                'synthetic-native-fingerprint', True)
+        directory = SimpleNamespace(source_key=config.source_key, settings=config,
+                                    lookup=AsyncMock(return_value=person), resolve_name=AsyncMock(return_value=person))
+        self.adapter.work = work_module.WorkService(self.adapter.settings, environ=values,
+            sheets_client=sheets, registration_directory=directory)
+        self.assertTrue(self.adapter.work.registration.enabled)
+        settings_users = self.adapter.settings.allowed_users
+        user, chat = 'new-native-registration', 'dm-native-registration'
+
+        await self.adapter._dispatch(self.update('reg-denied', user=user, chat=chat, kind='PRIVATE', text='/menu'))
+        self.adapter.client.send_text_chunk.assert_not_awaited()
+        request = self.update('reg-request', user=user, chat=chat, kind='PRIVATE', text='/dangky ' + person.phone)
+        await self.adapter._dispatch(request)
+        await self.adapter._dispatch(request)
+        self.adapter.client.send_text_chunk.assert_awaited_once()
+        self.assertNotIn(person.phone, self.adapter.client.send_text_chunk.await_args.args[1])
+        self.assertNotIn(person.name, self.adapter.client.send_text_chunk.await_args.args[1])
+        self.handler.assert_not_awaited()
+        record = self.adapter.work.registration.store.user_state(user)
+        self.assertEqual('pending', record.status)
+        await self.adapter._dispatch(self.update('reg-approve', user='u1', chat='dm-u1', kind='PRIVATE',
+                                                 text='/duyetdangky ' + record.id))
+        self.assertEqual('approved', self.adapter.work.registration.store.user_state(user).status)
+        await self.adapter._dispatch(self.update('reg-chat', user=user, chat=chat, kind='PRIVATE',
+                                                 text='Giải thích Python là gì?'))
+        self.handler.assert_awaited_once()
+        event = self.handler.await_args.args[0]
+        self.assertEqual((user, chat), (event.source.user_id, event.source.chat_id))
+        self.assertFalse(event.allow_gateway_control)
+        self.assertEqual([], self.adapter.toolsets_for_source(event.source))
+        self.assertNotIn(person.phone, event.text)
+        self.assertEqual(settings_users, self.adapter.settings.allowed_users)
+        sent = self.adapter.client.send_text_chunk.await_count
+        for index, (destination, kind) in enumerate((('wrong-dm', 'PRIVATE'), ('g1', 'GROUP'), ('wrong-group', 'GROUP'))):
+            await self.adapter._dispatch(self.update(f'reg-wrong-{index}', user=user, chat=destination, kind=kind,
+                                                     text='Giải thích Python là gì?'))
+        self.assertEqual(sent, self.adapter.client.send_text_chunk.await_count)
+        await self.adapter._dispatch(self.update('reg-revoke', user='u1', chat='dm-u1', kind='PRIVATE',
+                                                 text='/thuhoidangky ' + record.member_id))
+        sent = self.adapter.client.send_text_chunk.await_count
+        await self.adapter._dispatch(self.update('reg-after-revoke', user=user, chat=chat, kind='PRIVATE',
+                                                 text='Giải thích Python là gì?'))
+        self.assertEqual(sent, self.adapter.client.send_text_chunk.await_count)
+        self.handler.assert_awaited_once()
+        await self.adapter._dispatch(self.update('reg-status', user=user, chat=chat, kind='PRIVATE', text='/trangthaidangky'))
+        self.assertEqual(sent + 1, self.adapter.client.send_text_chunk.await_count)
+        self.assertNotIn(person.phone, self.adapter.client.send_text_chunk.await_args.args[1])
+        self.assertNotIn(person.name, self.adapter.client.send_text_chunk.await_args.args[1])
+        sheets._request.assert_not_awaited()
+
 
 if __name__ == "__main__":
     unittest.main()

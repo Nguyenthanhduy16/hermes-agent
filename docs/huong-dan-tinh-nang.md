@@ -4,6 +4,8 @@ Luồng nhắn riêng và nhớ tên trong cùng hội thoại đã được ng�
 
 Người dùng đã phản hồi “oki rồi” sau bài thử lịch trên Zalo. Bản nâng cấp menu/ngày/bộ lọc mới cần thử lại sau khi khởi động bot. Xem [bảng lệnh dễ dùng](lenh-zalo.md), hoặc gửi `/menu`, `/help lich`, `/help nhac` trực tiếp cho bot.
 
+**Quản lý nhiều thành viên:** ưu tiên [đăng ký Workload trong chat riêng](dang-ky.md). Thành viên gửi `/dangky SỐ_ĐIỆN_THOẠI`; quản trị xác minh rồi duyệt từ `/dangkychoduyet`. Duyệt xong tự có quyền lịch, đổi ca, nhắc việc, góp ý và trò chuyện tại chat riêng đã liên kết, không thêm từng `user_id` vào `.env` hoặc khởi động lại cho mỗi người. Issue cần bật toàn hệ thống và có tab đích hợp lệ; tài liệu dùng chung cần `approved_members: true` trong manifest. Quản trị quản lý bằng `/thanhvien` và `/thuhoidangky MÃ_THÀNH_VIÊN`. Quyền quản trị, nhóm và tài liệu riêng giữ nguyên. Mở đổi ca nhiều người bằng `lab_live`; `lab_live_test` vẫn chỉ dành cho hai người thử.
+
 ## 1. Cập nhật và thử ngay
 
 Dừng cửa sổ bot bằng `Ctrl+C`, rồi chạy tại repo:
@@ -53,7 +55,7 @@ Bản này hỗ trợ **`.md` và `.txt` UTF-8**, tìm theo từ khóa tiếng V
 
 3. Gửi `/tailieu` để xem tài liệu mình được phép tra, rồi `/hoi Câu hỏi cụ thể`.
 
-Nhắn riêng: người gửi phải có trong `users`. Trong nhóm: nhóm phải có trong `groups`; nếu `users` không rỗng, người gửi cũng phải có trong đó. Quyền bot trong `.env` vẫn được kiểm tra trước quyền tài liệu. **Nội dung trả trong nhóm hiển thị cho mọi thành viên nhóm**: chỉ cấp `groups` cho tài liệu được phép chia sẻ với cả nhóm.
+Nhắn riêng: người gửi có trong `users`, hoặc đã được duyệt và tài liệu có `"approved_members": true`. Muốn chia sẻ một file cho mọi thành viên đã duyệt, đặt `"approved_members": true`, `"users": []`, `"groups": []` ở chính mục tài liệu đó; không cần khai báo từng ID. Cờ này mặc định `false`, chỉ nhận giá trị JSON `true`/`false`; tài liệu cũ và tài liệu riêng không tự được mở. Trong nhóm: nhóm phải có trong `groups`; nếu `users` không rỗng, người gửi cũng phải có trong đó. Đăng ký riêng không thay quyền tài liệu trong nhóm. Quyền dùng bot vẫn được kiểm tra trước quyền tài liệu. **Nội dung trả trong nhóm hiển thị cho mọi thành viên nhóm**: chỉ cấp `groups` cho tài liệu được phép chia sẻ với cả nhóm.
 
 Không dùng `*`, đường dẫn tuyệt đối, đường dẫn `..`, liên kết tới thư mục khác hoặc file bí mật. Bot chỉ đọc file có trong manifest. Quyền và nội dung tài liệu được đọc lại mỗi câu hỏi; đổi manifest không cần khởi động lại. Đổi `.env` thì phải khởi động lại.
 
@@ -62,6 +64,8 @@ Có thể đổi thư mục bằng `ZALO_KNOWLEDGE_DIR` trong `.env`. Các thư 
 Bộ [10 câu hỏi mẫu và 3 câu không có thông tin](../examples/knowledge/acceptance.json) dùng để kiểm tra trước khi thay bằng tài liệu thật.
 
 ## 3. Nhắc việc
+
+Mọi thành viên đã duyệt được tạo, xem và hủy nhắc của mình tại đúng chat riêng đã liên kết. Không thêm ID vào `.env`. Quyền tạo nhắc trong nhóm vẫn theo cấu hình người dùng/nhóm hiện có.
 
 | Lệnh gửi trên Zalo | Ý nghĩa |
 | --- | --- |
@@ -78,7 +82,7 @@ Múi giờ cố định: **giờ Việt Nam, UTC+7**. Trong nhóm, nhắc đư�
 - Máy và bot cần chạy, có mạng, không ngủ. Bộ hẹn kiểm tra mỗi giây; thời gian nhận còn phụ thuộc mạng và Zalo, không có cam kết chính xác tuyệt đối.
 - Nhắc đang chờ được giữ khi khởi động lại. Trễ không quá 24 giờ: gửi bù và ghi rõ trễ; quá 24 giờ: đánh dấu quá hạn.
 - Nếu dừng máy ngay trong lúc gửi hoặc Zalo không xác nhận kết quả, nhắc được đánh dấu chưa rõ và không tự gửi lại. Hãy kiểm tra tin đã nhận trước khi tạo nhắc thay thế.
-- Tối đa 30 nhắc đang chờ cho mỗi người trong mỗi cuộc trò chuyện, đặt trước tối đa 90 ngày. Thay quyền trong `.env` cần khởi động lại; nhắc của người/nhóm bị thu hồi quyền sẽ bị chặn.
+- Tối đa 30 nhắc đang chờ cho mỗi người trong mỗi cuộc trò chuyện, đặt trước tối đa 90 ngày. Thay quyền trong `.env` cần khởi động lại; thu hồi đăng ký có hiệu lực ngay và chặn nhắc đang chờ của người đó. Nhắc của người/nhóm không còn quyền sẽ bị chặn.
 
 ## 4. Chuẩn bị Google Sheets cho lịch và issue
 
@@ -103,7 +107,7 @@ Tab `Lich`:
 id,start,end,title,users,groups,location
 ```
 
-Mỗi dòng là một lịch. `users` và `groups` chứa ID ngăn cách dấu phẩy; ô trống không tự cấp quyền công khai. Nhắn riêng cần ID trong `users`; nhóm cần ID nhóm trong `groups` và kiểm tra thêm `users` nếu không rỗng. Không hỗ trợ lịch lặp; khai báo từng lần riêng. Bản thử đọc tối đa 1.000 dòng và hiển thị tối đa 20 lịch một ngày.
+Mỗi dòng là một lịch. `users` và `groups` chứa ID ngăn cách dấu phẩy; ô trống không tự cấp quyền công khai. Nhắn riêng cần ID trong `users`; nhóm cần ID nhóm trong `groups` và kiểm tra thêm `users` nếu không rỗng. **Các quyền trên từng dòng của mẫu `standard` vẫn được kiểm tra dù thành viên đã duyệt Workload**; quyền thành viên không biến dòng riêng thành dữ liệu chung. Không hỗ trợ lịch lặp; khai báo từng lần riêng. Bản thử đọc tối đa 1.000 dòng và hiển thị tối đa 20 lịch một ngày.
 
 Tab `Issues`:
 
@@ -128,7 +132,7 @@ ZALO_SHEETS_USERS=USER_ID_CUA_BAN
 ZALO_SHEETS_GROUPS=
 ```
 
-`ZALO_SHEETS_USERS` là danh sách quyền riêng cho lịch/issue. Người dùng còn phải có trong `ZALO_ALLOWED_USERS`. Với nhóm, cần cả `ZALO_ALLOWED_GROUPS` và `ZALO_SHEETS_GROUPS`.
+`ZALO_SHEETS_USERS` và `ZALO_ALLOWED_USERS` là cách cấp quyền cá nhân cũ, vẫn dùng cho người chưa dùng đăng ký Workload. **Người đã duyệt Workload không cần thêm vào hai danh sách để dùng các chức năng thành viên, kể cả issue khi đã bật**; quyền lấy từ dữ liệu đăng ký tại đúng chat riêng đã liên kết. Quyền trên từng dòng `standard` vẫn giữ nguyên. Với nhóm, luôn cần cấu hình cả `ZALO_ALLOWED_GROUPS` và `ZALO_SHEETS_GROUPS`; đăng ký riêng không mở thêm nhóm.
 
 6. Cài phần xác thực Google và kiểm tra:
 
@@ -161,7 +165,9 @@ Giữ các biến ID bảng, đường dẫn khóa và danh sách quyền đã c
 
 Bot trả khóa, session, buổi, phòng, Key Coach, Lab Coach và trạng thái nguyên văn, kèm tab, dòng và link nguồn. Không suy ra giờ cụ thể từ “Sáng/Chiều/Tối”, không tự hiểu trạng thái “Rảnh” là đã xác nhận tham gia. Ngày có ở nhiều tab được hiển thị riêng theo nguồn, không tự quyết định tab nào thay thế tab nào. Lệnh `/lich` mới hiển thị tối đa 5 mục mỗi trang và có lệnh xem tiếp giữ ngày/bộ lọc. Có thể tra tuần và lọc Coach/khóa/phòng/buổi theo [bảng lệnh](lenh-zalo.md).
 
-**Quyền chế độ lab áp dụng cho toàn bộ các tab đã chọn**, vì bảng hiện tại không có ID Zalo trên từng dòng. Người trong `ZALO_SHEETS_USERS` (và danh sách quyền bot) có thể tra lịch nhóm, không phải chỉ lịch cá nhân. Để `ZALO_SHEETS_GROUPS=` trống khi thử nhắn riêng; chỉ cấp quyền nhóm khi dữ liệu được phép hiển thị cho toàn bộ nhóm. Bot không tự ánh xạ tên Coach sang tài khoản Zalo.
+**Quyền đọc chế độ lab áp dụng cho toàn bộ các tab đã chọn**, vì bảng hiện tại không có ID Zalo trên từng dòng. Thành viên Workload đã duyệt được đọc lịch chung tại đúng chat riêng đã liên kết; người có quyền cá nhân theo hai danh sách cũ vẫn dùng được khi không bị chặn đăng ký. `/lichcuatoi` lọc theo danh tính đã được quản trị duyệt và được đối chiếu lại; tên trùng chưa có mã phân biệt sẽ bị chặn, không tự đoán người. Để `ZALO_SHEETS_GROUPS=` trống khi thử nhắn riêng; chỉ cấp quyền nhóm khi dữ liệu được phép hiển thị cho toàn bộ nhóm.
+
+Với thành viên đã duyệt từ bản trước, cập nhật và khởi động lại bot một lần để nạp quyền tự động; không cần duyệt lại, thêm ID hoặc tạo CSV. Quyền đổi ca tự động chỉ áp dụng cho lịch Lab ở chế độ đã bật, vẫn giữ các bước xác nhận, phạm vi hai ô Lab Coach và danh sách hai người nếu dùng `lab_live_test`. Xem [đổi ca bằng chat](tickets-chat.md). Tên tự khai từ `/dangky Họ tên` khi Workload đang tắt không xác minh danh tính hay cấp quyền đổi ca.
 
 Khi `ZALO_ISSUES_ENABLED=false`, bot dùng quyền OAuth chỉ đọc, `SheetsCheck` không đòi tab `Issues`, lệnh `/issue` không tạo bản nháp hay ghi bảng. Để thử issue sau này cần chuẩn bị tab mẫu riêng và chủ động bật tính năng.
 
@@ -195,7 +201,7 @@ Lịch:
 
 Thay ngày bằng ngày có lịch mẫu. Bot chỉ đọc, không sửa lịch. Dòng lịch được cấp quyền nhưng sai ngày/giờ phải được sửa trên Sheets; bot không tự đoán múi giờ hoặc bỏ qua âm thầm.
 
-Issue:
+Issue chỉ dùng sau khi bật `ZALO_ISSUES_ENABLED=true`, có tab `Issues` đúng tiêu đề và quyền ghi Google. **Bảng hiện tại chưa có tab này và issue đang tắt.** Thành viên đã duyệt dùng trong chat riêng mà không cần thêm ID vào `.env`.
 
 ```text
 /issue tao Lỗi nút lưu | Bấm Lưu nhưng dữ liệu chưa cập nhật

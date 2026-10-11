@@ -58,9 +58,10 @@ class IssueStore:
                                      (identity, message.user_id, message.chat_id, message.chat_type))
         return cursor.rowcount == 1
 
-    async def confirm(self, identity, message, client, *, now=None):
+    async def confirm(self, identity, message, client, *, now=None, access_guard=None):
         now = time.time() if now is None else now
-        if client is None or not client.settings.allows(message.user_id, message.chat_id, message.chat_type):
+        if client is None or not (access_guard() if access_guard is not None else
+                                 client.settings.allows(message.user_id, message.chat_id, message.chat_type)):
             return "Chưa cấu hình Sheets hoặc bạn/cuộc trò chuyện này chưa được cấp quyền tạo issue."
         draft = self.scoped(identity, message)
         if draft is None:
@@ -81,7 +82,10 @@ class IssueStore:
         row = [identity, datetime.fromtimestamp(now, timezone.utc).isoformat(), draft["title"], draft["body"],
                "open", draft["user_id"], draft["chat_id"], draft["chat_type"]]
         try:
-            await client.append_issue(row)
+            if access_guard is None:
+                await client.append_issue(row)
+            else:
+                await client.append_issue(row, access_guard=access_guard)
         except SheetsUncertain:
             status = "uncertain"
             answer = f"Chưa xác nhận được issue {identity} đã ghi hay chưa. Hãy kiểm tra cột id trên Sheets; bot không tự tạo lại."

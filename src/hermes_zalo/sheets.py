@@ -120,8 +120,10 @@ class GoogleTokenProvider:
 
 
 class SheetsClient:
-    def __init__(self, settings, *, client=None, token_provider=None):
+    def __init__(self, settings, *, client=None, token_provider=None, calendar_authorizer=None, calendar_access_guard=None):
         self.settings = settings
+        self.calendar_authorizer = calendar_authorizer
+        self.calendar_access_guard = calendar_access_guard
         self.client = client or httpx.AsyncClient(timeout=20, follow_redirects=False)
         self.token_provider = token_provider or GoogleTokenProvider(settings)
 
@@ -132,8 +134,10 @@ class SheetsClient:
         cell_range = quote(f"'{tab}'!{span}", safe="")
         return f"https://sheets.googleapis.com/v4/spreadsheets/{self.settings.spreadsheet_id}/values/{cell_range}"
 
-    async def _request(self, method, url, **kwargs):
+    async def _request(self, method, url, *, access_guard=None, **kwargs):
         token = await self.token_provider()
+        if access_guard is not None and not access_guard():
+            raise SheetsError("Quyền tạo issue đã thay đổi; không ghi vào Sheets.")
         try:
             response = await self.client.request(method, url, headers={"Authorization": f"Bearer {token}"}, follow_redirects=False, **kwargs)
             if (response.status_code >= 500 or response.status_code == 408) and method == "POST":
@@ -163,14 +167,29 @@ class SheetsClient:
             raise SheetsError("Dữ liệu Google Sheets không đúng mẫu.")
         return [row + [""] * (len(header) - len(row)) for row in rows[1:] if any(row)]
 
+    async def _allows_calendar(self, user_id, chat_id, chat_type):
+        # Runtime-owned read authorization; never used for issue writes or to
+        # change configured groups, source tabs, or per-row calendar ACLs.
+        if self.calendar_authorizer is not None:
+            return bool(await self.calendar_authorizer(user_id, chat_id, chat_type))
+        return self.settings.allows_calendar(user_id, chat_id, chat_type)
+
+    def _calendar_still_allowed(self, user_id, chat_id, chat_type):
+        # A local revocation during a network read must suppress its result.
+        return self.calendar_access_guard is None or bool(self.calendar_access_guard(user_id, chat_id, chat_type))
+
     async def calendar(self, day, user_id, chat_id, chat_type):
-        if not self.settings.allows_calendar(user_id, chat_id, chat_type):
+        if not await self._allows_calendar(user_id, chat_id, chat_type):
             return "Bạn hoặc cuộc trò chuyện này chưa được cấp quyền tra lịch Sheets."
         if self.settings.calendar_format == "lab":
             from .lab_calendar import format_calendar
             schedules = await self._lab_schedules()
+            if not self._calendar_still_allowed(user_id, chat_id, chat_type):
+                return "Bạn hoặc cuộc trò chuyện này chưa được cấp quyền tra lịch Sheets."
             return format_calendar(schedules, day, self.settings.spreadsheet_id)
         rows = await self._rows(self.settings.calendar_tab, CALENDAR_HEADER)
+        if not self._calendar_still_allowed(user_id, chat_id, chat_type):
+            return "Bạn hoặc cuộc trò chuyện này chưa được cấp quyền tra lịch Sheets."
         start = datetime.combine(day, daytime.min, VIETNAM_TZ)
         end = start + timedelta(days=1)
         found = []
@@ -217,11 +236,14 @@ class SheetsClient:
         except (KeyError, TypeError, ValueError, IndexError):
             raise SheetsError("Tab Lịch lab sai cấu trúc hoặc vượt 1.000 dòng; kiểm tra tiêu đề, ngày và ô gộp.") from None
 
-    async def lab_calendar(self, query, user_id, chat_id, chat_type):
-        if not self.settings.allows_calendar(user_id, chat_id, chat_type):
+    async def lab_calendar(self, query, user_id, chat_id, chat_type, *, exact_coach=False):
+        if not await self._allows_calendar(user_id, chat_id, chat_type):
             return "Bạn hoặc cuộc trò chuyện này chưa được cấp quyền tra lịch Sheets."
         from .lab_calendar import format_query
-        return format_query(await self._lab_schedules(), query, self.settings.spreadsheet_id)
+        schedules = await self._lab_schedules()
+        if not self._calendar_still_allowed(user_id, chat_id, chat_type):
+            return "Bạn hoặc cuộc trò chuyện này chưa được cấp quyền tra lịch Sheets."
+        return format_query(schedules, query, self.settings.spreadsheet_id, exact_coach=exact_coach)
 
     async def coach_name(self, name, user_id, chat_id, chat_type):
         if not self.settings.allows_calendar(user_id, chat_id, chat_type):
@@ -247,10 +269,14 @@ class SheetsClient:
         issues = await self._rows(self.settings.issues_tab, ISSUE_HEADER) if self.settings.issues_enabled else None
         return {"calendar_rows": count, "issue_rows": len(issues) if issues is not None else None}
 
-    async def append_issue(self, row):
+    async def append_issue(self, row, *, access_guard=None):
         if not self.settings.issues_enabled:
             raise SheetsError("Tạo issue đang tắt; bảng này hiện chỉ dùng để đọc lịch.")
+        if access_guard is not None and not access_guard():
+            raise SheetsError("Quyền tạo issue đã thay đổi; không ghi vào Sheets.")
         existing = await self._rows(self.settings.issues_tab, ISSUE_HEADER)
+        if access_guard is not None and not access_guard():
+            raise SheetsError("Quyền tạo issue đã thay đổi; không ghi vào Sheets.")
         for item in existing:
             if str(item[0]) == row[0]:
                 if item[2:] != row[2:]:
@@ -260,7 +286,7 @@ class SheetsClient:
             raise SheetsError("Tab Issues đã đạt giới hạn 1.000 dòng thử nghiệm.")
         result = await self._request("POST", self._url(self.settings.issues_tab, "A:H") + ":append",
                                      params={"valueInputOption": "RAW", "insertDataOption": "INSERT_ROWS"},
-                                     json={"majorDimension": "ROWS", "values": [row]})
+                                     json={"majorDimension": "ROWS", "values": [row]}, access_guard=access_guard)
         updates = result.get("updates")
         if not isinstance(updates, dict) or updates.get("updatedRows") != 1:
             raise SheetsUncertain("Chưa xác nhận được dòng issue đã ghi; kiểm tra Sheets trước khi thử lại.")

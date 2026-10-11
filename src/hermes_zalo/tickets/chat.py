@@ -94,8 +94,99 @@ class TicketsChat:
                     db.execute("INSERT INTO ticket_chat_code_migrations VALUES ('numeric-v1')")
         self.notifications = PeerNotifications(self)
 
-    def claim_notification(self, allowed_users):
-        return self.notifications.claim(allowed_users)
+    def claim_notification(self, allowed_users, *, notification_id=None):
+        return self.notifications.claim(allowed_users, notification_id=notification_id)
+
+    def registration_notifications(self):
+        """Local queue participants; no source reads or delivery claims."""
+        with self.store.lock:
+            rows = self.store.db.execute(
+                "SELECT id,context FROM ticket_peer_notifications WHERE bot=? AND status='queued' ORDER BY id",
+                (self.bot_scope,)).fetchall()
+            return [(row['id'], tuple(json.loads(row['context'])[side]['id']
+                                     for side in ('creator', 'recipient'))) for row in rows]
+
+    def block_registration_notification(self, notification_id):
+        with self.store.transaction() as db:
+            db.execute("UPDATE ticket_peer_notifications SET status='blocked' WHERE bot=? AND id=? AND status='queued'",
+                       (self.bot_scope, notification_id))
+
+    def registration_accounts(self, message):
+        """Select only identities used by this exact input before async checks.
+
+        The normal handler still checks authorization, binding revisions, input
+        codes and source versions after those checks. Lists remain read-only;
+        a later selected person, ticket or confirmation gets its own check.
+        """
+        if message.chat_type != 'PRIVATE':
+            return ()
+        with self.store.lock:
+            user = self.identities.resolve(self.bot_scope, message.user_id, message.chat_id)
+            if not user:
+                return ()
+            accounts = {user['id']}
+
+            def member(member_id):
+                matches = [person['id'] for person in self.identities.linked_accounts(self.bot_scope)
+                           if person['member_id'] == member_id]
+                if len(matches) != 1:
+                    raise TicketError('Liên kết người đổi cùng chưa xác định duy nhất; nhờ quản trị kiểm tra.')
+                accounts.update(matches)
+
+            def ticket(ticket_id):
+                # Reuse the service's exact read authorization before looking
+                # up anyone else's roster identity from a supplied ticket ID.
+                row = self.service._row(user, ticket_id)
+                accounts.add(row['creator'])
+                member(row['recipient'])
+
+            text = message.text.strip()
+            route = ticket_route(text)
+            body = self._load(self._scope(message), user)
+            if route:
+                command, argument = route
+                parts = argument.split()
+                if command in ACTIONS:
+                    if len(parts) == 1 and re.fullmatch(r'[0-9]{4}', parts[0]):
+                        notice = self.store.db.execute(
+                            'SELECT context FROM ticket_peer_notifications WHERE bot=? AND code=?',
+                            (self.bot_scope, parts[0])).fetchone()
+                        if notice:
+                            context = json.loads(notice['context'])
+                            peer = context['recipient']
+                            if (peer['id'] == user['id'] and peer['user_id'] == message.user_id
+                                    and peer['chat_id'] == message.chat_id):
+                                accounts.update(context[side]['id'] for side in ('creator', 'recipient'))
+                            return tuple(sorted(accounts))
+                    if parts and parts[0].upper().startswith('DC-'):
+                        ticket(parts[0].upper())
+                    elif body and body['step'] == 'review':
+                        ticket(body['ticket'])
+                    return tuple(sorted(accounts))
+                if command in ('/yeucau', '/lichsudoica') and parts and parts[0].upper().startswith('DC-'):
+                    ticket(parts[0].upper())
+                    return tuple(sorted(accounts))
+                if command in ('/yeucau', '/choxacnhan', '/lichsudoica', '/choduyet'):
+                    return tuple(sorted(accounts))
+                if command == '/doica' and not argument.strip():
+                    return tuple(sorted(accounts))  # Starting over abandons the old peer.
+                if command not in ('/tickets', '/doica'):
+                    return tuple(sorted(accounts))
+            elif folded(text) in ('thoat', 'quay lai'):
+                return tuple(sorted(accounts))  # Navigation cannot create/confirm a request.
+            if body:
+                if body['step'] == 'review':
+                    ticket(body['ticket'])
+                elif body.get('person'):
+                    member(body['person']['id'])
+                elif body.get('b'):
+                    member(body['b']['member_id'])
+                elif body['step'] == 'person' and not route:
+                    selected = next((choice['item'] for choice in self._visible(body)
+                                     if choice['code'] == text), None)
+                    if selected:
+                        member(selected['id'])
+            return tuple(sorted(accounts))
 
     def finish_notification(self, notification_id, status):
         self.notifications.finish(notification_id, status)
@@ -121,6 +212,13 @@ class TicketsChat:
 
     def _scope(self, message):
         return digest(packed([self.bot_scope, message.chat_type, message.user_id, message.chat_id]))
+
+    def has_dialog(self, message):
+        if message.chat_type != 'PRIVATE':
+            return False
+        with self.store.lock:
+            return self.store.db.execute('SELECT 1 FROM ticket_chat_dialogs WHERE scope=?',
+                                         (self._scope(message),)).fetchone() is not None
 
     def has_reason_context(self, message):
         """Only free-form reason input takes precedence over fuzzy policy intent.
@@ -572,9 +670,19 @@ class TicketsChat:
                    (f"\nKết quả: {latest}" if ticket['status'] not in ('pending_peer', 'pending_manager') else '') +
                    f"\n\nLịch sử: /lichsudoica {ticket['id']}\nDanh sách: /yeucau")
         body = dict(step='review', ticket=ticket_id, version=ticket['version'], code=code,
+                    participant_bindings=self._participant_bindings(ticket),
                     actions=ticket['actions'], display=display)
         self._save(scope, user, body, ttl=CONFIRM_TTL_SECONDS)
         return display
+
+    def _participant_bindings(self, ticket):
+        """Both people must still have the bindings shown when code was issued."""
+        creator = self.identities.destination(self.bot_scope, ticket['requester_id'])
+        peers = [person for person in self.identities.linked_accounts(self.bot_scope)
+                 if person['member_id'] == ticket['recipient_member_id']]
+        if not creator or len(peers) != 1:
+            return None
+        return {person['id']: person['_binding'] for person in (creator, peers[0])}
 
     def _history(self, user, ticket_id, page):
         ticket = self.service.detail(user, ticket_id)
@@ -614,8 +722,12 @@ class TicketsChat:
                 or body['code'] != code or action not in body['actions']):
             raise TicketError('Mã xác nhận không thuộc yêu cầu/bước hiện tại hoặc đã hết hạn. '
                               f'Gửi /yeucau {ticket_id} để xem lại.', 409)
+        detail = self.service.detail(user, ticket_id)
+        if (not body.get('participant_bindings') or
+                body['participant_bindings'] != self._participant_bindings(detail)):
+            self._clear(scope)
+            raise TicketError('Liên kết người tham gia đã thay đổi; gửi /choxacnhan hoặc /yeucau để xem lại trước khi xác nhận.', 409)
         if action in ('accept', 'approve'):
-            detail = self.service.detail(user, ticket_id)
             self._linked_pair(detail['a'], detail['b'])
         ticket = self.service.action(user, ticket_id, action, body['version'])
         self._clear(scope)

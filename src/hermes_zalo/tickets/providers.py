@@ -3,6 +3,8 @@
 The caller owns durable ticket state, authorization, locking and read-back.
 Google's atomic batch write is not compare-and-swap against manual edits.
 """
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -30,6 +32,37 @@ class TicketsSourceError(Exception):
 
 class TicketsWriteUncertain(TicketsSourceError):
     """A write may have reached Google; reconcile before any new write."""
+
+
+class TicketsAccessDenied(TicketsSourceError):
+    """A local permission changed before the external write began."""
+
+
+_ticket_access_guard = ContextVar('tickets_operation_access_guard', default=None)
+
+
+@contextmanager
+def ticket_access_scope(guard):
+    """Bind a trusted runtime permission snapshot to this operation only."""
+    if guard is not None and not callable(guard):
+        raise TicketsAccessDenied('Quyền đổi ca đã thay đổi; hãy xem lại yêu cầu trước khi xác nhận.')
+    token = _ticket_access_guard.set(guard)
+    try:
+        yield
+    finally:
+        _ticket_access_guard.reset(token)
+
+
+def require_ticket_access():
+    guard = _ticket_access_guard.get()
+    if guard is None:
+        return  # Legacy runtimes retain their existing explicit authorization.
+    try:
+        allowed = guard() is True
+    except Exception:
+        allowed = False
+    if not allowed:
+        raise TicketsAccessDenied('Quyền đổi ca đã thay đổi; hãy xem lại yêu cầu trước khi xác nhận.')
 
 
 def _flag(values, name):
@@ -113,6 +146,10 @@ class GoogleSheetsAssignments:
                 raise ValueError()
         except Exception:
             raise TicketsSourceError("Chưa xác thực được bảng thử; kiểm tra khóa Google và quyền chia sẻ trên máy.") from None
+        if method == "POST":
+            # Credential refresh can block; recheck the captured local grant
+            # after it returns and immediately before any external mutation.
+            require_ticket_access()
         try:
             response = self.client.request(
                 method, self._url + (":batchUpdate" if method == "POST" else ""),
@@ -225,6 +262,7 @@ class GoogleSheetsAssignments:
             return list(self._read()[1].values())
 
     def swap(self, a, b, ticket_id):
+        require_ticket_access()
         if not self.settings.write_enabled or not self.settings.exclusive_writer:
             raise TicketsSourceError("Ghi đổi ca trên bảng thử đang tắt.")
         if not isinstance(ticket_id, str) or not _ID.fullmatch(ticket_id):

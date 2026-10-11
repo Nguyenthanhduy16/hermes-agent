@@ -62,12 +62,14 @@ class PeerNotifications:
             return None
         return context, row
 
-    def claim(self, allowed_users):
+    def claim(self, allowed_users, *, notification_id=None):
         """Claim one eligible item. A claimed item must never be sent twice."""
         allowed_users = frozenset(allowed_users)
         with self.store.lock:
-            rows = self.store.db.execute("SELECT * FROM ticket_peer_notifications WHERE bot=? AND status='queued' ORDER BY id",
-                                         (self.bot,)).fetchall()
+            rows = self.store.db.execute(
+                "SELECT * FROM ticket_peer_notifications WHERE bot=? AND status='queued' "
+                'AND (? IS NULL OR id=?) ORDER BY id',
+                (self.bot, notification_id, notification_id)).fetchall()
             for notice in rows:
                 valid = self._valid(notice, allowed_users=allowed_users)
                 if not valid:

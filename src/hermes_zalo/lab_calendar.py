@@ -175,9 +175,16 @@ def format_calendar(schedules, day, spreadsheet_id):
     return "\n\n".join(lines)
 
 
-def format_query(schedules, query, spreadsheet_id):
+def format_query(schedules, query, spreadsheet_id, *, exact_coach=False):
     """Read-only date/filter/page selection; every page reapplies the same ACL."""
     from .commands import normalized
+
+    def page_command(page):
+        if not exact_coach:
+            return query.command(page)
+        from dataclasses import replace
+        personal = replace(query, filters=tuple((k, v) for k, v in query.filters if k != 'coach'))
+        return personal.command(page).replace('/lich ', '/lichcuatoi ', 1)
 
     def contains(value, needle):
         # Match complete words: room H20 does not match H201, An not Thanh.
@@ -188,7 +195,8 @@ def format_query(schedules, query, spreadsheet_id):
         for key, value in query.filters:
             if key == "coach":
                 people = [event.key_coach] + [person.split(" [", 1)[0] for person in event.coaches]
-                if not any(contains(person, value) for person in people):
+                if not any(normalized(person) == normalized(value) if exact_coach else contains(person, value)
+                           for person in people):
                     return False
             elif not contains({"khoa": event.course, "phong": event.room, "buoi": event.period}[key], value):
                 return False
@@ -212,7 +220,7 @@ def format_query(schedules, query, spreadsheet_id):
                 f"\nThử bỏ bộ lọc: /lich {query.start.isoformat()}\n/help lich — xem ví dụ")
     page_count = (len(selected) + 4) // 5
     if query.page > page_count:
-        return f"Kết quả chỉ có {page_count} trang. Về trang đầu:\n{query.command(1)}"
+        return f"Kết quả chỉ có {page_count} trang. Về trang đầu:\n{page_command(1)}"
     lines = [f"Lịch lab {label} · Trang {query.page}/{page_count} · {len(selected)} mục"]
     if filters:
         lines.append("Bộ lọc: " + filters)
@@ -234,6 +242,6 @@ def format_query(schedules, query, spreadsheet_id):
     if any(sum(e.day == day for s in schedules for e in s.events) and sum(day in s.days for s in schedules) > 1 for day in days):
         lines.append("Ngày xuất hiện ở nhiều tab được giữ riêng theo nguồn.")
     if query.page < page_count:
-        lines.append("Xem tiếp:\n" + query.command(query.page + 1))
+        lines.append("Xem tiếp:\n" + page_command(query.page + 1))
     lines.append("Buổi/trạng thái giữ nguyên theo bảng. Lọc hoặc xem cách dùng: /help lich")
     return "\n\n".join(lines)

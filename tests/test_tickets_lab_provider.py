@@ -72,12 +72,21 @@ class LabLiveConfigTests(unittest.TestCase):
         self.assertNotIn('secret-file', repr(settings))
         for changes in ({'ZALO_CALENDAR_FORMAT': 'standard'}, {'ZALO_CALENDAR_TABS_JSON': '[]'},
                         {'TICKETS_LAB_WRITE_ENABLED': 'true'},
-                        {'TICKETS_LAB_PERIODS_JSON': '{"Sáng":{"start":"08:00","end":"11:00"}}'},
+                        {'TICKETS_LAB_PERIODS_JSON': '{"Other":{"start":"08:00","end":"11:00"}}'},
                         {'TICKETS_LAB_PERIODS_JSON': json.dumps(PERIODS | {'Sáng': {'start': '24:00', 'end': '11:00'}})},
                         {'ZALO_SHEETS_ID': 'https://docs.google.com/test'},
                         {'ZALO_CALENDAR_TABS_JSON': '["Bad\u0027!A1"]'}):
             with self.subTest(changes=changes), self.assertRaises(TicketsSourceError):
                 LabSheetsSettings.from_mapping(values | changes)
+
+    def test_only_confirmed_periods_are_required_in_configuration(self):
+        settings = config(TICKETS_LAB_PERIODS_JSON=json.dumps({'Sáng': PERIODS['Sáng']}))
+        self.assertEqual({'Sáng': PERIODS['Sáng']}, settings.periods)
+        for periods in ([], {'Sáng': None}, {'Sáng': {'start': '08:00', 'end': '08:00'}},
+                        {'Sáng': {'start': '08:00', 'end': '07:00'}},
+                        {'Sáng': {'start': '08:00', 'end': '11:00', 'guess': True}}):
+            with self.subTest(periods=periods), self.assertRaises(TicketsSourceError):
+                config(TICKETS_LAB_PERIODS_JSON=json.dumps(periods))
 
 
 class LabLiveProviderTests(unittest.TestCase):
@@ -228,6 +237,62 @@ class LabLiveProviderTests(unittest.TestCase):
         set_cell(self.payload, 8, 6, 'Chiều khoảng 15:30–19:30')
         with self.assertRaises(TicketsSourceError):
             self.provider().list_assignments()
+
+    def test_explicit_hours_support_all_members_without_a_default_period_map(self):
+        set_cell(self.payload, 3, 6, 'Sáng 08:00–11:00')
+        set_cell(self.payload, 8, 6, 'Chiều 13:00–16:00')
+        provider = self.provider(periods={})
+        by_name = {a['member_name']: a for a in provider.list_assignments()}
+        self.assertEqual({'Coach Alpha', 'Coach Beta', 'Coach Other'}, set(by_name))
+        # A third member can swap in normal mode; the two-member test list is
+        # not used. Real provider requests are captured by MockTransport.
+        third, second = by_name['Coach Other'], by_name['Coach Beta']
+        provider.validate_pair(third, second)
+        provider.swap(third, second, 'DC-ALL-MEMBERS')
+        provider.validate_result(third, second)
+        posts = [request for request in self.calls if request.method == 'POST']
+        self.assertEqual(1, len(posts))
+        operations = json.loads(posts[0].content)['requests']
+        self.assertEqual([4, 8], [op['updateCells']['range']['startRowIndex'] for op in operations])
+        self.assertTrue(all(op['updateCells']['range']['startColumnIndex'] == 3
+                            and op['updateCells']['range']['endColumnIndex'] == 4 for op in operations))
+        self.assertEqual('Coach Alpha', self.payload['sheets'][0]['data'][0]['rowData'][3]['values'][3]['formattedValue'])
+
+    def test_partial_period_map_requires_hours_for_every_future_assignment(self):
+        provider = self.provider(periods={'Sáng': PERIODS['Sáng']})
+        with self.assertRaises(TicketsSourceError):
+            provider.list_assignments()
+        set_cell(self.payload, 8, 6, 'Chiều 13:00–16:00')
+        self.assertEqual(3, len(provider.list_assignments()))
+        set_cell(self.payload, 3, 6, 'Tối')
+        with self.assertRaises(TicketsSourceError):
+            provider.list_assignments()
+        self.assertTrue(all(request.method == 'GET' for request in self.calls))
+
+    def test_missing_hours_on_key_only_future_assignment_still_block_full_mode(self):
+        set_cell(self.payload, 8, 3, '')
+        provider = self.provider(periods={'Sáng': PERIODS['Sáng']})
+        # The afternoon commitment has only a Key Coach. It must remain part
+        # of the conflict roster even though it is not a selectable Lab shift.
+        self.assertEqual(2, len(provider.inspect_members()))
+        with self.assertRaises(TicketsSourceError) as cm:
+            provider.list_assignments()
+        self.assertIn('Key Coach', str(cm.exception))
+        self.assertTrue(all(request.method == 'GET' for request in self.calls))
+
+    def test_explicit_hours_still_block_third_member_key_coach_conflicts(self):
+        set_cell(self.payload, 3, 6, 'Sáng 08:00–11:00')
+        set_cell(self.payload, 8, 6, 'Chiều 13:00–16:00')
+        set_cell(self.payload, 3, 4, 'Coach Beta')
+        provider = self.provider(periods={})
+        by_name = {a['member_name']: a for a in provider.list_assignments()}
+        third, second = by_name['Coach Other'], by_name['Coach Beta']
+        for operation in (lambda: provider.validate_pair(third, second),
+                          lambda: provider.swap(third, second, 'DC-THIRD-KEY')):
+            with self.assertRaises(TicketsSourceError) as cm:
+                operation()
+            self.assertIn('Key Coach', str(cm.exception))
+        self.assertTrue(all(request.method == 'GET' for request in self.calls))
 
     def test_valid_past_rows_and_ids_remain_for_midnight_reconciliation(self):
         provider = self.provider()
@@ -463,6 +528,9 @@ class LabLiveProviderTests(unittest.TestCase):
             normal.validate_pair(a, b)
         test = self.provider(settings=LabSheetsSettings.from_mapping(test_values(), test_mode=True))
         self.assertNotEqual(normal.source_key, test.source_key)
+        # Historical rows with unknown hours are not invented as assignments.
+        self.assertEqual([], self.provider(periods={}).list_assignments())
+        self.now = NOW
         with self.assertRaises(TicketsSourceError):
             self.provider(periods={}).list_assignments()
         self.assertEqual([], [r for r in self.calls if r.method == 'POST'])

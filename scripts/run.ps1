@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Position=0)]
-    [ValidateSet('Setup', 'SetupSheets', 'SheetsCheck', 'Update', 'PrepareDocs', 'PrepareSheets', 'FeatureDemo', 'Report', 'Check', 'Demo', 'Test', 'TestHermes', 'TicketsDemo', 'TicketsTest', 'TicketsChatDemo', 'TicketsLabCheck', 'TicketsLinkUsers', 'ZaloCheck', 'Discover', 'Model', 'Start')]
+    [ValidateSet('Setup', 'SetupSheets', 'SheetsCheck', 'RegistrationCheck', 'Update', 'PrepareDocs', 'PrepareSheets', 'FeatureDemo', 'Report', 'Check', 'Demo', 'Test', 'TestHermes', 'TicketsDemo', 'TicketsTest', 'TicketsChatDemo', 'TicketsLabCheck', 'TicketsLinkUsers', 'ZaloCheck', 'Discover', 'Model', 'Start')]
     [string]$Action = 'Check'
 )
 $ErrorActionPreference = 'Stop'
@@ -48,6 +48,7 @@ try {
             'PrepareDocs' { & $taskPython scripts\features.py prepare-docs }
             'PrepareSheets' { & $taskPython scripts\features.py prepare-sheets }
             'SheetsCheck' { & $taskPython scripts\features.py sheets-check }
+            'RegistrationCheck' { & $taskPython scripts\registration.py check }
             'FeatureDemo' { & $taskPython scripts\features.py demo }
             'Report' { & $taskPython scripts\features.py report }
             'Check' { & $taskPython -m hermes_zalo.cli check }

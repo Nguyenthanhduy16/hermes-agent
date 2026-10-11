@@ -11,7 +11,7 @@ import sqlite3
 import threading
 import time
 
-from .providers import TicketsSourceError, TicketsWriteUncertain
+from .providers import TicketsSourceError, TicketsWriteUncertain, require_ticket_access
 
 VN = timezone(timedelta(hours=7))
 CONFIRM_TTL_SECONDS = 15 * 60
@@ -160,6 +160,7 @@ class DemoAssignments:
 
     def swap(self, a, b, ticket_id):
         with self.store.transaction() as db:
+            require_ticket_access()
             for old, other in ((a, b), (b, a)):
                 row = db.execute('SELECT body FROM demo_assignments WHERE id=?', (old['id'],)).fetchone()
                 if not row or json.loads(row[0]) != old:
@@ -449,12 +450,13 @@ class TicketService:
                 return self.detail(user, ticket)
             try:
                 body = self._still_valid(row)
-            except TicketError as exc:
-                if exc.status != 503:
-                    with self.store.transaction() as db:
-                        self._transition(db, ticket, 'stale', 'Hệ thống', str(exc))
-                    return self.detail(user, ticket)
-                raise
+                require_ticket_access()
+            except (TicketError, TicketsSourceError) as exc:
+                if isinstance(exc, TicketError) and exc.status == 503:
+                    raise
+                with self.store.transaction() as db:
+                    self._transition(db, ticket, 'stale', 'Hệ thống', str(exc))
+                return self.detail(user, ticket)
             if action == 'accept' and row['require_manager']:
                 with self.store.transaction() as db:
                     self._transition(db, ticket, 'pending_manager', user['name'], 'Đã đồng ý nội dung đổi ca; chờ quản lý duyệt.')
@@ -464,6 +466,7 @@ class TicketService:
                 self._transition(db, ticket, 'applying', user['name'],
                                  'Đã xác nhận; bắt đầu cập nhật hai phân công.')
             try:
+                require_ticket_access()
                 self.provider.swap(body['a'], body['b'], ticket)
             except TicketsWriteUncertain:
                 with self.store.transaction() as db:

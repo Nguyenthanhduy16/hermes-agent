@@ -5,7 +5,8 @@
       "title": "Sổ tay nhóm thử nghiệm (dữ liệu minh họa)",
       "path": "so-tay-mau.md",
       "users": ["u_demo"],
-      "groups": ["g_demo"]
+      "groups": ["g_demo"],
+      "approved_members": false
     }
   ]
 }

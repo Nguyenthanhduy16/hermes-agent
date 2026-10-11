@@ -13,7 +13,8 @@ import re
 import unicodedata
 
 from ..lab_calendar import parse_sheet, MAX_ROWS
-from .providers import GoogleSheetsAssignments, TicketsSourceError, TicketsWriteUncertain
+from .providers import (GoogleSheetsAssignments, TicketsAccessDenied, TicketsSourceError,
+                        TicketsWriteUncertain, require_ticket_access)
 
 
 VN = timezone(timedelta(hours=7))
@@ -86,7 +87,7 @@ class LabSheetsSettings:
                     or len(set(tabs)) != len(tabs) or any(flag not in ('true', 'false') for flag in flags)):
                 raise ValueError()
             if (not isinstance(periods, dict)
-                    or (periods and set(periods) != {'Sáng', 'Chiều', 'Tối'})):
+                    or not set(periods).issubset({'Sáng', 'Chiều', 'Tối'})):
                 raise ValueError()
             for times in periods.values():
                 if not isinstance(times, dict) or set(times) != {'start', 'end'}:
@@ -117,6 +118,8 @@ class GoogleLabAssignments(GoogleSheetsAssignments):
     def _request(self, method, **kwargs):
         try:
             return super()._request(method, **kwargs)
+        except TicketsAccessDenied:
+            raise
         except TicketsWriteUncertain:
             raise TicketsWriteUncertain('Chưa rõ lịch lab đã được cập nhật; cần đối soát, không gửi ghi lại.') from None
         except TicketsSourceError:
@@ -237,9 +240,9 @@ class GoogleLabAssignments(GoogleSheetsAssignments):
 
     def _assignments(self):
         fingerprint, records, key_records, _ = self._read_lab()
-        if not self.settings.periods and not self.settings.test_mode:
-            raise TicketsSourceError('Cần xác nhận giờ Sáng, Chiều, Tối trong TICKETS_LAB_PERIODS_JSON '
-                                     'trước khi hiển thị hoặc đổi ca. Tra danh tính không cần cấu hình giờ.')
+        # Each current/future Lab and Key Coach event must resolve its own
+        # confirmed hours. Explicit hours need no default mapping; a mapping
+        # may omit unused periods, but _times still rejects any missing period.
         assignments, positions, key_shifts = {}, {}, []
         today = self._clock().astimezone(VN).date()
         for record in records:
@@ -352,6 +355,7 @@ class GoogleLabAssignments(GoogleSheetsAssignments):
         return dict(result, start=start.isoformat(), end=end.isoformat())
 
     def swap(self, a, b, ticket_id):
+        require_ticket_access()
         if not self.settings.write_enabled or not self.settings.exclusive_writer:
             raise TicketsSourceError('Ghi đổi ca trên lịch lab đang tắt; cần quyền ghi và xác nhận chỉ một bên sửa lịch.')
         if not isinstance(ticket_id, str) or not re.fullmatch(r'[A-Za-z0-9_.:-]{1,80}', ticket_id):

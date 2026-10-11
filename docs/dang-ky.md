@@ -1,0 +1,128 @@
+# Đăng ký thành viên qua số điện thoại
+
+Thành viên nhắn riêng số điện thoại → bot đối chiếu Workload và tự lấy ID → quản trị xác minh, duyệt lần đầu. **Duyệt xong tự có quyền thành viên trong chat riêng: lịch, đổi ca, nhắc việc, góp ý và trò chuyện**, không thêm từng người vào `.env`, không cần gửi CSV hoặc khởi động lại sau mỗi lần duyệt. Tính năng mặc định **tắt**, chỉ bật sau khi đã chỉ định quản trị.
+
+## Thành viên làm gì?
+
+1. Mở chat **riêng** với bot, gửi `/dangky` để xem hướng dẫn.
+2. Gửi `/dangky SỐ_ĐIỆN_THOẠI`, thay phần viết hoa bằng số của bạn đã có trong Workload. Dùng số di động Việt Nam đủ 10 chữ số, bắt đầu bằng `0`, hoặc dạng `+84` tương ứng. Có thể có khoảng trắng, dấu chấm hoặc gạch ngang.
+3. Nhận mã yêu cầu `DK-…` và chờ quản trị xác minh. Bot chưa trả tên đầy đủ hoặc số điện thoại của dòng được đối chiếu cho người đang chờ duyệt.
+4. Gửi `/dangky trangthai` hoặc `/trangthaidangky` để xem kết quả. **Chưa có thông báo duyệt tự động.**
+
+Không gửi số điện thoại trong nhóm. Bot lưu ID từ chính tin nhắn riêng nhận được; không suy ra chat riêng từ ID nhóm. Mỗi số trong Workload phải xác định một người; số bị trùng, mất số `0` đầu hoặc hiển thị dạng khoa học không được tự đoán sửa. Nếu Sheets làm mất số `0` đầu, quản trị đối chiếu số gốc rồi nhập lại ô theo định dạng văn bản; bot không tự sửa bảng.
+
+Mỗi tài khoản được tra đăng ký tối đa 5 lần/giờ, toàn bot tối đa 60 lần/giờ. Giới hạn còn hiệu lực sau khi khởi động lại. Xem trạng thái không tiêu tốn lượt tra.
+
+Bot báo riêng trường hợp không tìm thấy số trong Workload và trường hợp số xuất hiện nhiều lần, kèm hướng xử lý; không trả tên hoặc nhắc lại số điện thoại trong lỗi này.
+
+## Quản trị chuẩn bị một lần
+
+Nguồn danh tính là bảng đã cấu hình trong `ZALO_SHEETS_ID`, tab **`Workload - Lab coach`**:
+
+| Trường | Vị trí | Tiêu đề phải khớp |
+| --- | --- | --- |
+| Số điện thoại | Cột C, dòng tiêu đề 5 | `Số điện thoại` |
+| Họ tên | Cột D, dòng tiêu đề 5 | `Thành viên` |
+
+Không dùng cột B hoặc tự chuyển sang tab tháng khác. Bot chỉ đọc hai cột cấu hình, không sửa Workload. Dữ liệu cần nằm trong giới hạn 1.000 dòng sau tiêu đề. Tiêu đề gộp dọc như C5:C6/D5:D6 được hỗ trợ nếu phần tiếp diễn trống; ghi chú gộp rộng ở cuối bảng được bỏ qua khi cả C/D trống và ô chứa ghi chú nằm ngoài hai cột. Ô dữ liệu tên/số điện thoại bị gộp, dữ liệu ẩn, công thức hoặc cấu trúc không rõ bị từ chối để tránh ghép nhầm.
+
+Dừng bot bằng `Ctrl+C`, mở `.env` **trên máy** và bổ sung các biến sau, giữ nguyên token, quyền và cấu hình khác:
+
+```dotenv
+REGISTRATION_ENABLED=false
+REGISTRATION_ADMIN_USERS=
+REGISTRATION_WORKLOAD_TAB=Workload - Lab coach
+REGISTRATION_WORKLOAD_NAME_COLUMN=D
+REGISTRATION_WORKLOAD_PHONE_COLUMN=C
+REGISTRATION_WORKLOAD_HEADER_ROW=5
+REGISTRATION_WORKLOAD_NAME_HEADER=Thành viên
+REGISTRATION_WORKLOAD_PHONE_HEADER=Số điện thoại
+```
+
+Kiểm tra `ZALO_SHEETS_ID`, `ZALO_GOOGLE_CREDENTIALS` và quyền đọc bảng của service account, rồi chạy:
+
+```powershell
+.\scripts\run.ps1 RegistrationCheck
+```
+
+Lệnh này dùng được khi đăng ký còn tắt và chưa điền quản trị. Kết quả chỉ có số dòng, số điện thoại hợp lệ/thiếu/sai và số nhóm số điện thoại/tên bị trùng; không in tên, số điện thoại hay ID cá nhân. Lệnh không sửa Sheets, không tạo dữ liệu đăng ký và không tự bật tính năng. Số hợp lệ là đúng định dạng; số trùng hoặc tên trùng vẫn cần xử lý theo quy tắc đăng ký bên dưới.
+
+Điền ID Zalo của quản trị vào `REGISTRATION_ADMIN_USERS`; nhiều ID cách nhau dấu phẩy. **Tất cả ID quản trị phải có trong `ZALO_ALLOWED_USERS`.** Dùng ID quản trị đã được cấp quyền ban đầu; nếu chưa có, làm bước `Discover` trong README. Không cần lấy ID thủ công cho các thành viên đăng ký sau đó.
+
+Khi đã đủ cấu hình, đổi `REGISTRATION_ENABLED=true`, lưu `.env`, rồi chạy:
+
+```powershell
+.\scripts\run.ps1 Update
+.\scripts\run.ps1 Check
+.\scripts\run.ps1 Start
+```
+
+`Check` kiểm tra cấu hình bot chung. `RegistrationCheck` kiểm tra kết nối và cấu trúc Workload; bot tiếp tục đọc lại nguồn khi đăng ký và duyệt. Không đưa `.env`, file khóa, số điện thoại hoặc dữ liệu đăng ký lên Git.
+
+Nếu đã bật đăng ký nhưng cấu hình chưa hợp lệ, bot dừng xử lý tính năng và báo cần kiểm tra; không tự quay về đăng ký tên cũ hoặc bỏ qua bước xác minh.
+
+## Xem và duyệt đăng ký
+
+Quản trị nhắn **riêng** bot:
+
+```text
+/dangkychoduyet
+/dangkychoduyet 2
+```
+
+Mỗi trang tối đa 5 yêu cầu, gồm tên Workload, số điện thoại đã che chỉ giữ 4 số cuối, `user_id`, `chat_id` và mã đăng ký bot tự thu nhận. Không chuyển tiếp danh sách này vào nhóm.
+
+**Số điện thoại có trong bảng không chứng minh người gửi là chủ số đó.** Trước khi duyệt, quản trị xác minh qua cách liên hệ đã biết hoặc đối chiếu trực tiếp với thành viên. Luồng này chưa có xác thực OTP bằng SMS.
+
+| Thao tác | Lệnh |
+| --- | --- |
+| Duyệt sau khi xác minh | `/duyetdangky DK-MÃ_YÊU_CẦU` |
+| Từ chối | `/tuchoidangky DK-MÃ_YÊU_CẦU` |
+| Xem thành viên đã duyệt | `/thanhvien` hoặc `/thanhvien 2` |
+| Thu hồi liên kết | `/thuhoidangky MÃ_THÀNH_VIÊN` |
+
+Khi duyệt và Tickets đã bật, bot tự tạo liên kết đổi ca nếu nguồn/ánh xạ hợp lệ; thành viên không cần gửi CSV hoặc mở Tickets trước để được người khác chọn. Nếu liên kết chưa sẵn sàng, bot báo rõ cho quản trị và vẫn lưu quyền thành viên. Sau khi sửa nguồn, người dùng có thể mở `/tickets` hoặc quản trị gửi lại lệnh duyệt để thử lại.
+
+Sao chép đúng mã từ phản hồi của bot. Trước khi duyệt, bot đọc lại Workload; dữ liệu người đăng ký đã đổi thì cần kiểm tra lại, không âm thầm ghép sang người khác. Sau duyệt, thành viên tự xem `/dangky trangthai`; quản trị nhận mã thành viên và lệnh thu hồi.
+
+Quản trị dùng `/thanhvien` trong chat riêng để tìm thành viên đã duyệt theo nguồn Workload hiện tại; mỗi trang tối đa 5 người gồm tên, 4 số điện thoại cuối, mã thành viên và lệnh thu hồi. Dùng `/thanhvien 2` để xem tiếp, sao chép lệnh thu hồi đúng người. Dữ liệu đăng ký và quyền thành viên lưu trong SQLite trên máy chạy bot, còn sau khi khởi động lại; không ghi danh bạ vào code, `.env` hoặc Git. Chỉ quản trị đã cấu hình được xem danh sách và thay đổi trạng thái.
+
+## Duyệt xong được dùng những gì?
+
+| Phạm vi | Điều kiện |
+| --- | --- |
+| Trò chuyện riêng với bot | Danh tính đã duyệt, đúng người gửi và chat riêng đã liên kết; người được cấp quyền bot trước đó phải không có đăng ký đang bị chặn |
+| Tra lịch trong chat riêng | Tự có quyền đọc các tab lịch đã cấu hình tại đúng chat riêng đã liên kết |
+| Lịch cá nhân | Danh tính còn khớp Workload và tên xác định duy nhất; trong nhóm cần quyền nhóm sẵn có |
+| Đổi ca | Tự có quyền thành viên; Tickets đã bật, đúng nguồn lịch và tên duy nhất; vẫn cần xác nhận đổi ca và các điều kiện của chế độ đang chạy |
+| Nhắc việc và thông báo | Tạo, xem, hủy nhắc của mình tại chat riêng đã liên kết; bot cần chạy để gửi đúng hạn |
+| Góp ý | Gửi `/phanhoi Nội dung`; lưu riêng trên máy bot |
+| Tạo issue | Tự có quyền thành viên khi `ZALO_ISSUES_ENABLED=true`, tab đích đúng cấu trúc và có quyền ghi Google; vẫn xem bản nháp rồi xác nhận |
+| Tài liệu | Chỉ các file đã cấp quyền riêng hoặc có `approved_members: true` trong manifest; tài liệu riêng không tự được mở |
+| Nhóm | Nhóm vẫn phải được cho phép; đăng ký riêng không mở quyền cho nhóm khác |
+
+Không cần thêm thành viên đã duyệt vào `ZALO_ALLOWED_USERS` hoặc `ZALO_SHEETS_USERS` để dùng các chức năng thành viên trong chat riêng. Các ID cũ vẫn giữ nguyên; `.env` tiếp tục cấu hình quản trị, nhóm, nguồn dữ liệu và các công tắc bật tính năng. Duyệt thành viên không cấp quyền quản trị hoặc mở tài liệu riêng. Issue hiện chưa bật, bảng hiện tại chưa có tab đích; cần [chuẩn bị một lần](lenh-zalo.md#tạo-issue) cho cả hệ thống.
+
+**Người đã duyệt từ bản trước không phải đăng ký hay duyệt lại.** Cập nhật và khởi động lại bot một lần để nạp cơ chế mới; các lần duyệt/thu hồi sau có hiệu lực ngay. Không cần tự chuyển dữ liệu đăng ký. Khi mở Tickets ở chế độ mới, bot tự khôi phục liên kết của các thành viên đã duyệt sau khi đối chiếu nguồn; người đổi cùng không cần mở bot trước.
+
+**Mở đổi ca cho nhiều người:** dùng `lab_live` với giờ ca thực tế, quyền ghi và điều kiện không sửa bảng đồng thời như [hướng dẫn Tickets](tickets-chat.md#5-bật-lab_live-sau-khi-đủ-điều-kiện). Chế độ này dùng mọi thành viên đã duyệt, không giới hạn hai tên; kiểm tra trùng giờ và chỉ đổi hai ô Lab Coach đã xác nhận. `lab_live_test` vẫn giới hạn hai người để thử. Duyệt thêm người không tự đổi chế độ, bật ghi hoặc cấp vai trò quản lý.
+
+Khi tính năng đăng ký đang bật, người đã có hồ sơ ở trạng thái **chờ duyệt, bị từ chối hoặc bị thu hồi** chỉ được dùng luồng đăng ký/xem trạng thái; các tính năng khác bị chặn dù ID vẫn nằm trong danh sách cấp quyền cũ. Lệnh quản trị đăng ký vẫn theo quyền quản trị riêng. Đăng ký lại sau khi thu hồi chưa mở quyền cho đến khi được duyệt lại.
+
+Danh tính đã duyệt được dùng trước hồ sơ tên tự khai. `/dangky Họ tên` hoặc xóa hồ sơ cũ không đổi người đã liên kết. Nếu cần sửa người/số điện thoại, quản trị thu hồi và xác minh lại; không mượn số của người khác.
+
+Nếu hai người trùng toàn bộ họ tên, bot có thể lưu hai danh tính theo số điện thoại nhưng **chưa dùng tên đó để tra lịch cá nhân hoặc đổi ca**. Muốn phân biệt đúng lịch, mỗi người và từng phân công cần mã riêng trong dữ liệu; chỉ thêm hai mã vào danh bạ mà lịch vẫn ghi cùng một tên chưa đủ.
+
+Khi `REGISTRATION_ENABLED=false`, luồng `/dangky Họ tên đầy đủ` cũ vẫn dùng để lọc lịch theo từng chat, không phải xác minh danh tính. Không hiểu đăng ký tên cũ là quyền nhắn riêng, quyền tài liệu hoặc quyền đổi ca.
+
+## Thử trước khi mở cho nhóm
+
+- Thành viên đăng ký riêng → ở trạng thái chờ chỉ xem/đăng ký, chưa dùng tính năng khác; thử cả người đã có allowlist trước đó.
+- Người không phải quản trị thử xem/duyệt → bị từ chối, không lộ danh sách.
+- Quản trị xác minh và duyệt → thành viên xem trạng thái, thử `/menu`, “Mai mình có ca nào?” và `/doica` tại đúng chat riêng, không sửa `.env` cho người đó.
+- Người đã duyệt từ bản trước cũng đọc lịch được sau khi cập nhật/khởi động lại; tên trùng hoặc Workload thay đổi phải yêu cầu kiểm tra.
+- Thành viên đã duyệt thử `/nhac sau 1 phut | Kiểm tra nhắc`, `/nhac xem`, `/phanhoi Nội dung thử`; nhắc gửi đúng chat và chỉ người tạo được xem/hủy. Issue chỉ thử sau khi bật và có tab đích hợp lệ.
+- Quản trị xem `/thanhvien`; người thường không được xem danh sách hoặc tự cấp quyền quản trị. Tài liệu riêng và nhóm chưa cấp quyền vẫn bị chặn.
+- Thu hồi liên kết → chặn tính năng và nhắc đang chờ, kể cả còn allowlist cũ; gửi đăng ký lại vẫn phải chờ duyệt. Bản nháp issue hoặc mã đổi ca cũ không được dùng để vượt quyền.
+
+Chỉ kết luận luồng đăng ký đã chạy thật sau khi thử nhận tin, duyệt và kiểm tra quyền trên Zalo. Việc có cấu hình mẫu hoặc kiểm thử mô phỏng không thay thế bài thử này.

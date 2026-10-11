@@ -3,6 +3,7 @@ from dataclasses import replace
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import AsyncMock
 
 from hermes_zalo.events import IncomingMessage
 from hermes_zalo.issues import IssueStore, issue_target, preview
@@ -101,6 +102,35 @@ class IssueTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("chưa được cấp quyền", result)
         self.assertEqual([], self.client.rows)
         self.assertEqual("draft", self.store.scoped(draft["id"], message())["status"])
+
+    async def test_dynamic_guard_denial_overrides_static_access_without_claiming_draft(self):
+        draft = self.draft()
+        self.client.append_issue = AsyncMock()
+        self.assertTrue(self.client.settings.allows('u1', 'p1', 'PRIVATE'))
+        result = await self.store.confirm(draft['id'], message(), self.client, now=101, access_guard=lambda: False)
+        self.assertIn('chưa được cấp quyền', result)
+        self.client.append_issue.assert_not_awaited()
+        self.assertEqual('draft', self.store.scoped(draft['id'], message())['status'])
+
+    async def test_dynamic_member_guard_preserves_draft_owner_scope_and_writes_once(self):
+        event = message(user='approved-member', chat='member-dm')
+        draft = self.draft(event)
+        self.client.settings = replace(self.client.settings, users=frozenset())
+        self.client.append_issue = AsyncMock()
+        guard = lambda: True
+        wrong = message(user='different-member', chat='member-dm')
+        denied = await self.store.confirm(draft['id'], wrong, self.client, now=101, access_guard=guard)
+        self.assertIn('Không tìm thấy', denied)
+        self.client.append_issue.assert_not_awaited()
+        result = await self.store.confirm(draft['id'], event, self.client, now=102, access_guard=guard)
+        self.assertIn('Đã tạo issue', result)
+        self.client.append_issue.assert_awaited_once()
+        self.assertIs(guard, self.client.append_issue.await_args.kwargs['access_guard'])
+        self.assertEqual(['approved-member', 'member-dm', 'PRIVATE'], self.client.append_issue.await_args.args[0][5:])
+        repeat = await self.store.confirm(draft['id'], event, self.client, now=103, access_guard=guard)
+        self.assertIn('không tự tạo lại', repeat)
+        self.client.append_issue.assert_awaited_once()
+        self.assertEqual(frozenset(), self.client.settings.users)
 
     async def test_cancel_prevents_later_confirm(self):
         draft = self.draft()

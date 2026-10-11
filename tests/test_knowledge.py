@@ -62,6 +62,66 @@ class KnowledgeTests(unittest.TestCase):
         self.assertIn("08:30", self.answer(user="u2", chat="g1", kind="GROUP"))
         self.assertEqual(NO_SOURCES, self.answer(user="u1"))
 
+    def test_approved_cohort_access_requires_explicit_document_sharing(self):
+        self.write_manifest([self.entry(users=[], groups=[], approved_members=True)])
+        self.assertIn("08:30", self.kb.answer("Thời gian làm việc?", "approved", "private-new", "PRIVATE",
+                                            approved_member=True))
+        self.assertIn("Sổ tay", self.kb.list_sources("approved", "private-new", "PRIVATE", approved_member=True))
+        # A pending, revoked or unregistered caller must pass False (the default).
+        self.assertEqual(NO_SOURCES, self.kb.answer("Thời gian làm việc?", "pending", "private-new", "PRIVATE"))
+        self.assertEqual(NO_SOURCES, self.kb.list_sources("pending", "private-new", "PRIVATE", approved_member=False))
+
+    def test_approval_does_not_open_existing_private_documents(self):
+        for cohort_setting in ({}, {"approved_members": False}):
+            with self.subTest(cohort_setting=cohort_setting):
+                self.write_manifest([self.entry(**cohort_setting)])
+                self.assertEqual(NO_SOURCES, self.kb.answer("Thời gian làm việc?", "new-user", "p2", "PRIVATE",
+                                                            approved_member=True))
+                self.assertEqual(NO_SOURCES, self.kb.list_sources("new-user", "p2", "PRIVATE", approved_member=True))
+                self.assertIn("08:30", self.answer())
+
+    def test_cohort_does_not_open_or_name_unshared_files(self):
+        self.write_manifest([self.entry(users=[], groups=[], approved_members=True),
+                             self.entry(id="private", title="Private acquisition", path="acquisition.md",
+                                        users=["u1"], groups=[])])
+        # This private file is deliberately absent: it must never be opened.
+        answer = self.kb.answer("Thời gian làm việc?", "new-user", "p2", "PRIVATE", approved_member=True)
+        sources = self.kb.list_sources("new-user", "p2", "PRIVATE", approved_member=True)
+        self.assertIn("08:30", answer)
+        for text in (answer, sources):
+            self.assertNotIn("acquisition", text)
+
+    def test_cohort_never_implicitly_grants_group_access(self):
+        self.write_manifest([self.entry(users=[], groups=[], approved_members=True)])
+        self.assertEqual(NO_SOURCES, self.kb.answer("Thời gian làm việc?", "new-user", "g1", "GROUP",
+                                                    approved_member=True))
+        self.write_manifest([self.entry(approved_members=True)])
+        # Even shared cohort documents retain the explicit group boundary.
+        self.assertEqual(NO_SOURCES, self.kb.list_sources("new-user", "g2", "GROUP", approved_member=True))
+        # No trusted approval flag retains the legacy per-user narrowing.
+        self.assertEqual(NO_SOURCES, self.kb.list_sources("new-user", "g1", "GROUP", approved_member=False))
+        self.assertIn("Sổ tay", self.kb.list_sources("new-user", "g1", "GROUP", approved_member=True))
+        self.write_manifest([self.entry(approved_members=False)])
+        self.assertEqual(NO_SOURCES, self.kb.list_sources("new-user", "g1", "GROUP", approved_member=True))
+
+    def test_cohort_revoke_applies_to_next_query(self):
+        self.write_manifest([self.entry(users=[], groups=[], approved_members=True)])
+        self.assertIn("Sổ tay", self.kb.list_sources("new-user", "p2", "PRIVATE", approved_member=True))
+        self.assertEqual(NO_SOURCES, self.kb.list_sources("new-user", "p2", "PRIVATE", approved_member=False))
+        self.write_manifest([self.entry(approved_members=False)])
+        self.assertEqual(NO_SOURCES, self.kb.list_sources("new-user", "p2", "PRIVATE", approved_member=True))
+
+    def test_malformed_cohort_flags_fail_closed(self):
+        for invalid in (None, "true", "false", 0, 1, [], {}):
+            with self.subTest(invalid=invalid):
+                self.write_manifest([self.entry(approved_members=invalid)])
+                self.assertEqual(UNAVAILABLE, self.answer())
+                self.assertEqual(UNAVAILABLE, self.kb.list_sources("u1", "p1", "PRIVATE", approved_member=True))
+                self.write_manifest([self.entry(approved_members=True)])
+                self.assertEqual(UNAVAILABLE, self.kb.answer("Thời gian làm việc?", "u1", "p1", "PRIVATE",
+                                                          approved_member=invalid))
+                self.assertEqual(UNAVAILABLE, self.kb.list_sources("u1", "p1", "PRIVATE", approved_member=invalid))
+
     def test_unknown_chat_type_and_blank_identity_fail_closed(self):
         for user, chat, kind in (("u1", "g1", "CHANNEL"), ("", "g1", "GROUP"), ("u1", "", "PRIVATE")):
             self.assertEqual(NO_SOURCES, self.kb.answer("Thời gian làm việc?", user, chat, kind))

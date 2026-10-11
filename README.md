@@ -8,17 +8,19 @@ Người dùng đã xác nhận nhắn riêng nhận được câu trả lời v
 
 **Menu:** `/menu` hiển thị **Tra lịch**, **Lịch của tôi**, **Đổi ca**, **Nhắc lịch**, **Thông báo** và **Tạo issue** theo cấu hình và quyền của bạn. **Đổi ca** dùng `/doica` để chọn ca ngay; **Nhắc lịch** dùng `/nhac` để tự đặt giờ nhắc. **Thông báo** dùng `/thongbao` để xem hướng dẫn tra nhắc việc và yêu cầu đổi ca đang chờ, không tự tạo nhắc từ lịch Sheets. **Tạo issue** dùng `/issue`, kèm **(chưa bật)** khi đã được cấp quyền nhưng tính năng đang tắt. Tài liệu/quy định và góp ý vẫn ẩn khỏi menu chính; xem [bảng lệnh](docs/lenh-zalo.md).
 
-**Thành viên nhóm:** khi bật `ZALO_GROUP_ACCESS=members`, mọi thành viên trong nhóm được cho phép có thể **@bot hoặc trả lời tin bot** để hỏi lịch/quy định được chia sẻ và trò chuyện bình thường, như `Giải thích Python là gì?` hoặc `Viết giúp mình lời chúc sinh nhật`. Trò chuyện dùng Hermes, tách phiên theo người và cuộc trò chuyện; không mở công cụ cho model tự sửa lịch/tạo issue. Nhắn riêng vẫn cần nằm trong danh sách được cấp quyền. Đăng ký tên bằng `/dangky` để hỏi `Mai mình có ca nào?`; tên này chỉ lọc lịch, không xác minh danh tính. Xem [hướng dẫn nhóm](docs/dung-trong-nhom.md).
+**Thành viên nhóm:** khi bật `ZALO_GROUP_ACCESS=members`, mọi thành viên trong nhóm được cho phép có thể **@bot hoặc trả lời tin bot** để hỏi lịch/quy định được chia sẻ và trò chuyện bình thường, như `Giải thích Python là gì?` hoặc `Viết giúp mình lời chúc sinh nhật`. Trò chuyện dùng Hermes, tách phiên theo người và cuộc trò chuyện; không mở công cụ cho model tự sửa lịch/tạo issue. Xem [hướng dẫn nhóm](docs/dung-trong-nhom.md).
+
+**Đăng ký thành viên bằng số điện thoại:** khi quản trị bật tính năng, thành viên nhắn **riêng** `/dangky SỐ_ĐIỆN_THOẠI` đúng trong tab `Workload - Lab coach`. Bot tự lấy `user_id` và `chat_id`, quản trị xác minh rồi duyệt; thành viên không cần lấy ID hoặc gửi CSV. Số điện thoại chỉ giúp đối chiếu danh sách, không chứng minh người gửi là chủ số đó. Xem kết quả bằng `/dangky trangthai`; bot chưa tự gửi thông báo duyệt. Duyệt xong tự có quyền trò chuyện, tra lịch, đổi ca, tạo/xem/hủy nhắc việc và gửi góp ý tại chat riêng đã liên kết, không thêm từng ID vào `.env`. Issue dùng được khi đã bật và có tab đích hợp lệ; tài liệu dùng chung cần `approved_members: true` trong manifest. Quản trị dùng `/thanhvien` để xem và thu hồi; quyền quản trị, quyền nhóm và tài liệu riêng giữ nguyên. Tên trùng chưa có mã phân công riêng sẽ bị chặn tra lịch cá nhân/đổi ca. Xem [cài đặt và cách dùng](docs/dang-ky.md). Tính năng mặc định tắt; khi tắt, `/dangky Họ tên đầy đủ` vẫn là bộ lọc tên cũ, không xác minh danh tính.
 
 **Có thể hỏi tự nhiên:** `Mình muốn đổi ca`, `Ai đang chờ mình xác nhận?`, `Xem thông báo` hoặc `Bot làm được gì?`. Bot mở đúng phần hướng dẫn hoặc danh sách khi nhận được mẫu câu đã hỗ trợ; lịch/quy định vẫn tra dữ liệu được cấp quyền. Đổi ca và tạo issue vẫn cần các bước xác nhận, không thực hiện bằng câu “đồng ý” tự do. Xem [ví dụ câu hỏi](docs/lenh-zalo.md#hỏi-tự-nhiên-và-trò-chuyện).
 
-**Đổi ca bằng tin nhắn riêng:** gửi `/doica` để chọn ca của A → người đổi cùng B → ca của B → lý do → xem trước và xác nhận; `/tickets` vẫn dùng để xem menu hoặc tiếp tục bước đang nhập. Chỉ chọn **ca chưa bắt đầu**. Danh sách dài có lệnh chuyển trang, ví dụ `/doica trang 2`; `tiếp`/`trước` vẫn dùng được. Khi A gửi thành công, bot xếp thông báo để gửi riêng cho B đã được liên kết, kèm hai ca và lệnh đồng ý/từ chối. Đợt dùng hiện tại chuẩn bị cho Trần Văn Tài và Ngô Đắc Lãm, không qua quản lý duyệt. Không cần website hoặc Mini App. Xem [hướng dẫn đổi ca trong Zalo](docs/tickets-chat.md).
+**Đổi ca bằng tin nhắn riêng:** gửi `/doica` để chọn ca của A → người đổi cùng B → ca của B → lý do → xem trước và xác nhận; `/tickets` vẫn dùng để xem menu hoặc tiếp tục bước đang nhập. Chỉ chọn **ca chưa bắt đầu**. Danh sách dài có lệnh chuyển trang, ví dụ `/doica trang 2`; `tiếp`/`trước` vẫn dùng được. Khi A gửi thành công, bot xếp thông báo để gửi riêng cho B đã được liên kết, kèm hai ca và lệnh đồng ý/từ chối. Chế độ `lab_live` dùng cho mọi thành viên đã duyệt và liên kết đúng lịch; `lab_live_test` vẫn chỉ dành cho hai người thử. Với `TICKETS_REQUIRE_MANAGER=false`, B là người xác nhận cuối. Không cần website hoặc Mini App. Xem [hướng dẫn đổi ca trong Zalo](docs/tickets-chat.md).
 
 Bot hiển thị yêu cầu gọn và lệnh xác nhận bốn chữ số, ví dụ `/dongy 1234` hoặc `/tuchoi 1234` — dùng đúng mã bot gửi. Bước nhập, bản xem trước và mã xác nhận có tối đa 15 phút; yêu cầu đã gửi chờ tối đa 48 giờ và hết hạn sớm hơn khi ca bắt đầu. Không nhận được tin hoặc mã đã hết hạn: B gửi `/choxacnhan` để xem yêu cầu và lấy mã mới.
 
 **Thử với lịch hiện có:** chế độ `lab_live_test` dành riêng cho hai người đã xác minh, chỉ cho chọn ca chưa bắt đầu. Ca hôm nay phải có giờ rõ ràng trong ô Buổi; nếu thiếu giờ, chỉ chọn ca từ ngày mai trở đi. B đồng ý sẽ **sửa thật hai ô D**; chế độ này vẫn bỏ kiểm tra trùng giờ. Xem [cấu hình và các bước thử](docs/tickets-chat.md#thử-nhanh-trên-lịch-thật-lab_live_test).
 
-Chế độ `lab_live` hỗ trợ đổi đúng **hai ô Lab Coach ở cột D của lịch hiện tại**; không sửa Key Coach hoặc cột khác. Chỉ bật ghi sau khi xác nhận giờ buổi, có ca tương lai và thống nhất không sửa bảng đồng thời. Quản trị phải xác minh, liên kết Zalo cho từng người; `/dangky` không cấp quyền đổi ca. Thông báo chỉ dành cho yêu cầu mới; các yêu cầu cũ vẫn xem bằng `/choxacnhan`. `sheets_test` với bảng thử riêng vẫn được giữ để kiểm thử. Thử hội thoại mô phỏng, không gọi Zalo/Google/model:
+Chế độ `lab_live` mở đổi ca cho mọi thành viên đã duyệt, kiểm tra trùng giờ với phân công Lab Coach/Key Coach và chỉ đổi **hai ô Lab Coach ở cột D của lịch hiện tại**; không sửa Key Coach hoặc cột khác. Chỉ bật ghi sau khi xác nhận giờ buổi, có ca tương lai và thống nhất không sửa bảng đồng thời. Quản trị xác minh và duyệt đăng ký; khi dùng Workload, bot tự liên kết Zalo với đúng thành viên. Gửi `/dangky` nhưng chưa được duyệt không cấp quyền đổi ca. Thông báo chỉ dành cho yêu cầu mới; các yêu cầu cũ vẫn xem bằng `/choxacnhan`. `sheets_test` với bảng thử riêng vẫn được giữ để kiểm thử. Thử hội thoại mô phỏng, không gọi Zalo/Google/model:
 
 ```powershell
 .\scripts\run.ps1 TicketsChatDemo
@@ -104,6 +106,8 @@ Trong khoảng 60 giây chờ, mở Zalo và gửi một tin riêng cho bot. Ter
 
 Sửa `.env`: sao chép `user_id` vào `ZALO_ALLOWED_USERS`. Nhiều ID ngăn cách bằng dấu phẩy, không dùng `*`.
 
+Đây là bước cấp quyền ban đầu cho quản trị. Nếu bật [đăng ký qua Workload](docs/dang-ky.md), thành viên mới tự nhắn riêng đăng ký; danh sách chờ duyệt có ID bot đã thu nhận. Không cần chạy `Discover` hoặc thu ID thủ công cho từng thành viên. Duyệt xong tự có quyền thành viên trong chat riêng: lịch, đổi ca, nhắc việc, góp ý và trò chuyện; issue cần bật toàn hệ thống và tài liệu cần được chia sẻ. Không thêm từng thành viên vào `.env` hoặc khởi động lại sau mỗi lần duyệt. Người đã duyệt từ bản trước được áp dụng sau một lần cập nhật/khởi động lại.
+
 ```dotenv
 ZALO_ALLOWED_USERS=id_nguoi_1,id_nguoi_2
 ZALO_ALLOWED_GROUPS=
@@ -147,6 +151,7 @@ Hermes chỉ xử lý hội thoại; công cụ thao tác máy, duyệt web và 
 
 | Tính năng | Lệnh trên Zalo | Chuẩn bị |
 | --- | --- | --- |
+| Đăng ký thành viên | `/dangky SỐ_ĐIỆN_THOẠI`, `/dangky trangthai` trong chat riêng | Workload, quản trị duyệt, [hướng dẫn](docs/dang-ky.md); mặc định tắt |
 | Tài liệu | `/tailieu`, `/hoi Câu hỏi` | `PrepareDocs` tạo mẫu; manifest cấp quyền từng file |
 | Nhắc việc | `/nhac sau 1 phut \| Nội dung`, `/nhac xem`, `/nhac huy MA` | Bot/máy phải chạy; giữ trạng thái khi bật lại |
 | Lịch | `/lich homnay`, `/lich YYYY-MM-DD` | Google Sheets, tab `Lich`, quyền đã cấp |
@@ -155,7 +160,7 @@ Hermes chỉ xử lý hội thoại; công cụ thao tác máy, duyệt web và 
 
 Hướng dẫn cài, mẫu Sheets, quyền và giới hạn: [docs/huong-dan-tinh-nang.md](docs/huong-dan-tinh-nang.md). Bài thử cho nhóm nhỏ: [docs/pilot-checklist.md](docs/pilot-checklist.md).
 
-Issue hiện đang tắt trong cấu hình máy thử. Quản trị có thể chuẩn bị tab `Issues` riêng trong bảng hiện tại, giữ đúng tiêu đề và quyền ghi, rồi bật `ZALO_ISSUES_ENABLED=true`; xem [các bước bật issue](docs/lenh-zalo.md#tạo-issue). Hiện mục menu không tự bật ghi hoặc thay đổi bảng. Mỗi issue vẫn cần người tạo đọc bản nháp và xác nhận trong 10 phút.
+Issue hiện đang tắt và bảng hiện tại chưa có tab `Issues`. Quản trị cần chuẩn bị tab `Issues` riêng, giữ đúng tiêu đề và quyền ghi, rồi bật `ZALO_ISSUES_ENABLED=true`; xem [các bước bật issue](docs/lenh-zalo.md#tạo-issue). Hiện mục menu không tự bật ghi hoặc thay đổi bảng. Mỗi issue vẫn cần người tạo đọc bản nháp và xác nhận trong 10 phút.
 
 ## 5. Thử trong nhóm Zalo
 
@@ -172,14 +177,14 @@ Khi tài khoản có tính năng:
 
 Bot nhận tin nhóm khi được nhắc tên hoặc có người trả lời tin của bot; không nhận toàn bộ hội thoại nhóm. ID dùng gửi về nhóm là `chat.id`. [Quy tắc tương tác nhóm](https://docs.zaloplatforms.com/docs/BOT/best-practices/build-bot-interaction-with-group)
 
-Nhóm luôn cần được cấp quyền. Với `members`, thành viên có thể hỏi dữ liệu đã chia sẻ và trò chuyện; nhắn riêng và tác vụ ghi vẫn cần quyền riêng. Với `allowlist`, cả nhóm và người gửi đều phải có trong danh sách. Dù ngữ cảnh model được tách theo người, **câu trả lời gửi trong nhóm vẫn hiển thị cho các thành viên của nhóm**.
+Nhóm luôn cần được cấp quyền. Với `members`, thành viên có thể hỏi dữ liệu đã chia sẻ và trò chuyện. Nhắn riêng cần allowlist hoặc đăng ký đã duyệt đúng chat. Duyệt tự cấp quyền thành viên trong chat riêng: lịch, đổi ca, nhắc việc, góp ý, trò chuyện và issue khi đã bật. Tài liệu dùng chung cần được chia sẻ rõ trong manifest; các quyền nhóm và tài liệu riêng giữ nguyên. Với `allowlist`, cả nhóm và người gửi đều phải có trong danh sách. **Không gửi số điện thoại đăng ký trong nhóm.** Dù ngữ cảnh model được tách theo người, **câu trả lời gửi trong nhóm vẫn hiển thị cho các thành viên của nhóm**.
 
 ## 6. Bài thử trước khi cho nhóm dùng
 
 | Bài thử | Kết quả cần thấy |
 | --- | --- |
 | Người được cấp quyền nhắn riêng | Bot trả lời đúng cuộc trò chuyện |
-| Người chưa được cấp quyền nhắn riêng | Bot không gọi Hermes và không trả lời |
+| Người chưa được cấp quyền nhắn riêng | Không gọi Hermes; khi đã bật đăng ký Workload, chỉ tiếp nhận đăng ký/xem trạng thái |
 | Hai người hỏi riêng nội dung khác nhau | Không lẫn ngữ cảnh hội thoại |
 | Nhóm và người đều được cấp quyền @bot | Bot trả lời đúng nhóm |
 | Nhóm chưa được cấp quyền @bot | Không xử lý câu hỏi |

@@ -1,20 +1,33 @@
 # Đổi ca bằng tin nhắn riêng trên Zalo
 
-Mọi bước đổi ca thực hiện trong chat riêng với bot, không cần website hoặc Mini App. Cấu hình cho đợt dùng hiện tại là **A = Trần Văn Tài, B = Ngô Đắc Lãm**, xác nhận giữa hai người, **không có bước quản lý duyệt**: A chọn hai ca và gửi yêu cầu → B xem trước, đồng ý → bot đổi người phụ trách ở hai ô cột D và đọc lại để kiểm tra.
+Mọi bước đổi ca thực hiện trong chat riêng với bot, không cần website hoặc Mini App. Chế độ `lab_live` dành cho **mọi thành viên đã được quản trị duyệt và liên kết đúng lịch**. Với `TICKETS_REQUIRE_MANAGER=false`, mỗi yêu cầu do hai người tham gia xác nhận, **không có bước quản lý duyệt**: A chọn hai ca và gửi yêu cầu → B xem trước, đồng ý → bot đổi người phụ trách ở hai ô cột D và đọc lại để kiểm tra.
 
 Có ba chế độ dữ liệu, không dùng lẫn cấu hình:
 
 | Chế độ | Phạm vi |
 | --- | --- |
 | `lab_live_test` | Thử đổi **hai ô D trên lịch thật** giữa hai người được chỉ định; chỉ ca chưa bắt đầu, không kiểm tra trùng giờ. Ca hôm nay cần giờ rõ ràng trong ô Buổi; thiếu giờ thì chỉ chọn ngày tương lai |
-| `lab_live` | Bảng Lab hiện tại, chỉ hai ô **Lab Coach ở cột D** của yêu cầu đã xác nhận; không sửa Key Coach hoặc cột khác |
+| `lab_live` | Mọi thành viên đã duyệt/liên kết; kiểm tra trùng giờ Lab Coach và Key Coach. Chỉ đổi hai ô **Lab Coach ở cột D** của yêu cầu đã xác nhận |
 | `sheets_test` | Bảng thử riêng chuẩn hóa tám cột; giữ lại ở phần phụ lục để kiểm thử |
 
-`lab_live` chỉ được bật ghi sau khi người quản lý lịch cung cấp **giờ bắt đầu và kết thúc chính xác cho từng buổi** và bảo đảm không ai sửa bảng đồng thời. Không suy ra giờ từ chữ “Sáng/Chiều/Tối”, tên ca hoặc giờ trong dữ liệu demo. Quản trị xác minh người thật và liên kết Zalo; `/dangky` không cấp quyền đổi ca.
+`lab_live` chỉ được bật ghi sau khi người quản lý lịch cung cấp **giờ bắt đầu và kết thúc chính xác cho từng buổi** và bảo đảm không ai sửa bảng đồng thời. Không suy ra giờ từ chữ “Sáng/Chiều/Tối”, tên ca hoặc giờ trong dữ liệu demo. Quản trị phải xác minh người thật; gửi `/dangky` nhưng chưa được duyệt không cấp quyền đổi ca.
+
+## Cách cấp quyền hiện tại: đăng ký và duyệt ngay trong Zalo
+
+Với `lab_live` hoặc `lab_live_test`, ưu tiên [đăng ký Workload](dang-ky.md):
+
+1. Mỗi người nhắn **riêng** bot `/dangky SỐ_ĐIỆN_THOẠI` đã có trong Workload. Bot tự lưu ID người gửi và chat riêng.
+2. Quản trị nhắn riêng `/dangkychoduyet`, xác minh người đăng ký rồi dùng lệnh `/duyetdangky DK-…` bot cung cấp.
+3. Duyệt xong tự có các quyền thành viên trong chat riêng, gồm lịch và đổi ca theo chế độ đã bật. **Không thêm từng người vào `.env`, không tạo CSV, không chạy `Discover` hoặc import cho họ.** Người đã duyệt từ bản trước cũng được áp dụng sau một lần cập nhật/khởi động lại bot.
+4. Khi Tickets lịch Lab đã bật, bot tự tạo liên kết Tickets sau khi quản trị duyệt; A dùng `/doica`, B nhận thông báo hoặc xem `/choxacnhan`. Nếu tra nguồn hoặc liên kết chưa thành công, quản trị nhận hướng xử lý; danh tính đã duyệt vẫn được giữ. Sau khi khắc phục, thành viên mở `/tickets` để thử liên kết lại.
+
+Quản trị xem `/thanhvien` hoặc `/thanhvien 2`, sao chép `/thuhoidangky MÃ_THÀNH_VIÊN` khi cần thu hồi; không khởi động lại sau mỗi lần duyệt/thu hồi. Tên phải xác định duy nhất trên nguồn hiện tại; trùng tên hoặc dữ liệu danh tính thay đổi sẽ bị chặn để quản trị kiểm tra.
+
+Duyệt thành viên mở quyền nhắc việc, góp ý, trò chuyện và issue khi tính năng issue đã bật/có tab đích hợp lệ trong chat riêng. Duyệt **không tự bật ghi lịch**, đổi chế độ, mở nhóm mới, tài liệu riêng hoặc cấp vai trò quản lý. Chế độ thử `lab_live_test` vẫn chỉ cho hai người đã cấu hình; muốn dùng nhiều người thật phải chuẩn bị chế độ `lab_live` cùng các điều kiện bên dưới. Cách liên kết CSV cũ chỉ cần khi không dùng đăng ký Workload; được ghi riêng ở mục 4.2 và phụ lục.
 
 ## Thử nhanh trên lịch thật: `lab_live_test`
 
-Đợt thử này dành riêng cho **Trần Văn Tài và Ngô Đắc Lãm** đã được quản trị xác minh, liên kết đúng Zalo và thêm vào `ZALO_ALLOWED_USERS`. Đây là **ghi thật vào hai ô cột D**, không phải dữ liệu mô phỏng. Không ai chỉnh bảng đồng thời trong lúc thử.
+Đợt thử này dành riêng cho **Trần Văn Tài và Ngô Đắc Lãm** đã được quản trị duyệt Workload và liên kết đúng Zalo theo luồng trên; không cần thêm hai ID vào `.env`. Nếu chưa dùng đăng ký Workload, có thể giữ cách liên kết thủ công cũ bên dưới. Đây là **ghi thật vào hai ô cột D**, không phải dữ liệu mô phỏng. Không ai chỉnh bảng đồng thời trong lúc thử.
 
 Quản trị dừng bot, chọn chế độ sau trong `.env` trên máy:
 
@@ -26,15 +39,17 @@ TICKETS_LAB_TEST_WRITE_ENABLED=true
 TICKETS_LAB_TEST_EXCLUSIVE_WRITER=true
 ```
 
-Chế độ này dùng bảng/tab/khóa Google đã cấu hình cho lịch Lab; hai cờ thử ở trên độc lập với `TICKETS_LAB_WRITE_ENABLED` và `TICKETS_LAB_EXCLUSIVE_WRITER` của chế độ thường, nên giữ hai cờ thường ở `false`. Không bắt buộc cấu hình giờ chung cho ba buổi. Bot chỉ cho chọn **ca chưa bắt đầu**: nếu ô Buổi ghi giờ rõ ràng, bot kiểm tra theo giờ đó; nếu thiếu giờ, chỉ cho chọn ngày từ ngày mai trở đi, không đoán giờ của ca hôm nay. Chế độ thử vẫn **bỏ kiểm tra trùng giờ**, kể cả với Key Coach. Vì vậy, chỉ dùng để thử thao tác đã thống nhất; không coi kết quả là xác nhận lịch phù hợp cho việc đi làm. Kiểm tra cấu trúc, đúng người, đúng hai ô D và đọc lại kết quả vẫn giữ nguyên.
+Chế độ này dùng bảng/tab/khóa Google đã cấu hình cho lịch Lab; hai cờ thử ở trên độc lập với `TICKETS_LAB_WRITE_ENABLED` và `TICKETS_LAB_EXCLUSIVE_WRITER` của chế độ thường, nên giữ hai cờ thường ở `false`. Không bắt buộc cấu hình giờ chung trong chế độ thử này. Bot chỉ cho chọn **ca chưa bắt đầu**: nếu ô Buổi ghi giờ rõ ràng, bot kiểm tra theo giờ đó; nếu thiếu giờ, chỉ cho chọn ngày từ ngày mai trở đi, không đoán giờ của ca hôm nay. Chế độ thử vẫn **bỏ kiểm tra trùng giờ**, kể cả với Key Coach. Vì vậy, chỉ dùng để thử thao tác đã thống nhất; không coi kết quả là xác nhận lịch phù hợp cho việc đi làm. Kiểm tra cấu trúc, đúng người, đúng hai ô D và đọc lại kết quả vẫn giữ nguyên.
 
-Quản trị nhập danh tính đã xác minh vào đúng chế độ thử bằng lệnh sau, trong lúc bot đang dừng. Lệnh chỉ tạo tài khoản/liên kết trên máy, không đổi lịch:
+**Nếu dùng Workload, bỏ qua bước CSV sau:** bật đúng chế độ thử rồi duyệt thành viên để bot tự tạo liên kết. Người đã được duyệt từ trước có thể mở `/tickets` hoặc `/doica` để bot tự liên kết vào chế độ hiện tại nếu chưa có. Chế độ thử lưu riêng ở `TICKETS_DATA_DIR/lab_live_test.sqlite3`; liên kết hoặc yêu cầu của `lab_live` không tự dùng chung.
+
+**Chỉ với cách thủ công cũ, khi đăng ký Workload đang tắt:** quản trị nhập danh tính đã xác minh vào đúng chế độ thử bằng lệnh sau, trong lúc bot đang dừng. Lệnh chỉ tạo tài khoản/liên kết trên máy, không đổi lịch:
 
 ```powershell
 .\.venv\Scripts\python.exe -m hermes_zalo.tickets.cli import-zalo-users --mode lab_live_test --csv data/tickets-users.csv
 ```
 
-CSV phải chứa đúng hai tên trong cấu hình và cả hai `user_id` phải có trong danh sách cho phép. Chế độ thử lưu riêng ở `TICKETS_DATA_DIR/lab_live_test.sqlite3`; liên kết hoặc yêu cầu của `lab_live` không tự dùng chung.
+Với cách import thủ công này, CSV phải chứa đúng hai tên trong cấu hình và cả hai `user_id` phải có trong `ZALO_ALLOWED_USERS`. Điều kiện import không áp dụng cho luồng Workload đã duyệt tự liên kết ở trên.
 
 Sau khi cấu hình và liên kết đã sẵn sàng, cập nhật và chạy bot:
 
@@ -59,7 +74,7 @@ Không cần web hoặc Mini App. Kết thúc thử, quản trị đặt `TICKET
 3. Bot liệt kê người đổi cùng. Gửi số của B, rồi gửi số cạnh ca của B ở bước tiếp theo. Số chọn thay đổi giữa các bước: luôn dùng số trong danh sách mới nhất, không gửi lại số cũ theo thói quen.
 4. Nhập lý do, hoặc `bỏ qua` nếu không muốn ghi lý do. Kiểm tra bản xem trước: hai người, hai ca, ngày giờ, khóa, phòng và lý do.
 5. Nếu đúng, sao chép **nguyên lệnh `/doica gui MÃ_4_SỐ`** bot gửi. Nếu chưa đúng, dùng `quay lại` để chọn lại hoặc `thoát` để bỏ bản nháp.
-6. Chờ bot báo **Đã gửi yêu cầu** và giữ mã yêu cầu để xem lại trạng thái. Bot xếp thông báo gửi riêng cho B đã được liên kết; tạo bản nháp chưa gửi thông báo. Tạo yêu cầu chưa làm thay đổi lịch; cấu hình hiện tại bắt đầu ghi khi B xác nhận đúng lệnh.
+6. Chờ bot báo **Đã gửi yêu cầu** và giữ mã yêu cầu để xem lại trạng thái. Bot xếp thông báo gửi riêng cho B đã được liên kết; tạo bản nháp chưa gửi thông báo. Tạo yêu cầu chưa làm thay đổi lịch; với `TICKETS_REQUIRE_MANAGER=false`, bot bắt đầu ghi khi B xác nhận đúng lệnh.
 
 Danh sách dài: dùng lệnh **trang trước/trang tiếp** bot hiển thị, ví dụ `/doica trang 2`; hoặc nhắn `tiếp`/`trước`. Lệnh chuyển trang áp dụng cho danh sách đang chọn, không bắt đầu lại quy trình. Nhắn `tìm tên hoặc từ khóa` để lọc. Riêng `/doica` không kèm trang bắt đầu bản nháp mới và bỏ bản nháp cũ; lệnh này không hủy yêu cầu đã gửi. Muốn hủy yêu cầu đã gửi, mở yêu cầu và dùng lệnh `/huydoica` bot cung cấp nếu còn được phép.
 
@@ -67,7 +82,7 @@ Danh sách dài: dùng lệnh **trang trước/trang tiếp** bot hiển thị, 
 
 - B nhận tin riêng có người đề nghị đổi, hai ca và các lệnh `/dongy MÃ_4_SỐ` hoặc `/tuchoi MÃ_4_SỐ`. Đọc kỹ nội dung rồi gửi một trong hai lệnh bot cấp. Đây là lệnh tin nhắn, bản này chưa dùng nút bấm.
 - Nếu chưa thấy thông báo hoặc mã hết hạn, B gửi `/choxacnhan`. Nếu chỉ có một yêu cầu, bot mở ngay nội dung và lệnh xác nhận; nếu có nhiều yêu cầu, chọn bằng lệnh `/yeucau` dưới mục cần xem.
-- Với cấu hình hai người hiện tại (`TICKETS_REQUIRE_MANAGER=false`), B đồng ý sẽ bắt đầu cập nhật hai ô Lab Coach. Không cần tạo tài khoản quản lý hoặc chờ `/duyet`. Nếu dùng chế độ có quản lý ở đợt thử khác, quản lý mới dùng `/choduyet` và `/duyet` sau khi B đồng ý.
+- Với cấu hình B là người xác nhận cuối (`TICKETS_REQUIRE_MANAGER=false`), B đồng ý sẽ bắt đầu cập nhật hai ô Lab Coach. Không cần tạo tài khoản quản lý hoặc chờ `/duyet`. Nếu dùng chế độ có quản lý ở đợt thử khác, quản lý mới dùng `/choduyet` và `/duyet` sau khi B đồng ý.
 - Mở chi tiết bằng `/yeucau MÃ_YÊU_CẦU`. Bot gửi lệnh ngắn như `/dongy 1234`, kèm các thao tác khác theo quyền. Mã bốn chữ số gắn với đúng người, chat riêng và phiên bản yêu cầu; luôn dùng mã bot vừa cung cấp. Thiếu mã, sai mã hoặc gửi lại mã đã dùng không đổi lịch. Nếu bot báo nội dung đã thay đổi hoặc hết hạn, xem lại rồi lấy lệnh mới.
 - Thông báo áp dụng cho yêu cầu mới gửi sau khi cập nhật bot; không tự gửi lại các yêu cầu cũ. A xem lại yêu cầu để biết kết quả; chưa có thông báo tự động cho A khi hoàn tất.
 - Mã trong thông báo chỉ xử lý đúng yêu cầu được gửi kèm. Nhận tin hoặc xác nhận bằng mã này không bỏ bản nháp đổi ca khác B đang nhập; gửi `/tickets` để tiếp tục bản nháp còn hiệu lực.
@@ -88,7 +103,7 @@ Danh sách dài: dùng lệnh **trang trước/trang tiếp** bot hiển thị, 
 | `/choxacnhan` | B xem các yêu cầu chờ mình xác nhận |
 | `/lichsudoica` | Xem lịch sử đổi ca |
 | `/lichsudoica MÃ_YÊU_CẦU trang 1` | Xem lịch sử thao tác của một yêu cầu, phân trang |
-| `/choduyet` | Chỉ dùng trong chế độ có quản lý, không cần ở luồng hai người hiện tại |
+| `/choduyet` | Chỉ dùng trong chế độ có quản lý, không cần khi `TICKETS_REQUIRE_MANAGER=false` |
 | `/dongy`, `/tuchoi` | B đồng ý hoặc từ chối theo lệnh bot gửi |
 | `/huydoica` | A hủy khi trạng thái còn cho phép |
 | `/duyet` | Chỉ dùng khi bật yêu cầu quản lý duyệt |
@@ -137,15 +152,15 @@ TICKETS_LAB_EXCLUSIVE_WRITER=false
 TICKETS_LAB_PERIODS_JSON={}
 ```
 
-Quản trị cần xác nhận đủ giờ của ba buổi **Sáng, Chiều, Tối**. `TICKETS_LAB_PERIODS_JSON` nhận đúng ba tên buổi này, mỗi buổi có hai khóa `start`, `end`; giờ theo Việt Nam, dạng `HH:MM`. Ví dụ **cấu trúc cần điền, chưa phải cấu hình dùng được**:
+Quản trị xác nhận giờ của **các buổi thực tế xuất hiện trong lịch**, gồm cả phân công Key Coach dùng kiểm tra trùng giờ. `TICKETS_LAB_PERIODS_JSON` nhận một hoặc nhiều tên **Sáng, Chiều, Tối**, mỗi buổi có hai khóa `start`, `end`; giờ theo Việt Nam, dạng `HH:MM`. Nếu chỉ có Sáng/Chiều thì không cần khai báo Tối. Ví dụ **cấu trúc cần điền, chưa phải cấu hình dùng được**:
 
 ```text
-{"Sáng":{"start":"GIỜ_BẮT_ĐẦU","end":"GIỜ_KẾT_THÚC"},"Chiều":{"start":"GIỜ_BẮT_ĐẦU","end":"GIỜ_KẾT_THÚC"},"Tối":{"start":"GIỜ_BẮT_ĐẦU","end":"GIỜ_KẾT_THÚC"}}
+{"Sáng":{"start":"GIỜ_BẮT_ĐẦU","end":"GIỜ_KẾT_THÚC"},"Chiều":{"start":"GIỜ_BẮT_ĐẦU","end":"GIỜ_KẾT_THÚC"}}
 ```
 
-Thay từng chỗ trống bằng giờ đã được người quản lý lịch xác nhận, không dùng giờ đoán. Khi thiếu giờ, chỉ được kiểm tra tên để chuẩn bị tài khoản; bot chưa có đủ thông tin để cho chọn ca hoặc đổi ca. Nếu một tên buổi được dùng cho nhiều khung giờ khác nhau trong cùng lịch, phải làm rõ quy tắc trước khi bật; không ép chúng vào một khung giờ tùy ý.
+Thay từng chỗ trống bằng giờ đã được người quản lý lịch xác nhận, không dùng giờ đoán. Ca tương lai phải có giờ rõ trong ô Buổi hoặc ánh xạ giờ tương ứng; thiếu cả hai thì bot chặn chọn/đổi ca, vẫn cho kiểm tra tên để chuẩn bị tài khoản. Nếu một tên buổi được dùng cho nhiều khung giờ khác nhau trong cùng lịch, phải làm rõ quy tắc trước khi bật; không ép chúng vào một khung giờ tùy ý.
 
-Nếu ô Buổi ghi đầy đủ `Sáng HH:MM–HH:MM`, `Chiều HH:MM–HH:MM` hoặc `Tối HH:MM–HH:MM`, bot dùng giờ ghi rõ tại ô đó thay cho giờ chung của buổi. Dấu `-` cũng được chấp nhận; các mô tả như “khoảng” hoặc giờ thiếu sẽ không được suy đoán. Cấu hình chung vẫn phải đủ ba buổi.
+Nếu ô Buổi ghi đầy đủ `Sáng HH:MM–HH:MM`, `Chiều HH:MM–HH:MM` hoặc `Tối HH:MM–HH:MM`, bot dùng giờ ghi rõ tại ô đó thay cho giờ chung của buổi. Dấu `-` cũng được chấp nhận; các mô tả như “khoảng” hoặc giờ thiếu sẽ không được suy đoán. Nếu tất cả ca cần kiểm tra đều ghi giờ rõ trong ô Buổi, có thể để ánh xạ chung `{}`. Không lấy giờ trong demo để điền vào lịch thật.
 
 **Phạm vi ghi:** chương trình chỉ thay `Lab Coach` ở cột D của đúng hai dòng ca đã xác nhận. Không ghi Key Coach, trạng thái, ngày, khóa, phòng, công thức hoặc định dạng; không thêm cột/mã vào lịch thật. Ô D có dữ liệu không thể xác định thành một người duy nhất phải được kiểm tra, không tự tách hoặc đoán tên.
 
@@ -159,9 +174,15 @@ Hai ô D được gửi trong cùng một lệnh `spreadsheets.batchUpdate`, nê
 
 Vì vậy, chỉ đặt `TICKETS_LAB_EXCLUSIVE_WRITER=true` khi đã thống nhất **một tiến trình Tickets là bên duy nhất ghi bảng trong lúc đổi ca**. Người dùng và automation khác phải ngừng chỉnh sửa đồng thời; cờ này không tự khóa giao diện Google Sheets. Không đáp ứng được điều kiện này thì giữ ghi tắt. Trước và sau khi sửa cấu trúc lịch thủ công, dừng bot, xử lý các yêu cầu chờ rồi tạo yêu cầu mới trên lịch đã kiểm tra.
 
-## 4. Xác minh A và B trên Zalo cho `lab_live`
+## 4. Liên kết thành viên Zalo cho `lab_live`
 
-Dừng bot/web đang dùng dữ liệu Tickets trước khi quản trị. Dùng `Discover` như hướng dẫn README để lấy `user_id` và `chat_id` từ **tin nhắn riêng thật** của từng người; quản trị xác minh đó là Tài và Lãm. Không suy ra danh tính từ tên hiển thị hoặc `/dangky`.
+### 4.1. Cách hiện tại: duyệt đăng ký Workload
+
+Làm theo phần đăng ký và duyệt ở đầu trang. Bot lấy ID thật từ tin nhắn riêng, tự lưu quyền thành viên và tự tạo liên kết Tickets khi duyệt trong chế độ lịch Lab đã bật. Không cần điền danh sách thành viên trong `.env` hoặc chuẩn bị `tickets-users.csv`. Quản trị vẫn cấu hình nguồn lịch, chế độ ghi và giờ ca một lần cho hệ thống. Cả A và B phải được duyệt và liên kết thành công trước khi gửi yêu cầu; nếu bot báo lỗi nguồn khi duyệt, sửa lỗi rồi để người đó mở `/tickets` thử lại. Người đã được duyệt từ trước cũng có thể mở `/doica` để tự liên kết, không cần đăng ký lại.
+
+### 4.2. Cách thủ công cũ: chỉ khi chưa dùng đăng ký Workload
+
+Dừng bot/web đang dùng dữ liệu Tickets trước khi quản trị theo cách thủ công. Dùng `Discover` như hướng dẫn README để lấy `user_id` và `chat_id` từ **tin nhắn riêng thật** của từng người; quản trị xác minh đó là Tài và Lãm. Không suy ra danh tính từ tên hiển thị hoặc đăng ký tên tự khai cũ.
 
 Tạo file UTF-8 `data/tickets-users.csv` trên máy theo cấu trúc sau, thay các ID mẫu bằng ID thực đã xác minh:
 
@@ -179,7 +200,7 @@ Kiểm tra tên trên bảng hiện tại, chỉ đọc và không đổi lịch
 .\scripts\run.ps1 TicketsLabCheck
 ```
 
-Sau khi kết quả khớp đúng cả hai người, nhập cả hai `user_id` đã kiểm tra vào `ZALO_ALLOWED_USERS` trong `.env` và lưu lại. Đây là quyền nhắn bot riêng; bước import sẽ từ chối nếu thiếu quyền và không tự thêm ID. Sau đó nhập tài khoản và liên kết Zalo vào dữ liệu cục bộ:
+Với cách thủ công cũ này, sau khi kết quả khớp đúng cả hai người, nhập cả hai `user_id` đã kiểm tra vào `ZALO_ALLOWED_USERS` trong `.env` và lưu lại. Bước import sẽ từ chối nếu thiếu quyền và không tự thêm ID; thành viên đã duyệt Workload dùng mục 4.1 thay cho bước này. Sau đó nhập tài khoản và liên kết Zalo vào dữ liệu cục bộ:
 
 ```powershell
 .\scripts\run.ps1 TicketsLinkUsers
@@ -189,11 +210,11 @@ Hai lệnh chuẩn bị này không cần bật ghi hoặc điền giờ. Kiểm
 
 Cả hai lệnh dùng `data/tickets-users.csv`. Nếu quản trị cần chọn file khác, lệnh đầy đủ là `python -m hermes_zalo.tickets.cli check-lab --csv ĐƯỜNG_DẪN_CSV` và `python -m hermes_zalo.tickets.cli import-zalo-users --mode lab_live --csv ĐƯỜNG_DẪN_CSV`, chạy bằng Python trong `.venv` của dự án.
 
-Liên kết Tickets gắn với đúng người gửi, đúng chat riêng và bot hiện tại; đổi bot hoặc ID phải được quản trị xác minh lại. Luồng hai người hiện tại không cần tạo tài khoản quản lý.
+Liên kết Tickets gắn với đúng người gửi, đúng chat riêng và bot hiện tại; đổi bot hoặc ID phải được quản trị xác minh lại. Với `TICKETS_REQUIRE_MANAGER=false`, không cần tạo tài khoản quản lý.
 
 ## 5. Bật `lab_live` sau khi đủ điều kiện
 
-Chỉ thực hiện sau khi đã có giờ thực tế, xác minh A/B, quyền Google phù hợp và thỏa thuận không sửa bảng đồng thời. Giữ nguyên giá trị `TICKETS_LAB_PERIODS_JSON` đã điền đúng giờ, rồi đặt:
+Chỉ thực hiện sau khi đã có giờ thực tế, thành viên đã được xác minh/duyệt, quyền Google phù hợp và thỏa thuận không sửa bảng đồng thời. Đây là chế độ mở cho mọi thành viên đã duyệt, không phải danh sách hai người thử. Giữ nguyên giá trị `TICKETS_LAB_PERIODS_JSON` đã điền đúng giờ, rồi đặt:
 
 ```dotenv
 TICKETS_CHAT_MODE=lab_live
@@ -201,6 +222,8 @@ TICKETS_REQUIRE_MANAGER=false
 TICKETS_LAB_WRITE_ENABLED=true
 TICKETS_LAB_EXCLUSIVE_WRITER=true
 ```
+
+`lab_live` có cơ sở dữ liệu riêng; yêu cầu đang chờ trong `lab_live_test` không chuyển sang chế độ mới. Hoàn tất/hủy các yêu cầu thử trước khi chuyển, giữ dữ liệu cũ để tra lịch sử. Khi mở Tickets, bot tự đối chiếu và khôi phục liên kết cho mọi thành viên đã duyệt; người đổi cùng không cần mở bot trước hoặc đăng ký lại. Dữ liệu từng người sai/trùng sẽ được bỏ qua, không chặn người hợp lệ. Lỗi kết nối sẽ thử lại sau 60 giây; sau khi sửa dữ liệu riêng của một người, dùng `/tickets` hoặc gửi lại lệnh duyệt để thử liên kết.
 
 Cập nhật và chạy bot tại thư mục repo:
 
@@ -221,7 +244,7 @@ Mỗi chế độ trong một cơ sở dữ liệu có **1.000 mã bốn chữ s
 
 ## Phụ lục A. Bảng thử chuẩn hóa `sheets_test`
 
-Các bước dưới đây dành riêng cho chế độ bảng thử cũ. Chúng không thay thế cấu hình `lab_live` ở trên và không dùng để ghi bảng Lab hiện tại.
+Các bước dưới đây dành riêng cho chế độ bảng thử cũ với liên kết thủ công, khi đăng ký Workload đang tắt. Tự liên kết Workload hiện chỉ áp dụng cho `lab_live`/`lab_live_test`, không tự ghép sang bảng `sheets_test` có nguồn và mã riêng. Các bước này không thay thế cấu hình `lab_live` ở trên và không dùng để ghi bảng Lab hiện tại.
 
 Tạo một spreadsheet **khác ID với `ZALO_SHEETS_ID`** của lịch Lab đang đọc. Đặt tab `TicketsTest`. Bảng sao chép nguyên xi còn ô gộp không dùng được; chuẩn hóa một số ca thử thành đúng tám cột A:H:
 
@@ -269,7 +292,7 @@ Dữ liệu tài khoản, liên kết Zalo, yêu cầu và hội thoại đượ
 
 1. Xác minh người thật và mã `member_id` trong bảng thử. Vai trò quản lý do quản trị cấp, không tự nhận qua tin nhắn.
 2. Tạm dừng bot nhận tin. Chạy `.\scripts\run.ps1 Discover`, yêu cầu đúng người gửi một tin **riêng** mới cho bot; ghi lại `user_id` và `chat_id` được hiển thị trên máy. Lặp lại nếu cần. Không chạy `Discover` cùng lúc với `Start`.
-3. Thêm các `user_id` đã kiểm tra vào `ZALO_ALLOWED_USERS` trong `.env`, ngăn cách bằng dấu phẩy. Quyền bot này là điều kiện riêng, không tự thêm khi liên kết Tickets.
+3. Với chế độ bảng thử và liên kết thủ công trong phụ lục này, thêm các `user_id` đã kiểm tra vào `ZALO_ALLOWED_USERS` trong `.env`, ngăn cách bằng dấu phẩy. Đây không phải bước cho thành viên Workload đã duyệt dùng lịch Lab.
 4. Tạo tài khoản Tickets dùng chat, rồi liên kết đúng tài khoản với `user_id` và `chat_id` riêng của người đó. Liên kết còn gắn với bot hiện tại trong `.env`; đổi Bot Token cần quản trị kiểm tra và liên kết lại.
 
 Lệnh tạo tài khoản chỉ dùng chat, không yêu cầu đặt mật khẩu web:
@@ -306,7 +329,7 @@ Khi cần thu hồi tài khoản Tickets hoàn toàn:
 .\.venv\Scripts\python.exe -m hermes_zalo.tickets.cli revoke-user --mode sheets_test --username coach-a
 ```
 
-Quyền nhắn bot trong `ZALO_ALLOWED_USERS` vẫn độc lập; nếu cần thu hồi cả quyền bot, quản trị sửa danh sách đó và khởi động lại bot. Chưa có lệnh tự liệt kê toàn bộ liên kết để người dùng tự chọn tài khoản.
+Với liên kết thủ công khi đăng ký Workload đang tắt, quyền nhắn bot trong `ZALO_ALLOWED_USERS` vẫn độc lập; nếu cần thu hồi cả quyền bot, quản trị sửa danh sách đó và khởi động lại bot. Còn với thành viên Workload đã duyệt, dùng `/thanhvien` và `/thuhoidangky MÃ_THÀNH_VIÊN` ngay trong chat riêng; không cho thành viên tự chọn hoặc nhận liên kết của người khác.
 
 ### A.3. Bật chế độ bảng thử trên Zalo
 
@@ -336,12 +359,13 @@ Tắt cửa sổ web Tickets cũ nếu đang dùng cùng cơ sở dữ liệu. C
 | Tình huống | Cách xử lý |
 | --- | --- |
 | Bot yêu cầu nhắn riêng | Mở chat riêng với đúng bot rồi gửi `/tickets` |
-| Chưa có quyền hoặc chưa liên kết | Quản trị kiểm tra `ZALO_ALLOWED_USERS` và liên kết chính xác người gửi, chat riêng, bot |
+| Chưa có quyền hoặc chưa liên kết | Dùng Workload: xem `/dangky trangthai`, quản trị kiểm tra `/thanhvien` và lỗi liên kết khi duyệt; sau khi khắc phục, thành viên thử lại `/tickets`, không thêm ID vào `.env`. Với cách thủ công cũ: kiểm tra `ZALO_ALLOWED_USERS` và liên kết đúng người gửi/chat riêng/bot |
+| Bản cũ báo cần cấp quyền bot và Sheets dù đã duyệt | Cập nhật và khởi động lại bot để nạp quyền thành viên tự động; không cần đăng ký lại hoặc thêm từng ID vào `.env` |
 | Chưa bật Tickets | Hoàn tất cấu hình và quyền của chế độ định dùng, cập nhật và khởi động lại bot; riêng `lab_live_test` không yêu cầu cấu hình giờ |
 | B chưa thấy thông báo | B gửi `/choxacnhan`; kiểm tra A đã nhận “Đã gửi yêu cầu”, bot đang chạy, B không chặn bot và đã liên kết đúng chat riêng. Không tự gửi thông báo cho các yêu cầu cũ |
-| Quản lý chưa thấy yêu cầu | Chỉ áp dụng nếu bật quản lý duyệt; luồng `lab_live` hai người hiện tại không có bước này |
+| Quản lý chưa thấy yêu cầu | Chỉ áp dụng nếu `TICKETS_REQUIRE_MANAGER=true`; cấu hình `false` để B là người xác nhận cuối |
 | Ca đã đổi hoặc xác nhận hết hạn | Xem lại yêu cầu và dùng lệnh mới bot gửi |
-| Không có ca để chọn | Kiểm tra đúng tên, liên kết và ca chưa bắt đầu. `lab_live` cần đủ cấu hình giờ; `lab_live_test` thiếu giờ thì chỉ chọn từ ngày mai trở đi. Bot không tự dời ngày hoặc thêm ca |
+| Không có ca để chọn | Kiểm tra đúng tên, liên kết và ca chưa bắt đầu. `lab_live` cần giờ rõ trong ô Buổi hoặc ánh xạ buổi phù hợp; `lab_live_test` thiếu giờ thì chỉ chọn từ ngày mai trở đi. Bot không tự dời ngày hoặc thêm ca |
 | Đang có tiến trình Tickets khác | Dừng cửa sổ bot/web cũ sử dụng cùng dữ liệu; không xóa file khóa khi tiến trình đang chạy |
 | Kết quả ghi chưa rõ | Dùng `/doisoat` nếu bot cấp thao tác hoặc nhờ quản trị kiểm tra; không tự ghi lại |
 

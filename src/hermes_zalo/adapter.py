@@ -201,9 +201,21 @@ class ZaloAdapter(BasePlatformAdapter):
             reminder = ready[0]
             # Destinations come ONLY from a previously authorized user command.
             # This path is never exposed to the model or arbitrary background tasks.
-            authorized = reminder.user_id in self.settings.allowed_users and (
-                reminder.chat_type == "PRIVATE" or
-                (reminder.chat_type == "GROUP" and self._groups_supported and reminder.chat_id in self.settings.allowed_groups))
+            member_allowed = getattr(self.work, 'member_feature_allowed', None)
+            if member_allowed is not None:
+                authorized = member_allowed(reminder.user_id, reminder.chat_id, reminder.chat_type)
+            else:
+                authorized = reminder.user_id in self.settings.allowed_users and (
+                    reminder.chat_type == "PRIVATE" or
+                    (reminder.chat_type == "GROUP" and reminder.chat_id in self.settings.allowed_groups))
+                if authorized and getattr(self.work, 'background_registration_blocked', lambda *args: False)(
+                        reminder.user_id, reminder.chat_id, reminder.chat_type):
+                    authorized = False
+            # Approval authorizes only the recorded private destination. Group
+            # delivery still needs the existing group scope and bot capability.
+            if reminder.chat_type == "GROUP" and (
+                    not self._groups_supported or reminder.chat_id not in self.settings.allowed_groups):
+                authorized = False
             if not authorized:
                 self.work.reminders.finish(reminder.id, "blocked")
                 self.work.pilot.record("reminders", "blocked")
@@ -255,7 +267,14 @@ class ZaloAdapter(BasePlatformAdapter):
                 break
             # User/chat IDs originate from administrator-verified DM bindings.
             # This separate transport path is not available to Hermes/model sends.
-            if notice['user_id'] not in self.settings.allowed_users:
+            delivery_allowed = getattr(self.work, 'ticket_delivery_allowed', None)
+            if delivery_allowed is not None:
+                authorized = delivery_allowed(notice['user_id'], notice['chat_id'])
+            else:
+                authorized = (notice['user_id'] in self.settings.allowed_users and not
+                    getattr(self.work, 'background_registration_blocked', lambda *args: False)(
+                        notice['user_id'], notice['chat_id']))
+            if not authorized:
                 await self.work.finish_ticket_notification(notice['id'], 'blocked')
                 continue
             started = time.monotonic()
@@ -328,16 +347,18 @@ class ZaloAdapter(BasePlatformAdapter):
         message = parse_update(update)
         if message is None:
             return
-        if not is_allowed(message, self.settings.allowed_users, self.settings.allowed_groups,
-                          group_members=self.settings.group_access == "members"):
+        if len(message.text) > self.settings.max_inbound_chars:
+            logger.info("Zalo message ignored: input exceeds configured limit")
+            return
+        registration_admission = bool(self.work and getattr(self.work, 'registration_admission', lambda message: False)(message))
+        registration_blocked = bool(self.work and getattr(self.work, 'registration_blocked', lambda message: False)(message))
+        if (not is_allowed(message, self.settings.allowed_users, self.settings.allowed_groups,
+                           group_members=self.settings.group_access == "members") and not registration_admission) or registration_blocked:
             logger.info("Zalo message ignored: sender/chat not authorized")
             if self.work:
                 self.work.pilot.record("access", "denied")
             return
         if message.chat_type == "GROUP" and not self._groups_supported:
-            return
-        if len(message.text) > self.settings.max_inbound_chars:
-            logger.info("Zalo message ignored: input exceeds configured limit")
             return
         # Official events do not document Telegram-style mention offsets.
         # Accept the bot's display name or account handle only at the start.

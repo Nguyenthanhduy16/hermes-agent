@@ -56,12 +56,14 @@ class _Document:
     path: str
     users: frozenset[str]
     groups: frozenset[str]
+    approved_members: bool = False
 
-    def allowed(self, user_id: str, chat_id: str, chat_type: str) -> bool:
+    def allowed(self, user_id: str, chat_id: str, chat_type: str, *, approved_member: bool = False) -> bool:
+        shared_member = self.approved_members and approved_member is True
         if chat_type == "PRIVATE":
-            return user_id in self.users
+            return user_id in self.users or shared_member
         if chat_type == "GROUP":
-            return chat_id in self.groups and (not self.users or user_id in self.users)
+            return chat_id in self.groups and (not self.users or user_id in self.users or shared_member)
         return False
 
 
@@ -140,11 +142,14 @@ class KnowledgeBase:
     """Search an administrator-managed UTF-8 .md/.txt knowledge folder.
 
     manifest.json shape: {"documents": [{"id": "...", "title": "...",
-    "path": "handbook.md", "users": ["user-id"], "groups": ["group-id"]}]}.
-    PRIVATE requires membership in users. GROUP requires membership in groups;
-    a nonempty users list additionally restricts who can ask in that group. An
-    empty users list permits globally approved members of the named groups only.
-    The caller MUST enforce its global user/group allowlist before calling here.
+    "path": "handbook.md", "users": ["user-id"], "groups": ["group-id"],
+    "approved_members": false}]}. approved_members is optional and defaults false.
+    PRIVATE requires membership in users or an explicitly shared document and
+    the caller-confirmed approved_member flag. GROUP always requires membership
+    in groups; a nonempty users list further restricts readers unless the document
+    explicitly admits the approved cohort and the caller confirms that scope.
+    The caller MUST enforce global admission and pass only a trusted approval
+    flag; the flag never comes from a user message or a document.
     """
 
     def __init__(self, root: Path):
@@ -197,12 +202,17 @@ class KnowledgeBase:
             raise _InvalidKnowledge()
         documents = []
         for entry in entries:
-            if not isinstance(entry, dict) or set(entry) != {"id", "title", "path", "users", "groups"}:
+            required = {"id", "title", "path", "users", "groups"}
+            if (not isinstance(entry, dict) or not required <= set(entry)
+                    or set(entry) - required - {"approved_members"}):
+                raise _InvalidKnowledge()
+            approved_members = entry.get("approved_members", False)
+            if not isinstance(approved_members, bool):
                 raise _InvalidKnowledge()
             document = _Document(_plain_string(entry["id"]), _plain_string(entry["title"]),
                                  _relative_path(entry["path"]), _identifiers(entry["users"]),
-                                 _identifiers(entry["groups"]))
-            if not document.users and not document.groups:
+                                 _identifiers(entry["groups"]), approved_members)
+            if not document.users and not document.groups and not document.approved_members:
                 raise _InvalidKnowledge()
             documents.append(document)
         if (len({doc.identifier for doc in documents}) != len(documents)
@@ -211,16 +221,22 @@ class KnowledgeBase:
         return root, documents
 
     @staticmethod
-    def _authorized(documents: list[_Document], user_id: str, chat_id: str, chat_type: str) -> list[_Document]:
+    def _authorized(documents: list[_Document], user_id: str, chat_id: str, chat_type: str,
+                    *, approved_member: bool = False) -> list[_Document]:
+        if not isinstance(approved_member, bool):
+            raise _InvalidKnowledge()
         if (not isinstance(user_id, str) or not user_id.strip()
                 or not isinstance(chat_id, str) or not chat_id.strip()):
             return []
-        return [doc for doc in documents if doc.allowed(user_id, chat_id, chat_type)]
+        return [doc for doc in documents
+                if doc.allowed(user_id, chat_id, chat_type, approved_member=approved_member)]
 
-    def list_sources(self, user_id: str, chat_id: str, chat_type: str) -> str:
+    def list_sources(self, user_id: str, chat_id: str, chat_type: str,
+                     *, approved_member: bool = False) -> str:
         try:
             _, documents = self._manifest()
-            documents = self._authorized(documents, user_id, chat_id, chat_type)
+            documents = self._authorized(documents, user_id, chat_id, chat_type,
+                                         approved_member=approved_member)
             if not documents:
                 return NO_SOURCES
             return "Tài liệu bạn được phép tra cứu trong cuộc trò chuyện này:\n" + "\n".join(
@@ -228,14 +244,16 @@ class KnowledgeBase:
         except (OSError, ValueError, TypeError, RecursionError):
             return UNAVAILABLE
 
-    def answer(self, question: str, user_id: str, chat_id: str, chat_type: str) -> str:
+    def answer(self, question: str, user_id: str, chat_id: str, chat_type: str,
+               *, approved_member: bool = False) -> str:
         if not isinstance(question, str) or not question.strip():
             return "Bạn hãy nhập câu hỏi về tài liệu sau lệnh /hoi."
         if len(question) > MAX_QUESTION_CHARS:
             return f"Câu hỏi quá dài. Bạn hãy rút gọn còn tối đa {MAX_QUESTION_CHARS} ký tự."
         try:
             root, documents = self._manifest()
-            documents = self._authorized(documents, user_id, chat_id, chat_type)
+            documents = self._authorized(documents, user_id, chat_id, chat_type,
+                                         approved_member=approved_member)
             if not documents:
                 return NO_SOURCES
             query = _tokens(question)
