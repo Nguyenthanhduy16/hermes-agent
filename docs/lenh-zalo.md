@@ -90,13 +90,13 @@ Tên người ở ví dụ là tên minh họa; thay bằng tên trong bảng. `
 
 Khi đăng ký Workload đang tắt, `/dangky Họ tên đầy đủ` lưu tên tự khai tại từng chat; `/hoso` xem tên, `/hoso xoa` xóa hồ sơ cũ. Khi danh tính Workload đã được duyệt, hồ sơ tên cũ không ghi đè liên kết đó. Bộ lọc tên cũ không cấp quyền dữ liệu; đăng ký Workload đã duyệt tự cấp các quyền thành viên trong chat riêng theo phạm vi đã bật.
 
-Bot trả tối đa **5 mục mỗi trang**, có số trang/tổng số mục và link tới dòng gốc. Nếu còn kết quả, bot gửi sẵn một lệnh dưới chữ **Xem tiếp**; sao chép nguyên lệnh đó để giữ ngày và bộ lọc. Ví dụ:
+Bot trả tối đa **5 mục mỗi trang**: buổi, khóa/session, phòng, Key Coach và danh sách tên Lab Coach. Tin lịch không kèm trạng thái từng người, dòng nguồn hoặc link Sheets. Nếu còn kết quả, bot hiện số trang và gửi sẵn một lệnh dưới chữ **Xem tiếp**; sao chép nguyên lệnh đó để giữ ngày và bộ lọc. Ví dụ:
 
 ```text
 /lich 2026-10-06 | khoa=Track 1 | trang=2
 ```
 
-Mỗi lần tra đọc lại bảng: nếu có người sửa lịch giữa hai lần xem trang, kết quả có thể thay đổi. Ngày thiếu dữ liệu được báo rõ; bot không coi đó là chắc chắn rảnh. Ô trống được báo “Chưa ghi”, lịch cùng ngày ở nhiều tab được giữ riêng theo nguồn. Trạng thái như “Rảnh” giữ nguyên theo bảng, không tự hiểu là đã xác nhận tham gia.
+Mỗi lần tra đọc lại bảng: nếu có người sửa lịch giữa hai lần xem trang, kết quả có thể thay đổi. Ngày thiếu dữ liệu được báo rõ; bot không coi đó là chắc chắn rảnh. Ô trống được báo “Chưa ghi”; lịch cùng ngày ở nhiều tab vẫn được liệt kê riêng. Trạng thái gốc trong Sheets được giữ nguyên.
 
 ## Đổi ca trong tin nhắn riêng
 

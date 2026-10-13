@@ -48,6 +48,7 @@ class LabParserTests(unittest.TestCase):
         first, second, third = parsed.events
         self.assertEqual((5, 6, "R101", "Sáng"), (first.first_row, first.last_row, first.room, first.period))
         self.assertEqual(["Coach Alpha [Rảnh]", "Coach Beta [Chưa cập nhật]"], first.coaches)
+        self.assertEqual(["Coach Alpha", "Coach Beta"], first.coach_names)
         self.assertEqual(("", "", ""), (second.room, second.key_coach, second.period))
         self.assertEqual(date(2026, 10, 7), third.day)
         self.assertEqual("", third.room)

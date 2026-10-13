@@ -87,14 +87,20 @@ class CalendarQueryTests(unittest.TestCase):
         schedule = parse_sheet(grid())
         event = schedule.events[0]
         event.coaches = ["Nguyễn Văn An [Rảnh]", "Nguyễn Văn Thanh [Rảnh]"]
+        event.coach_names = ["Nguyễn Văn An", "Nguyễn Văn Thanh"]
         for name, matched in (("nguyen van an", True), ("An", True), ("Rảnh", False), ("Ngu", False), ("Coach Key", True)):
             answer = format_query([schedule], parse_calendar("06/10/2026 | coach=" + name), "fake")
-            self.assertEqual(matched, "A5:J6" in answer)
+            self.assertEqual(matched, "Lab Coach:" in answer)
 
     def test_combined_filters_intersect_and_never_guess_missing_rooms(self):
         schedule = parse_sheet(grid())
         answer = format_query([schedule], parse_calendar("06/10/2026 | khoa=Track A | phong=R101 | buoi=sáng"), "fake")
-        self.assertIn("A5:J6", answer)
+        self.assertIn("Phòng: R101", answer)
+        self.assertIn("Lab Coach:\n• Coach Alpha\n• Coach Beta", answer)
+        self.assertNotIn("[Rảnh]", answer)
+        self.assertNotIn("[Chưa cập nhật]", answer)
+        self.assertNotIn("Nguồn", answer)
+        self.assertNotIn("docs.google.com", answer)
         self.assertNotIn("Coach Gamma", answer)
         for arg in ("06/10/2026 | phong=R10", "06/10/2026 | khoa=Track B | phong=R101"):
             self.assertIn("Không tìm thấy", format_query([schedule], parse_calendar(arg), "fake"))
@@ -121,16 +127,18 @@ class CalendarQueryTests(unittest.TestCase):
             self.assertIn("Chưa có dữ liệu cho:", answer)
             self.assertIn("05/10/2026", answer)
 
-    def test_large_entries_keep_citations_and_stay_below_transport_cap(self):
+    def test_large_entries_report_omitted_names_and_stay_below_transport_cap(self):
         schedule = parse_sheet(grid())
         schedule.events = [deepcopy(schedule.events[0]) for _ in range(5)]
         for event in schedule.events:
             event.coaches = ["A" * 1000 for _ in range(20)]
+            event.coach_names = list(event.coaches)
             event.course = event.room = event.key_coach = event.period = event.session = "B" * 4000
         answer = format_query([schedule], parse_calendar("06/10/2026"), "fake")
         self.assertLess(len(answer), 12000)
-        self.assertEqual(5, answer.count("#gid="))
-        self.assertIn("xem đủ tại nguồn", answer)
+        self.assertEqual(5, answer.count("Lab Coach:"))
+        self.assertNotIn("#gid=", answer)
+        self.assertIn("còn 20 tên chưa hiển thị", answer)
 
 
 class CommandServiceTests(unittest.IsolatedAsyncioTestCase):

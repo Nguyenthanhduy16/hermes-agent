@@ -30,6 +30,7 @@ class LabEvent:
     first_row: int
     last_row: int
     coaches: list[str] = field(default_factory=list)
+    coach_names: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -134,6 +135,9 @@ def parse_sheet(sheet):
             coach = row[3] + (f" [{row[9]}]" if row[9] else "")
             if coach not in event.coaches:
                 event.coaches.append(coach)
+                # Preserve the name cell separately for concise display,
+                # without stripping brackets that may belong to a real name.
+                event.coach_names.append(row[3])
         previous = key
     if not days or not header_count:
         raise ValueError("No recognized calendar sections.")
@@ -209,39 +213,44 @@ def format_query(schedules, query, spreadsheet_id, *, exact_coach=False):
     selected = [(s, e) for s in schedules for e in s.events if query.start <= e.day <= query.end and matches(e)]
     selected.sort(key=lambda pair: (pair[1].day, {"sang": 0, "chieu": 1, "toi": 2}.get(normalized(pair[1].period), 3),
                                     pair[0].tab, pair[1].first_row))
-    sources = "Nguồn đã kiểm tra: " + ", ".join(s.tab for s in schedules) + "."
     filters = " · ".join(f"{key}={value}" for key, value in query.filters)
     if not covered:
-        return f"Chưa có dữ liệu ngày {label} trong các tab Lịch lab đã cấu hình.\n{sources}\n/help lich — xem cách tra lịch"
+        return f"Chưa có dữ liệu lịch ngày {label}.\n/help lich — xem cách tra lịch"
     if not selected:
         message = "Không tìm thấy lịch khớp bộ lọc" if query.filters else "Không có dòng phân công"
         return (f"{message} ngày {label}." + (f"\nBộ lọc: {filters}" if filters else "") +
-                f"\n{sources}" + (f"\n{missing}" if missing else "") +
+                (f"\n{missing}" if missing else "") +
                 f"\nThử bỏ bộ lọc: /lich {query.start.isoformat()}\n/help lich — xem ví dụ")
     page_count = (len(selected) + 4) // 5
     if query.page > page_count:
         return f"Kết quả chỉ có {page_count} trang. Về trang đầu:\n{page_command(1)}"
-    lines = [f"Lịch lab {label} · Trang {query.page}/{page_count} · {len(selected)} mục"]
+    lines = [f"Lịch lab {label} · {len(selected)} mục" +
+             (f" · Trang {query.page}/{page_count}" if page_count > 1 else "")]
     if filters:
         lines.append("Bộ lọc: " + filters)
     start = (query.page - 1) * 5
     for number, (schedule, event) in enumerate(selected[start:start + 5], start + 1):
-        # Each item stays bounded while its source remains available in full.
-        people = "; ".join(event.coaches) or "Chưa ghi tên"
-        if len(people) > 800:
-            people = people[:800] + "… (xem đủ tại nguồn)"
+        # Keep whole names and explicitly report omissions in oversized cells.
+        names = event.coach_names or event.coaches
+        people_lines = []
+        used = 0
+        for index, name in enumerate(names):
+            if used + len(name) + 3 > 800:
+                people_lines.append(f"• … còn {len(names) - index} tên chưa hiển thị.")
+                break
+            people_lines.append(f"• {name}")
+            used += len(name) + 3
+        people = "\n".join(people_lines) or "Chưa ghi tên"
         short = lambda value: value[:150] + ("…" if len(value) > 150 else "")
+        day_label = f"{event.day:%d/%m} · " if query.start != query.end else ""
         lines.append(
-            f"{number}. {event.day:%d/%m} · {short(event.period) or 'Chưa ghi buổi'} · {short(event.course) or 'Chưa ghi khóa'} · {short(event.session) or 'Chưa ghi session'}\n"
+            f"{number}. {day_label}{short(event.period) or 'Chưa ghi buổi'} · {short(event.course) or 'Chưa ghi khóa'} · {short(event.session) or 'Chưa ghi session'}\n"
             f"Phòng: {short(event.room) or 'Chưa ghi'} | Key Coach: {short(event.key_coach) or 'Chưa ghi'}\n"
-            f"Lab Coach: {people}\n"
-            f"Nguồn: {schedule.tab}, A{event.first_row}:J{event.last_row}\n"
-            f"https://docs.google.com/spreadsheets/d/{spreadsheet_id}/edit#gid={schedule.sheet_id}&range=A{event.first_row}:J{event.last_row}")
+            f"Lab Coach:\n{people}")
     if missing:
         lines.append(missing)
     if any(sum(e.day == day for s in schedules for e in s.events) and sum(day in s.days for s in schedules) > 1 for day in days):
-        lines.append("Ngày xuất hiện ở nhiều tab được giữ riêng theo nguồn.")
+        lines.append("Một số ngày có nhiều bảng lịch; các mục được liệt kê riêng.")
     if query.page < page_count:
         lines.append("Xem tiếp:\n" + page_command(query.page + 1))
-    lines.append("Buổi/trạng thái giữ nguyên theo bảng. Lọc hoặc xem cách dùng: /help lich")
     return "\n\n".join(lines)

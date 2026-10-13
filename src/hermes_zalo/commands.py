@@ -171,7 +171,7 @@ def help_text(topic="", *, sheets_state="not_configured", lab=False, issues=Fals
                        "/lich homnay | phong=H201\n"
                        "/lich tuan nay — thứ Hai đến Chủ nhật\n"
                        "/lich 06/10/2026 | trang=2 — trang tiếp theo\n"
-                       "Mỗi trang tối đa 5 mục, có dòng và link nguồn. Coach tìm cả Lab Coach và Key Coach.\n"
+                       "Mỗi trang tối đa 5 mục; Lab Coach chỉ hiển thị tên. Coach tìm cả Lab Coach và Key Coach.\n"
                        "Lịch của bạn: /dangky Họ tên đầy đủ, rồi /lichcuatoi homnay.\n"
                        "Có thể hỏi: Ngày mai mình có lịch gì? hoặc Tuần này tôi dạy ca nào?")
         result += "\n\n" + {"ready": "Lịch đã cấu hình; kết nối sẽ được kiểm tra khi tra.",
