@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Position=0)]
-    [ValidateSet('Setup', 'SetupSheets', 'SheetsCheck', 'RegistrationCheck', 'Update', 'PrepareDocs', 'PrepareSheets', 'FeatureDemo', 'Report', 'Check', 'Demo', 'Test', 'TestHermes', 'NluCheck', 'NluCheckLive', 'TicketsDemo', 'TicketsTest', 'TicketsChatDemo', 'TicketsLabCheck', 'TicketsLinkUsers', 'ZaloCheck', 'Discover', 'Model', 'Start')]
+    [ValidateSet('Setup', 'SetupSheets', 'SheetsCheck', 'RegistrationCheck', 'Update', 'PrepareDocs', 'PrepareSheets', 'FeatureDemo', 'Report', 'Check', 'Demo', 'Test', 'TestHermes', 'NluCheck', 'NluCheckLive', 'TicketsDemo', 'TicketsTest', 'TicketsChatDemo', 'TicketsLabCheck', 'TicketsLinkUsers', 'ZaloCheck', 'Discover', 'Model', 'Start', 'AdminDemo', 'AdminCreate')]
     [string]$Action = 'Check'
 )
 $ErrorActionPreference = 'Stop'
@@ -44,6 +44,8 @@ try {
     } else {
         if (-not (Test-Path -LiteralPath $taskPython)) { throw 'Run .\scripts\run.ps1 Setup first.' }
         switch ($Action) {
+            'AdminDemo' { & $taskPython -m hermes_zalo.admin_cli demo }
+            'AdminCreate' { & $taskPython -m hermes_zalo.admin_cli create-account }
             'Update' { & $taskPython scripts\configure.py }
             'PrepareDocs' { & $taskPython scripts\features.py prepare-docs }
             'PrepareSheets' { & $taskPython scripts\features.py prepare-sheets }

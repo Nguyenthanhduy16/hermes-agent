@@ -7,6 +7,10 @@
 !src/
 !src/hermes_zalo/
 !src/hermes_zalo/*.py
+!src/hermes_zalo/admin_static/
+!src/hermes_zalo/admin_static/*.html
+!src/hermes_zalo/admin_static/*.css
+!src/hermes_zalo/admin_static/*.js
 !src/hermes_zalo/tickets/
 !src/hermes_zalo/tickets/*.py
 !src/hermes_zalo/tickets/static/

@@ -1,10 +1,12 @@
 # Đưa LabCoach lên Railway
 
-Bot chạy liên tục trên Railway để nhiều thành viên dùng qua Zalo; máy Windows không cần bật. Vẫn dùng **long polling, một tiến trình bot, một Volume lưu dữ liệu**. Giai đoạn này không cần website, tên miền công khai hoặc webhook.
+Bot chạy liên tục trên Railway để nhiều thành viên dùng qua Zalo; máy Windows không cần bật. Vẫn dùng **long polling, một tiến trình bot, một Volume lưu dữ liệu**. Luồng Zalo không cần webhook. API Admin có HTTPS riêng được bảo vệ bằng khóa máy chủ; giao diện đặt trên Vercel theo [hướng dẫn Admin](admin.md).
 
 Dockerfile của repo cài Hermes và adapter cùng nhau; giữ công cụ của model tắt như cấu hình hiện tại. Cách chạy gateway dựa trên [hướng dẫn Docker của Hermes](https://hermes-agent.nousresearch.com/docs/user-guide/docker). Đóng gói thành công chưa chứng minh nhận–gửi Zalo thật thành công.
 
 ## Trạng thái đã xác nhận — 13/10/2026
+
+- Đã bổ sung API Admin và lưu hội thoại, giữ nguyên Volume và quyền ghi Tickets hiện có. Kiểm tra đăng nhập API qua HTTPS đạt; bản giao diện Vercel chờ project. Lần gọi model thật mới nhất báo key OpenRouter hết hạn; chưa xác nhận nhận–gửi Zalo/đổi ca thật của luồng Admin mới. Chi tiết và bản sao trước cập nhật nằm trong [hướng dẫn Admin](admin.md).
 
 - Service `hermes-zalo-bot` đã chạy trên Railway, một bản bot với Volume `/data`; bot Windows đã dừng.
 - Đã chuyển 11 tệp dữ liệu adapter/Tickets/tài liệu. Không chuyển lịch sử hội thoại Hermes.

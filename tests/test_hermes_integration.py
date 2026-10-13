@@ -51,6 +51,11 @@ class RealHermesTests(unittest.IsolatedAsyncioTestCase):
 
         cls.manager.unload()
         close_all_under(cls.home)
+        # Embedded AIAgent initializes queued log handlers with Windows locks.
+        import logging
+        from hermes_logging import drain_log_queue
+        drain_log_queue(timeout=2)
+        logging.shutdown()
         # Windows can still be retiring a Hermes file writer after its task
         # completed. Retry that cleanup briefly; do not mask a persistent error.
         try:
@@ -98,6 +103,49 @@ class RealHermesTests(unittest.IsolatedAsyncioTestCase):
         self.module.assert_chat_only()
         self.assertEqual(_select_tool_names([], None, True), set())
         self.assertIsNone(await self.adapter._record_delivery_obligation(None, None, None, None, False))
+
+    async def test_admin_assets_use_real_plugin_namespace_without_top_level_package(self):
+        """The sealed Docker runtime exposes only the copied plugin package."""
+        import importlib
+        from http.client import HTTPConnection
+        package = self.adapter.__class__.__module__.rsplit('.', 1)[0]
+        self.assertNotEqual('hermes_zalo', package)
+        web = importlib.import_module(package + '.admin_web')
+        config = importlib.import_module(package + '.admin_config').AdminConfig(
+            enabled=True, conversations=True, port=0)
+        runtime = web.AdminRuntime(SimpleNamespace(), None,
+            self.home / 'asset-test.admin.sqlite3', config)
+        original_import = importlib.import_module
+
+        def plugin_only(name, *args, **kwargs):
+            if name == 'hermes_zalo' or name.startswith('hermes_zalo.'):
+                raise ModuleNotFoundError('Top-level adapter is absent in sealed Hermes')
+            return original_import(name, *args, **kwargs)
+
+        def request(path):
+            client = HTTPConnection('127.0.0.1', runtime.server.server_port, timeout=5)
+            try:
+                client.request('GET', path)
+                response = client.getresponse()
+                return response.status, response.getheader('Content-Type'), response.read()
+            finally:
+                client.close()
+
+        try:
+            with patch('importlib.import_module', side_effect=plugin_only):
+                for path, name, mime in (
+                    ('/', 'index.html', 'text/html'),
+                    ('/static/admin.js', 'admin.js', 'text/javascript'),
+                    ('/static/admin.css', 'admin.css', 'text/css'),
+                ):
+                    with self.subTest(path=path):
+                        status, content_type, body = await asyncio.to_thread(request, path)
+                        self.assertEqual(200, status)
+                        self.assertTrue(content_type.startswith(mime))
+                        expected = Path(web.__file__).parent / 'admin_static' / name
+                        self.assertEqual(expected.read_bytes(), body)
+        finally:
+            await runtime.close()
 
     async def test_real_adapter_routes_structured_intent_without_exposing_tools(self):
         data = dict(intent='menu', personal=False, when='', period='', person='', room='', course='',
@@ -286,6 +334,48 @@ class RealHermesTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn(person.phone, self.adapter.client.send_text_chunk.await_args.args[1])
         self.assertNotIn(person.name, self.adapter.client.send_text_chunk.await_args.args[1])
         sheets._request.assert_not_awaited()
+
+
+    async def test_managed_chat_real_hermes_engine_without_tools_or_session_database(self):
+        """Real AIAgent executes its loop; only provider output is synthetic."""
+        import importlib
+        from openai.types.chat import ChatCompletion
+        managed = importlib.import_module(self.adapter.__class__.__module__.rsplit('.', 1)[0] + '.managed_chat')
+        IncomingMessage = importlib.import_module(
+            self.adapter.__class__.__module__.rsplit('.', 1)[0] + '.events').IncomingMessage
+        response = ChatCompletion(id='synthetic-response', object='chat.completion', created=0,
+            model='synthetic/model', choices=[dict(index=0, finish_reason='stop',
+                message=dict(role='assistant', content='Đã nhận ngữ cảnh mô phỏng.'))],
+            usage=dict(prompt_tokens=10, completion_tokens=10, total_tokens=20))
+        instances = []
+        def factory():
+            agent = managed.configured_agent()
+            self.assertEqual([], agent.tools)
+            self.assertIsNone(agent._session_db)
+            from unittest.mock import Mock
+            agent._interruptible_api_call = Mock(return_value=response)
+            agent._interruptible_streaming_api_call = Mock(return_value=response)
+            instances.append(agent)
+            return agent
+        runtime = dict(provider='openrouter', api_mode='chat_completions',
+                       base_url='https://model.invalid/api/v1', api_key='synthetic-not-a-key')
+        import socket
+        original_connect = socket.socket.connect
+        def only_loopback(sock, address):
+            if isinstance(address, tuple) and address[0] in ('127.0.0.1', '::1'):
+                return original_connect(sock, address)
+            raise AssertionError('External network forbidden')
+        with patch('hermes_cli.config_effective.load_user_config_effective', return_value={
+                'model': {'provider': 'openrouter', 'default': 'synthetic/model'}}), \
+             patch('hermes_cli.runtime_provider.resolve_runtime_provider', return_value=runtime), \
+             patch('socket.socket.connect', only_loopback):
+            chat = managed.ManagedChat(factory, timeout=30)
+            result = await chat.reply(IncomingMessage('demo-private', 'demo-member', 'fake-1', 'PRIVATE',
+                'Trả lời ngắn nhé.'), {'payload': {'summary': '', 'messages': [],
+                'memories': [{'content': 'Thích câu trả lời ngắn.'}]}})
+        self.assertEqual('Đã nhận ngữ cảnh mô phỏng.', result)
+        self.assertEqual(1, len(instances))
+        self.assertIsNone(instances[0]._session_db)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,172 @@
+# LabCoach Admin — Thành viên, Hội thoại & Ghi nhớ
+
+Trang riêng cho người quản trị; thành viên vẫn dùng Zalo như hiện tại. **Ngày 13/10/2026 đã bật API Admin và lưu hội thoại trên Railway; giao diện Vercel chờ project do người vận hành cung cấp.** Hai cờ trong file mẫu/local vẫn mặc định tắt.
+
+Kiểm tra HTTPS thật đã đạt: thiếu khóa proxy trả 403, chưa đăng nhập trả 401, Admin đăng nhập/đọc thành viên/đăng xuất thành công; cookie có Secure, HttpOnly, SameSite=Strict. Model hiện tại `openrouter/free` đã được gọi thử nhưng provider trả **401: API key expired**; cần cập nhật `OPENROUTER_API_KEY` trong Railway. Chưa xác nhận nhận–gửi Zalo của luồng mới, chưa thay ô lịch thật trong lần triển khai này.
+
+Mã gateway Vercel cũng đã chạy trên máy và gọi API Railway thật: lấy phiên, đăng nhập, đọc danh sách 7 thành viên và đăng xuất đều trả 200, không cache. Đây chưa phải kiểm tra bản đã deploy trên Vercel; vẫn cần project Vercel và thử bằng trình duyệt trên domain chính thức.
+
+API: `https://hermes-zalo-bot-production.up.railway.app`, Target Port 8787. Mở trực tiếp trên trình duyệt sẽ bị từ chối vì đây là backend có khóa kết nối, không phải địa chỉ giao diện Vercel. Mật khẩu Admin và khóa proxy chỉ lưu trong tệp riêng dưới `.runtime/admin-deploy-20261013/`, không đưa lên Git hoặc chat.
+
+## 1. Thử giao diện ngay bằng dữ liệu mẫu
+
+Tại thư mục repo, chạy:
+
+```powershell
+.\scripts\run.ps1 AdminDemo
+```
+
+Mở [http://127.0.0.1:8787](http://127.0.0.1:8787). Nếu cổng đang được dùng, dừng bản demo trước hoặc chạy `.\.venv\Scripts\python.exe -m hermes_zalo.admin_cli demo --port 8788`.
+
+| Tài khoản demo | Quyền |
+| --- | --- |
+| `admin` | Quản lý thành viên, hội thoại và ghi nhớ |
+| `quanly` | Chỉ quản lý thành viên |
+| `hoithoai` | Hội thoại, ngữ cảnh và ghi nhớ |
+
+Mật khẩu chung của **demo**: `LabCoach-Demo-2026`. Không dùng mật khẩu này cho hệ thống thật. Demo tạo dữ liệu giả trong thư mục tạm, không đọc dữ liệu bot hiện tại, không polling Zalo, không gọi Google Sheets hoặc model. Nhấn **Ctrl+C** để dừng; dữ liệu mẫu không giữ cho lần chạy sau. Vì không kết nối lịch thật, phần sửa liên kết lịch trong demo có thể báo chưa có nguồn để đối chiếu.
+
+## 2. Bật trên máy đang vận hành bot
+
+**Nếu Railway đang chạy bot, giữ bản Windows tắt.** Có thể chạy `AdminDemo` trên Windows để xem giao diện; chỉ thực hiện các bước chạy bot thật dưới đây trên nơi được chọn vận hành duy nhất.
+
+1. Giữ nguyên `.env`, khóa và dữ liệu hiện có. Thêm các biến sau vào `.env` trên máy:
+
+   ```dotenv
+   ZALO_ADMIN_ENABLED=true
+   ZALO_CONVERSATIONS_ENABLED=true
+   ZALO_CONVERSATION_RETENTION_DAYS=30
+   ZALO_ADMIN_HOST=127.0.0.1
+   ZALO_ADMIN_PORT=8787
+   ZALO_ADMIN_PUBLIC_URL=
+   ```
+
+2. Cập nhật plugin và tạo tài khoản quản trị riêng:
+
+   ```powershell
+   .\scripts\run.ps1 Update
+   .\scripts\run.ps1 AdminCreate
+   ```
+
+   Nhập tên đăng nhập, mật khẩu và xác nhận mật khẩu tại terminal. Mật khẩu được nhập ẩn, cần ít nhất 12 ký tự. Không gửi mật khẩu, Bot Token hay API key vào chat. Tài khoản tạo ở bước này có đủ ba quyền; chưa khởi động bot.
+
+3. Khi đã dừng phiên bot cũ tại nơi vận hành, khởi động lại:
+
+   ```powershell
+   .\scripts\run.ps1 Start
+   ```
+
+4. Đăng nhập [http://127.0.0.1:8787](http://127.0.0.1:8787). Trang Admin mở trong cùng tiến trình bot sau khi bot kết nối thành công; dừng bot thì trang cũng dừng. Địa chỉ này chỉ truy cập được trên máy đang chạy.
+
+Tắt trang bằng `ZALO_ADMIN_ENABLED=false`. Muốn dừng cả lưu hội thoại và sử dụng ghi nhớ được quản lý, đặt thêm `ZALO_CONVERSATIONS_ENABLED=false` rồi khởi động lại. Việc tắt cờ không tự xóa dữ liệu đã lưu.
+
+## 3. Tài khoản và quyền quản trị
+
+Tài khoản web tách khỏi đăng ký Zalo. Thành viên đã đăng ký, quản trị nhóm Zalo hoặc người trong `REGISTRATION_ADMIN_USERS` không tự có quyền đăng nhập trang.
+
+| Quyền | Được làm |
+| --- | --- |
+| `members` | Xem thành viên, khóa/mở quyền, kiểm tra và sửa liên kết được phép |
+| `conversations` | Xem hội thoại riêng/nhóm bot đã lưu, xem và thay đổi ngữ cảnh; nội dung ghi nhớ được ẩn nếu thiếu quyền `memories` |
+| `memories` cùng `conversations` | Xem, thêm, sửa, ngừng dùng ghi nhớ và xem nguồn/lịch sử nội dung |
+
+Trên Windows, có thể tạo tài khoản giới hạn quyền bằng môi trường Python của repo:
+
+```powershell
+.\.venv\Scripts\python.exe -m hermes_zalo.admin_cli create-account --username quanly --permissions members
+.\.venv\Scripts\python.exe -m hermes_zalo.admin_cli create-account --username hoithoai --permissions conversations,memories
+```
+
+Đủ quyền dùng `--permissions members,conversations,memories` hoặc bỏ tham số này. Muốn đổi mật khẩu/quyền của tài khoản đã có, chạy lại lệnh tương ứng kèm `--replace`; thao tác yêu cầu nhập mật khẩu mới và thu hồi các phiên đăng nhập cũ. Không đặt mật khẩu vào tham số dòng lệnh. Đăng nhập sai nhiều lần sẽ bị giới hạn tạm thời.
+
+## 4. Quản lý Thành viên
+
+1. **Tìm kiếm/lọc:** dùng tên hoặc mã thành viên; lọc trạng thái đăng ký, bị khóa và tình trạng liên kết.
+2. **Xem chi tiết:** kiểm tra mã thành viên, đăng ký, tài khoản Zalo, chat riêng, nguồn Workload và liên kết Tickets/lịch. Chat riêng và ID nhóm là hai phạm vi khác nhau.
+3. **Khóa/mở quyền:** đọc phạm vi tác động rồi xác nhận. Khóa giữ dữ liệu, chặn dùng bot và không thể vượt bằng đăng ký lại. Mở khóa không duyệt lại đăng ký đã bị thu hồi, không cấp quản trị hoặc quyền nhóm mới; hệ thống đối chiếu lại Workload trước khi mở.
+4. **Sửa liên kết:** chọn phương án đã được hệ thống đối chiếu → xem trước → xác nhận. Mỗi bước kiểm tra lại dữ liệu; không sửa ô lịch thật.
+
+Sửa liên kết hiện hỗ trợ lịch Lab đã cấu hình qua Tickets. Tên trùng, nguồn thay đổi, tài khoản đích thuộc người khác hoặc còn yêu cầu đổi ca liên quan sẽ bị chặn; cần xác minh đúng người trước. Trang không cho nhập tùy ý user/chat ID để ghi đè một người khác. **Lịch sử thay đổi** cho biết ai thực hiện, khi nào và thông tin trước/sau.
+
+## 5. Hội thoại & Ghi nhớ
+
+| Mục | Dùng để làm gì? | Giới hạn cần biết |
+| --- | --- | --- |
+| **Lịch sử hội thoại** | Tìm theo thành viên, nhóm, ngày; xem tin nhận và phản hồi, thời gian, trạng thái gửi | Chỉ tin bot thực nhận và được phép xử lý từ lúc bật tính năng; không lấy toàn bộ lịch sử Zalo |
+| **Ngữ cảnh cuộc trao đổi** | Xem dữ liệu chuẩn bị cho lượt AI tiếp theo; làm mới hoặc xóa khi bot hiểu nhầm | Tách theo người và cuộc trò chuyện; các lệnh không tự trở thành lịch sử chat AI |
+| **Thông tin ghi nhớ** | Thêm thủ công hoặc **Tạo ghi nhớ từ tin này**, sửa, ngừng dùng, mở nguồn và phiên bản cũ | Chỉ nội dung đang bật, chưa hết hạn và đúng phạm vi mới được đưa vào AI |
+
+**Làm mới ngữ cảnh** tạo lại bản tóm tắt bằng cách trích các tin trò chuyện gần đây được phép sử dụng. Đây là trích đoạn có giới hạn, chưa phải tóm tắt ngữ nghĩa bằng AI và không gọi thêm model. **Xóa ngữ cảnh** bỏ các lượt cũ khỏi phiên kế tiếp; giữ lịch sử và ghi nhớ riêng. Làm mới sau khi xóa không khôi phục những lượt đã loại. Thông tin “lần chuẩn bị gần nhất” chỉ cho biết dữ liệu đã chuẩn bị, không chứng minh nhà cung cấp AI đã trả lời thành công.
+
+Ngữ cảnh gửi AI có giới hạn tổng dung lượng: tối đa 12 tin gần đây, tin dài được trích gọn; ghi nhớ được chọn theo dung lượng còn lại. Màn hình ngữ cảnh hiển thị đúng phần được chọn, trong khi Lịch sử hội thoại vẫn giữ bản đã lưu. Giới hạn này giúp một hội thoại dài không khiến các câu hỏi tiếp theo liên tục thất bại.
+
+Khi tạo ghi nhớ, chọn phạm vi:
+
+- **Cá nhân:** gắn mã thành viên cố định, chỉ dùng khi người đó nhắn riêng; không đưa vào nhóm.
+- **Cuộc trò chuyện:** chỉ dùng đúng phiên của người đó và cuộc trò chuyện đã chọn. Nếu là phiên trong nhóm, vẫn cần xác nhận chia sẻ vì câu trả lời có thể hiển thị cho nhóm.
+- **Nhóm:** có thể dùng cho người hỏi trong nhóm được chọn; cần xác nhận chia sẻ rõ ràng. Nội dung chat riêng không tự chuyển thành ghi nhớ chung.
+
+Có thể đặt hạn sử dụng. **Ngừng dùng** có hiệu lực với lần chuẩn bị câu trả lời tiếp theo, giữ bản ghi để xem lại. Các phiên bản nội dung cũ được lưu có thời hạn và cần cùng quyền đọc hội thoại. Không sửa được tin nhắn gốc đã lưu; chỉ sửa ghi nhớ hoặc làm mới ngữ cảnh.
+
+Hội thoại “mình đã đổi ca rồi” chỉ là lời nhắn, không xác nhận đổi ca thật. Lịch/Workload/Tickets và các bước xác nhận hiện có vẫn quyết định danh tính, quyền và kết quả nghiệp vụ. Luồng lệnh và NLU đã có được giữ nguyên.
+
+## 6. Dữ liệu, thời hạn lưu và sao lưu
+
+- Lần đầu trong mỗi phạm vi người/cuộc trò chuyện, bot gửi thông báo việc lưu tin và quyền xem của quản trị. Hội thoại bị từ chối quyền truy cập không được ghi vào kho này.
+- Tin đăng ký `/dangky` được che thông tin; số điện thoại và mẫu bí mật nhận diện được cũng được che trước khi lưu. Việc che là có giới hạn, không bảo đảm phát hiện mọi bí mật viết tự do. Không gửi khóa hoặc dữ liệu không được phép cho bot.
+- Mặc định lưu tin **30 ngày**, cấu hình từ 1–365 ngày. Dọn khi có hoạt động và theo lịch trong tiến trình bot; dữ liệu hết hạn được dọn khi bot chạy lại.
+- Khi tin nguồn hết hạn, xóa các bản tóm tắt liên quan; xóa nội dung và ngừng dùng ghi nhớ dựa trên nguồn đó; xóa phiên bản có nguồn đã hết hạn. Ghi nhớ thủ công không có nguồn tiếp tục theo hạn/trạng thái riêng. Nhật ký thao tác giữ thông tin thay đổi và dấu kiểm tra nội dung, không giữ bản sao văn bản hết hạn.
+- Dữ liệu Admin và hội thoại nằm cạnh trạng thái bot, tên kết thúc bằng `.admin.sqlite3` và `.conversations.sqlite3`. Trên Windows, `AdminCreate` dùng cùng `.runtime/hermes-home/data/zalo` với `Start`; trên Railway, dùng `ZALO_STATE_DIR` trong Volume `/data`. Không commit DB, bản sao lưu hoặc dữ liệu hội thoại lên Git.
+- Để sao lưu đơn giản, dừng bot và sao lưu toàn bộ thư mục dữ liệu/Volume, gồm dữ liệu đăng ký và Tickets. Không sao chép riêng file `.sqlite3` của DB đang ghi rồi bỏ các file `-wal`/`-shm`; dùng bản sao nhất quán hoặc dừng tiến trình trước. Bản sao lưu có dữ liệu nội bộ, cần được bảo vệ và dọn theo quy định của nhóm.
+
+Lịch sử Hermes cũ không được tự nhập hoặc tự xóa. Khi bật lưu hội thoại được quản lý, mỗi lượt chat sử dụng một `AIAgent` mới, không nạp lịch sử Hermes cũ, không ghi thêm Session DB/trajectory, không bật công cụ hoặc kho nhớ chung. Adapter chỉ đưa ngữ cảnh và ghi nhớ hiện được phép vào lượt đó. Cơ chế nhúng dùng [Python API chính thức của Hermes](https://hermes-agent.nousresearch.com/docs/guides/python-library/). Model/provider đang cấu hình được giữ nguyên; hội thoại AI vẫn có mức dùng theo nhà cung cấp hiện tại.
+
+## 7. Railway và giao diện Vercel
+
+Theo lựa chọn của người vận hành, **Vercel phục vụ giao diện; Railway chạy bot, API Admin và giữ dữ liệu**. Trình duyệt gọi API cùng địa chỉ Vercel; hàm phía máy chủ Vercel mới gọi Railway. Không mở CORS và không đưa khóa kết nối vào JavaScript trình duyệt.
+
+1. Dùng service bot hiện tại với **một instance** và Volume hiện có. Trang và bot phải chung tiến trình, chung dữ liệu; không tạo tiến trình bot thứ hai để chạy trang.
+2. Triển khai mã mới theo [hướng dẫn Railway](deploy-railway.md). Không thay nguyên bộ Variables bằng file mẫu vì có thể mất cấu hình đang dùng. Bản backend phải hỗ trợ `ZALO_ADMIN_PROXY_SECRET` trước khi bật địa chỉ công khai.
+3. Trong terminal/SSH tương tác của container, tạo tài khoản trên đúng Volume:
+
+   ```sh
+   python -m hermes_zalo.admin_cli create-account
+   ```
+
+   Chạy tại `/app` bằng Python hệ thống của image, nơi đã cài gói adapter; môi trường Hermes riêng chỉ nạp adapter qua plugin. Giữ nguyên `ZALO_STATE_DIR` của service để tài khoản được lưu trên đúng Volume. Nhập mật khẩu ẩn tại terminal. Có thể dùng các tham số `--username`, `--permissions`, `--replace` như trên; không gửi token/mật khẩu qua chat.
+
+4. Dùng HTTPS của Railway làm địa chỉ API, rồi đặt các biến:
+
+   ```dotenv
+   ZALO_ADMIN_ENABLED=true
+   ZALO_CONVERSATIONS_ENABLED=true
+   ZALO_CONVERSATION_RETENTION_DAYS=30
+   ZALO_ADMIN_HOST=0.0.0.0
+   ZALO_ADMIN_PUBLIC_URL=https://TEN-DOMAIN-ADMIN-CUA-BAN
+   ZALO_ADMIN_PROXY_SECRET=KHOA_NGAU_NHIEN_RIENG_CHO_HAI_MAY_CHU
+   ```
+
+   `ZALO_ADMIN_PUBLIC_URL` là gốc HTTPS **của Railway**, không kèm đường dẫn/query. Khóa proxy dùng 32–256 ký tự ASCII không khoảng trắng; nhập cùng giá trị trong Vercel, không dùng chuỗi ví dụ. Có thể bỏ `ZALO_ADMIN_PORT` để dùng `PORT` Railway cấp; nếu đặt riêng thì Target Port của domain phải khớp. Bản triển khai hiện tại dùng cổng 8787.
+
+5. Trên Vercel, dùng Root Directory `deploy/vercel-admin`, bật **Include source files outside of the Root Directory in the Build Step** và làm theo [hướng dẫn Vercel](../deploy/vercel-admin/README.md). Nhập ba biến phía máy chủ: `LABCOACH_API_URL` (Railway), `LABCOACH_FRONTEND_URL` (địa chỉ chính thức của giao diện) và `LABCOACH_PROXY_SECRET` (cùng khóa Railway). Không thêm tiền tố `NEXT_PUBLIC_` hoặc nhúng chúng vào file tĩnh.
+
+6. Khởi động lại đúng service; kiểm tra đăng nhập qua Vercel, quyền riêng của tài khoản quản lý thành viên, rồi thử các tin Zalo mới. Giữ bot Windows tắt. Truy cập trực tiếp địa chỉ Railway bị từ chối nếu thiếu khóa proxy, kể cả trang đăng nhập; đây là hành vi mong muốn. Khóa proxy đúng vẫn chưa thay thế tài khoản Admin, quyền và kiểm tra CSRF.
+
+Giao diện Vercel chưa triển khai khi chưa có project/địa chỉ do người vận hành cung cấp. Link preview khác địa chỉ chính thức cũng bị chặn API; không tự mở quyền cho mọi domain Vercel. Không lưu SQLite hoặc chạy bot trong hàm Vercel.
+
+**Bản sao trước triển khai:** `/data/maintenance/admin-rollout/pre-admin-20261013-151714.tar.gz` trên Volume Railway, tạo lúc bot ở chế độ chờ. Chưa tải bản sao về máy. Lần triển khai dùng bản mã được lọc và tải qua CLI; thay đổi chưa tự commit/push. Cần đưa các file mã và cấu hình mới vào nhánh GitHub sẽ dùng trước khi dựa vào GitHub autodeploy hoặc import Vercel.
+
+## 8. Kiểm tra và lỗi thường gặp
+
+| Hiện tượng | Cách xử lý |
+| --- | --- |
+| Không mở được trang | Kiểm tra bot đã kết nối, hai cờ đã bật, đúng cổng; không chạy demo trùng cổng |
+| Có tài khoản nhưng đăng nhập không được | Tạo tài khoản trong đúng máy/container và cùng `ZALO_STATE_DIR` của bot; kiểm tra đang mở demo hay hệ thống thật |
+| Chỉ thấy Thành viên, không thấy hội thoại | Tài khoản chỉ có `members`; cấp thêm quyền bằng lệnh tạo tài khoản kèm `--replace` nếu được phép |
+| Hội thoại trống | Chỉ lưu từ lúc bật; gửi tin mới tới bot đúng phạm vi được cấp quyền |
+| Làm mới không có tóm tắt | Chưa có lượt chat AI hoàn thành hợp lệ sau lần xóa ngữ cảnh |
+| Thao tác báo dữ liệu vừa thay đổi | Tải lại chi tiết rồi tạo bản xem trước/xác nhận mới; không gửi lại thao tác cũ một cách tự động |
+| Không sửa được liên kết | Đọc lý do trên trang; đối chiếu Workload, quyền nguồn và yêu cầu Tickets liên quan trước |
+| Model lỗi nhưng trang vẫn mở | Dùng lệnh công việc; kiểm tra provider/key đang cấu hình. Chất lượng trả lời thật cần thử riêng |
+
+`run.ps1 Test` kiểm tra tự động bằng dữ liệu giả, gồm phân quyền, đồng thời, tách phạm vi, lưu sau khởi động lại, giới hạn lưu, lỗi model và tác dụng của reset/ngừng ghi nhớ. `run.ps1 TestHermes` kiểm tra với Hermes đã cài nhưng không dùng model/Zalo thật. Không sửa lịch thật trong các kiểm thử này. Kiểm thử mô phỏng không thay cho thử nhận–gửi Zalo, đăng nhập HTTPS và quyền trên Railway sau triển khai.

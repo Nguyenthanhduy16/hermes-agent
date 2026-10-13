@@ -12,5 +12,6 @@ restartPolicyMaxRetries = 10
 overlapSeconds = 0
 drainingSeconds = 60
 # Create and attach a /data Volume in Railway before the first deployment.
-# Keep the Docker entrypoint/start command. No HTTP healthcheck or public port.
+# Keep the Docker entrypoint/start command. No automatic HTTP healthcheck.
+# Optional Admin HTTPS uses a matching domain target port and server proxy key.
 # BOT_START_ENABLED defaults to false; activate only after migration/cutover.

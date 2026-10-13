@@ -58,11 +58,15 @@ class RegistrationFlow:
         return AUTO_GUIDE if self.auto_approve else GUIDE
 
     def bootstrap(self, message):
-        return bool(self.enabled and message.chat_type == 'PRIVATE' and route(message.text)[0] in ENTRY_COMMANDS)
+        return bool(self.enabled and not self.admin_locked(message) and message.chat_type == 'PRIVATE' and route(message.text)[0] in ENTRY_COMMANDS)
+
+    def admin_locked(self, message):
+        return bool(self.store and self.store.route_locked(message.user_id,
+                    message.chat_id if message.chat_type == 'PRIVATE' else None))
 
     def identity(self, user_id):
         record = self.store.user_state(user_id) if self.enabled else None
-        return record if (record and record.status == 'approved' and
+        return record if (record and not self.store.route_locked(user_id) and record.status == 'approved' and
                           record.source_key == self.directory.source_key) else None
 
     def approved(self, message):
@@ -80,11 +84,13 @@ class RegistrationFlow:
         return bool(record and record.chat_id == chat_id)
 
     def admin_command(self, message):
-        return bool(self.enabled and message.chat_type == 'PRIVATE' and
+        return bool(self.enabled and not self.admin_locked(message) and message.chat_type == 'PRIVATE' and
                     message.user_id in self.store.admins and message.user_id in self.settings.allowed_users and
                     route(message.text)[0] in ADMIN_COMMANDS)
 
     def blocked(self, message):
+        if self.admin_locked(message):
+            return True
         record = self.store.user_state(message.user_id) if self.enabled else None
         return bool(record and (record.status != 'approved' or
                     record.source_key != self.directory.source_key or
@@ -109,6 +115,8 @@ class RegistrationFlow:
     def _status(self, record, *, manual_review=False):
         if record is None:
             return self.guide
+        if self.store.route_locked(record.user_id, record.chat_id):
+            return 'Quyền dùng bot đang bị khóa; nhờ quản trị kiểm tra.'
         if record.status == 'approved':
             if self.auto_approve:
                 return f'{SUCCESS_PREFIX}\n{record.name}\nBạn đã có quyền dùng bot.\n/menu — xem các tính năng'
@@ -139,6 +147,8 @@ class RegistrationFlow:
             return 'Hãy nhắn riêng bot để đăng ký hoặc quản lý đăng ký. Không gửi số điện thoại trong nhóm.'
         if not self.enabled:
             return UNAVAILABLE
+        if self.admin_locked(message):
+            return 'Quyền dùng bot đang bị khóa; nhờ quản trị kiểm tra.'
         try:
             if command in ENTRY_COMMANDS:
                 if command == '/trangthaidangky' or normalized(argument.strip()) in ('trangthai', 'trang thai'):

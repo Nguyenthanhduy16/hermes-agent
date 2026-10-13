@@ -80,8 +80,11 @@ class WorkService:
     def registration_admission(self, message):
         return bool(self.registration.bootstrap(message) or self.registration.approved(message))
 
+    def member_admin_locked(self, user_id, chat_id=None):
+        return bool(self.registration.store and self.registration.store.route_locked(user_id, chat_id))
+
     def registration_blocked(self, message):
-        return (self.registration.blocked(message) and not self.registration.bootstrap(message)
+        return self.registration.admin_locked(message) or (self.registration.blocked(message) and not self.registration.bootstrap(message)
                 and not self.registration.admin_command(message))
 
     def background_registration_blocked(self, user_id, chat_id, chat_type='PRIVATE'):

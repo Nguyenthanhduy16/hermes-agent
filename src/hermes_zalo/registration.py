@@ -74,6 +74,14 @@ class RegistrationStore:
             CREATE TABLE IF NOT EXISTS registration_events (
                 id INTEGER PRIMARY KEY, request_id TEXT NOT NULL,
                 actor TEXT NOT NULL, action TEXT NOT NULL, at REAL NOT NULL);
+            CREATE TABLE IF NOT EXISTS registration_member_controls (
+                member_id TEXT PRIMARY KEY REFERENCES registration_members(member_id),
+                locked INTEGER NOT NULL DEFAULT 0, revision INTEGER NOT NULL DEFAULT 0,
+                updated REAL NOT NULL);
+            CREATE TABLE IF NOT EXISTS registration_admin_audit (
+                id INTEGER PRIMARY KEY, member_id TEXT NOT NULL, actor TEXT NOT NULL,
+                action TEXT NOT NULL, at REAL NOT NULL, before_json TEXT NOT NULL,
+                after_json TEXT NOT NULL);
         ''')
 
     @contextmanager
@@ -154,6 +162,8 @@ class RegistrationStore:
             raise RegistrationError('Chế độ duyệt đăng ký chưa hợp lệ.')
         message_key, person = self._message(message), self._person(person)
         with self._transaction() as db:
+            if self._locked_route(db, message.user_id, message.chat_id):
+                raise RegistrationError('Quyền dùng bot đang bị khóa; nhờ quản trị kiểm tra.')
             old = db.execute('SELECT r.* FROM registration_requests r JOIN registration_receipts receipt '
                              'ON receipt.request_id=r.id WHERE receipt.message_key=?', (message_key,)).fetchone()
             if old:
@@ -173,6 +183,10 @@ class RegistrationStore:
             member = db.execute('SELECT member_id FROM registration_members WHERE source_key=? AND phone=?',
                                 (person['source_key'], person['phone'])).fetchone()
             member_id = member[0] if member else 'member-' + uuid.uuid4().hex
+            control = db.execute('SELECT locked FROM registration_member_controls WHERE member_id=?',
+                                 (member_id,)).fetchone()
+            if control and control['locked']:
+                raise RegistrationError('Quyền dùng bot đang bị khóa; nhờ quản trị kiểm tra.')
             if db.execute("SELECT 1 FROM registration_requests WHERE member_id=? AND status IN ('pending','approved')",
                           (member_id,)).fetchone():
                 raise RegistrationError('Thông tin này đang có đăng ký khác. Nhờ quản trị kiểm tra.')
@@ -190,6 +204,7 @@ class RegistrationStore:
                        (request_id, member_id, message.user_id, message.chat_id, person['phone'], person['name'],
                         person['source_key'], person['fingerprint'], int(person['name_unique']), 'pending', now, now, message_key))
             db.execute('INSERT INTO registration_receipts VALUES (?,?)', (message_key, request_id))
+            self._bump_revision(db, member_id)
             row = db.execute('SELECT * FROM registration_requests WHERE id=?', (request_id,)).fetchone()
             return self._finish_request(db, row, auto_approve)
 
@@ -218,7 +233,46 @@ class RegistrationStore:
 
     def approved(self, message):
         record = self.status(message)
-        return record if record is not None and record.status == 'approved' else None
+        return record if record is not None and record.status == 'approved' and not self.route_locked(message.user_id, message.chat_id) else None
+
+    @staticmethod
+    def _locked_route(db, user_id, chat_id=None):
+        # Historical routes stay blocked too: a new registration cannot bypass
+        # a lock by selecting another phone or changing the private chat route.
+        return bool(db.execute('SELECT 1 FROM registration_requests r JOIN registration_member_controls c '
+                               'ON c.member_id=r.member_id WHERE c.locked=1 AND '
+                               '(r.user_id=? OR (? IS NOT NULL AND r.chat_id=?)) LIMIT 1',
+                               (user_id, chat_id, chat_id)).fetchone())
+
+    def route_locked(self, user_id, chat_id=None):
+        with self.lock:
+            return self._locked_route(self.db, user_id, chat_id)
+
+    def member_control(self, member_id):
+        with self.lock:
+            row = self.db.execute('SELECT locked,revision,updated FROM registration_member_controls WHERE member_id=?',
+                                  (member_id,)).fetchone()
+            return dict(row) | {'locked': bool(row['locked'])} if row else {'locked': False, 'revision': 0, 'updated': 0}
+
+    def latest_member(self, member_id):
+        with self.lock:
+            return self._record(self.db.execute('SELECT * FROM registration_requests WHERE member_id=? '
+                                               'ORDER BY created DESC,rowid DESC LIMIT 1', (member_id,)).fetchone())
+
+    def latest_members(self):
+        with self.lock:
+            return [self._record(row) for row in self.db.execute(
+                'SELECT r.* FROM registration_requests r WHERE r.rowid=(SELECT r2.rowid FROM registration_requests r2 '
+                'WHERE r2.member_id=r.member_id ORDER BY r2.created DESC,r2.rowid DESC LIMIT 1) ORDER BY r.name,r.member_id')]
+
+    def _bump_revision(self, db, member_id):
+        db.execute('INSERT INTO registration_member_controls VALUES (?,0,1,?) ON CONFLICT(member_id) '
+                   'DO UPDATE SET revision=revision+1,updated=excluded.updated', (member_id, self.clock()))
+
+    def _audit_admin(self, db, member_id, actor, action, before, after):
+        db.execute('INSERT INTO registration_admin_audit(member_id,actor,action,at,before_json,after_json) '
+                   'VALUES (?,?,?,?,?,?)', (member_id, actor, action, self.clock(),
+                                           json.dumps(before, ensure_ascii=False), json.dumps(after, ensure_ascii=False)))
 
     def user_state(self, user_id):
         """Local admission lookup; caller must enforce the returned DM route."""
@@ -275,6 +329,9 @@ class RegistrationStore:
         db.execute('UPDATE registration_requests SET status=?,updated=? WHERE id=?', (status, self.clock(), row['id']))
         db.execute('INSERT INTO registration_events(request_id,actor,action,at) VALUES (?,?,?,?)',
                    (row['id'], admin, action or status, self.clock()))
+        self._bump_revision(db, row['member_id'])
+        self._audit_admin(db, row['member_id'], admin, action or status,
+                          {'status': row['status']}, {'status': status})
         return self._record(db.execute('SELECT * FROM registration_requests WHERE id=?', (row['id'],)).fetchone())
 
     def approve(self, admin, request_id, person):

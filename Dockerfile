@@ -156,7 +156,9 @@ with tempfile.TemporaryDirectory(prefix="zalo-image-smoke-") as directory:
                    env=values, cwd="/app", check=True, timeout=120)
 PY
 
-# No port: messages arrive through outbound long polling. Secrets are runtime
+# Zalo uses outbound polling; Admin is opt-in, behind the configured HTTPS
+# origin/proxy and the same persistent volume. No public listener by default.
+# Secrets are runtime
 # variables or files on the volume, never build arguments or copied .env files.
 ENV PYTHONUTF8=1 \
     PYTHONUNBUFFERED=1 \

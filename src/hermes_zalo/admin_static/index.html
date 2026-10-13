@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>LabCoach · Quản trị</title>
+  <link rel="stylesheet" href="/static/admin.css">
+  <script src="/static/admin.js" defer></script>
+</head>
+<body>
+  <div id="mode-banner" class="mode-banner" role="note" hidden><strong>DỮ LIỆU MÔ PHỎNG</strong><span>Đây là bản thử giao diện. Mọi thao tác chỉ tác động dữ liệu mẫu; không kết nối Zalo, Sheets hoặc model.</span></div>
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+  <section id="login-view" class="login-layout" hidden>
+    <div class="login-intro">
+      <div class="brand brand-light"><span class="brand-mark">L</span><span>LabCoach <small>KHÔNG GIAN QUẢN TRỊ</small></span></div>
+      <div><p class="eyebrow">ĐỒNG HÀNH CÙNG ĐỘI NGŨ</p><h1>Hiểu đúng người.<br>Ghi nhớ đúng việc.</h1><p class="intro-description">Quản lý thành viên, xem lại hội thoại và kiểm soát những điều bot ghi nhớ — trong một không gian riêng.</p></div>
+      <p class="intro-footnote">Dành cho quản trị viên được cấp quyền.</p>
+    </div>
+    <div class="login-form-wrap"><form id="login-form" class="login-form">
+      <p class="eyebrow">CHÀO MỪNG TRỞ LẠI</p><h2>Đăng nhập quản trị</h2><p class="muted">Sử dụng tài khoản Admin đã được tạo cho hệ thống.</p>
+      <label>Tên đăng nhập<input id="username" name="username" autocomplete="username" required maxlength="100"></label>
+      <label>Mật khẩu<input id="password" name="password" type="password" autocomplete="current-password" required maxlength="1024"></label>
+      <p id="login-error" class="notice error" role="alert" hidden></p>
+      <button class="button primary full-width" type="submit">Đăng nhập <span aria-hidden="true">→</span></button>
+      <p class="login-note">Quyền quản lý thành viên và quyền xem hội thoại riêng được cấp riêng biệt.</p>
+    </form></div>
+  </section>
+
+  <div id="app-view" class="app-layout" hidden>
+    <aside class="sidebar">
+      <a href="#" class="brand" id="brand-home"><span class="brand-mark">L</span><span>LabCoach <small>QUẢN TRỊ</small></span></a>
+      <p class="nav-label">KHÔNG GIAN LÀM VIỆC</p>
+      <nav aria-label="Điều hướng chính">
+        <button class="nav-item active" type="button" data-view="members"><span class="nav-icon" aria-hidden="true">◫</span>Thành viên</button>
+        <button class="nav-item" type="button" data-view="conversations"><span class="nav-icon" aria-hidden="true">☷</span>Hội thoại</button>
+        <button class="nav-item" type="button" data-view="memories"><span class="nav-icon" aria-hidden="true">◇</span>Ghi nhớ</button>
+      </nav>
+      <div class="sidebar-note"><span class="status-dot" aria-hidden="true"></span><strong>Không gian riêng</strong><p>Mọi thay đổi quyền và ghi nhớ đều có lịch sử để kiểm tra.</p></div>
+      <div class="sidebar-user"><div class="avatar small" aria-hidden="true">A</div><div><strong id="admin-name">Admin</strong><span>Quản trị viên</span></div><button id="logout" class="icon-button" type="button" title="Đăng xuất" aria-label="Đăng xuất">↗</button></div>
+    </aside>
+    <main class="main">
+      <header class="topbar"><div><span class="breadcrumb">LabCoach</span><span aria-hidden="true"> / </span><span id="breadcrumb-current">Thành viên</span></div><span class="timezone">Giờ Việt Nam · UTC+7</span></header>
+      <div class="main-content">
+        <div class="page-heading"><div><p class="eyebrow" id="page-eyebrow">QUẢN LÝ ĐỘI NGŨ</p><h1 id="page-title">Thành viên</h1><p id="page-description" class="muted">Theo dõi quyền sử dụng và liên kết lịch của từng thành viên.</p></div><button id="refresh-view" class="button secondary" type="button">↻ Làm mới</button></div>
+        <div id="page-error" class="notice error" role="alert" hidden></div>
+
+        <section id="members-view" aria-label="Danh sách thành viên">
+          <div class="summary-grid"><article class="summary-card"><span>Thành viên phù hợp</span><strong id="member-total">—</strong><small>Theo bộ lọc hiện tại</small></article><article class="summary-card summary-explainer"><span class="summary-symbol" aria-hidden="true">↔</span><div><strong>Một người, một liên kết</strong><p>Dùng mã thành viên cố định để tránh nhầm người trùng tên.</p></div></article></div>
+          <div class="panel"><div class="panel-heading"><h2>Danh sách thành viên</h2><span class="tag subtle">Phân quyền riêng</span></div>
+            <form id="members-filter" class="filters"><label class="search-label"><span class="sr-only">Tìm thành viên</span><input id="members-q" type="search" placeholder="Tìm tên hoặc mã thành viên…" maxlength="120"></label><label><span class="sr-only">Trạng thái</span><select id="members-status"><option value="">Tất cả trạng thái</option value="approved">Đã duyệt</option><option value="pending">Chờ duyệt</option><option value="rejected">Từ chối</option><option value="revoked">Thu hồi</option><option value="locked">Đã khóa</option></select></label><label><span class="sr-only">Liên kết</span><select id="members-link"><option value="">Tất cả liên kết</option><option value="linked">Đã liên kết</option><option value="missing">Thiếu liên kết</option><option value="conflict">Có xung đột</option></select></label><button class="button secondary" type="submit">Tìm kiếm</button></form>
+            <div id="members-content" class="table-scroll"></div><div id="members-pagination" class="pagination"></div>
+          </div>
+        </section>
+
+        <section id="member-view" hidden aria-label="Chi tiết thành viên"><button id="member-back" class="text-button back-button" type="button">← Danh sách thành viên</button><div id="member-profile" class="panel member-profile"></div><nav id="member-tabs" class="tabs" aria-label="Thông tin thành viên"><button type="button" data-tab="info" class="active">Thông tin</button><button type="button" data-tab="history">Hội thoại</button><button type="button" data-tab="context">Ngữ cảnh</button><button type="button" data-tab="memories">Ghi nhớ</button><button type="button" data-tab="audit">Lịch sử thay đổi</button></nav><div id="member-tab-content"></div></section>
+
+        <section id="conversations-view" hidden aria-label="Hội thoại">
+          <div class="notice info"><strong>Chỉ hiển thị những tin bot đã nhận và lưu.</strong> Không bao gồm toàn bộ lịch sử Zalo. Tin đăng ký được che số điện thoại.</div>
+          <form id="conversations-filter" class="panel filters"><label>Mã thành viên<input id="history-member" placeholder="Tất cả thành viên" maxlength="120"></label><label>ID cuộc trò chuyện<input id="history-chat" placeholder="Tất cả cuộc trò chuyện" maxlength="200"></label><label>Từ ngày<input id="history-start" type="date"></label><label>Đến ngày<input id="history-end" type="date"></label><button type="submit" class="button secondary">Lọc hội thoại</button></form>
+          <div id="conversations-content"></div>
+        </section>
+
+        <section id="memories-view" hidden aria-label="Thông tin ghi nhớ"><div class="notice info"><strong>Ghi nhớ có phạm vi sử dụng.</strong> Chỉ nội dung đang bật, còn hạn và đúng quyền mới được dùng khi bot trả lời.</div><form id="memories-filter" class="panel filters"><label class="grow">Mã thành viên<input id="memories-member" placeholder="Tất cả thành viên" maxlength="120"></label><button type="submit" class="button secondary">Tìm kiếm</button><button id="new-memory" type="button" class="button primary">+ Thêm ghi nhớ</button></form><div id="memories-content"></div></section>
+        <p class="page-footnote">Lịch và kết quả đổi ca được xác nhận từ dữ liệu nghiệp vụ. Nội dung hội thoại không tự thay đổi lịch.</p>
+      </div>
+    </main>
+  </div>
+  <div id="boot-state" class="boot-state"><span class="brand-mark">L</span><p>Đang mở không gian quản trị…</p></div>
+
+  <dialog id="memory-dialog" class="modal"><form id="memory-form"><div class="modal-heading"><div><p class="eyebrow">THÔNG TIN GHI NHỚ</p><h2 id="memory-dialog-title">Thêm ghi nhớ</h2></div><button class="icon-button" type="button" data-close="memory-dialog" aria-label="Đóng">×</button></div><div class="modal-body"><p class="muted">Viết ngắn gọn những thông tin có ích cho các lần trao đổi sau.</p><label>Nội dung<textarea id="memory-content" rows="5" required maxlength="2000"></textarea></label><label>Mã thành viên<input id="memory-member" required maxlength="120"></label><div class="form-grid"><label>Phạm vi<select id="memory-scope"><option value="personal">Chỉ cá nhân này</option><option value="session">Cuộc trò chuyện nguồn</option><option value="group">Nhóm được chọn</option></select></label><label>Hết hạn (không bắt buộc)<input id="memory-expires" type="date"></label></div><label id="memory-session-wrap" hidden>Mã phiên hội thoại<input id="memory-session" maxlength="500"></label><label id="memory-chat-wrap" hidden>ID nhóm<input id="memory-chat" maxlength="200"></label><div id="memory-share-warning" class="notice warning" hidden>Ghi nhớ sẽ được sử dụng trong nhóm đã chọn. Kiểm tra nội dung và quyền chia sẻ trước khi lưu.</div><label class="checkbox-label" id="memory-share-wrap" hidden><input type="checkbox" id="memory-share">Tôi xác nhận được phép chia sẻ nội dung này cho nhóm.</label><label class="checkbox-label"><input type="checkbox" id="memory-active" checked>Sử dụng ghi nhớ này cho các lượt trả lời phù hợp.</label><div id="memory-source" class="source-note" hidden></div><p id="memory-error" class="notice error" role="alert" hidden></p></div><div class="modal-actions"><button class="button secondary" type="button" data-close="memory-dialog">Hủy</button><button class="button primary" type="submit">Lưu ghi nhớ</button></div></form></dialog>
+
+  <dialog id="link-dialog" class="modal"><form id="link-form"><div class="modal-heading"><div><p class="eyebrow">LIÊN KẾT THÀNH VIÊN</p><h2>Xử lý liên kết</h2></div><button class="icon-button" type="button" data-close="link-dialog" aria-label="Đóng">×</button></div><div class="modal-body"><p class="muted">Chọn đúng tài khoản đích. Hệ thống sẽ kiểm tra xung đột và hiển thị thay đổi trước khi lưu.</p><label>Mã tài khoản cần liên kết<input id="link-target" required maxlength="200" placeholder="Mã tài khoản đích"></label><div id="link-preview" hidden></div><p id="link-error" class="notice error" role="alert" hidden></p></div><div class="modal-actions"><button class="button secondary" type="button" data-close="link-dialog">Hủy</button><button id="link-submit" class="button primary" type="submit">Xem trước thay đổi</button></div></form></dialog>
+  <dialog id="source-dialog" class="modal wide"><div class="modal-heading"><h2>Tin nhắn nguồn</h2><button class="icon-button" type="button" data-close="source-dialog" aria-label="Đóng">×</button></div><div id="source-content" class="modal-body"></div></dialog>
+  <dialog id="confirmation-dialog" class="modal confirmation-modal" aria-labelledby="confirmation-title" aria-describedby="confirmation-description"><div class="modal-heading"><h2 id="confirmation-title">Xác nhận thao tác</h2><button class="icon-button" type="button" data-close="confirmation-dialog" aria-label="Hủy và đóng">×</button></div><div class="modal-body"><p id="confirmation-description"></p></div><div class="modal-actions"><button id="confirmation-cancel" class="button secondary" type="button" autofocus>Hủy</button><button id="confirmation-accept" class="button primary" type="button">Xác nhận</button></div></dialog>
+</body>
+</html>

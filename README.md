@@ -34,6 +34,10 @@ Ngày 06/10/2026: đã kiểm tra đọc thật 3 tab Lịch lab và lệnh `/li
 
 Repo có Dockerfile, cấu hình Railway và mẫu biến môi trường. Xem [hướng dẫn deploy và chuyển dữ liệu Windows](docs/deploy-railway.md): dùng **một bot long polling + Volume `/data`**. Ngày 13/10/2026 đã build, chuyển dữ liệu và chạy trên Railway; người dùng xác nhận bot trả lời, nhận đúng thành viên đã đăng ký. Giữ bot Windows tắt khi Railway đang chạy. Chi phí Railway và AI phụ thuộc mức dùng. Bản triển khai hiện tại được tải từ mã cục bộ qua CLI; các thay đổi Docker/Railway chưa được commit/push lên GitHub.
 
+## Trang Admin — Thành viên, Hội thoại & Ghi nhớ
+
+Đã bổ sung quản trị thành viên, hội thoại, ngữ cảnh và ghi nhớ có nguồn. API Admin và lưu hội thoại đã bật trên Railway; giao diện Vercel chờ project để kết nối. API yêu cầu khóa máy chủ, đăng nhập và đúng quyền. Xem [hướng dẫn Admin](docs/admin.md) và [cấu hình Vercel](deploy/vercel-admin/README.md). `run.ps1 AdminDemo` vẫn mở dữ liệu giả trên máy, không gọi Zalo/Sheets/model; file mẫu mặc định tắt các tính năng mới. Quản trị thành viên không tự có quyền đọc chat riêng.
+
 ## 1. Chuẩn bị
 
 - Windows và PowerShell; mở terminal tại thư mục repo này.

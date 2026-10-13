@@ -9,6 +9,7 @@ from contextlib import suppress
 from contextvars import ContextVar
 from hashlib import sha256
 import logging
+import os
 from pathlib import Path
 from datetime import datetime
 import time
@@ -26,7 +27,10 @@ from .events import is_allowed, parse_update, split_text
 from .mentions import strip_bot_mention
 from .logging_utils import protect_logs
 from .state import StateStore
-from .work import WorkService
+from .work import WorkService, state_prefix
+from .admin_config import AdminConfig
+from .conversations import ConversationStore
+from .managed_chat import ManagedChat, ManagedChatError
 from .reminders import VIETNAM_TZ
 
 
@@ -95,6 +99,12 @@ class ZaloAdapter(BasePlatformAdapter):
         self._reply_chat: str | None = None
         self._reply_budget = self.settings.max_reply_chars
         self._delivery_failed = False
+        self.conversations = None
+        self.managed_chat = None
+        self.admin_runtime = None
+        self._current_message = None
+        self._archive_sequence = 0
+        self._archive_task = None
         self._send_permit = ContextVar("zalo_send_permit", default=None)
 
     async def connect(self, *, is_reconnect: bool = False) -> bool:
@@ -128,6 +138,16 @@ class ZaloAdapter(BasePlatformAdapter):
             self.store.prune()
             self.work = WorkService(self.settings)
             self.work.recover()
+            admin_config = AdminConfig.from_mapping(os.environ)
+            if admin_config.conversations:
+                self.conversations = ConversationStore(state_prefix(self.settings).with_suffix('.conversations.sqlite3'),
+                    retention_days=admin_config.retention_days)
+                self.managed_chat = ManagedChat()
+                self._archive_task = asyncio.create_task(self._archive_maintenance(), name='zalo-history-retention')
+            if admin_config.enabled:
+                from .admin_web import AdminRuntime
+                self.admin_runtime = AdminRuntime(self.work, self.conversations,
+                    state_prefix(self.settings).with_suffix('.admin.sqlite3'), admin_config)
             self._mark_connected()
             self._poll_task = asyncio.create_task(self._poll_loop(), name="zalo-long-poll")
             self._reminder_task = asyncio.create_task(self._reminder_loop(), name="zalo-reminders")
@@ -148,6 +168,9 @@ class ZaloAdapter(BasePlatformAdapter):
 
     async def disconnect(self) -> None:
         self._mark_disconnected()
+        if self.admin_runtime:
+            await self.admin_runtime.close()
+            self.admin_runtime = None
         task, self._poll_task = self._poll_task, None
         if task and task is not asyncio.current_task():
             task.cancel()
@@ -165,6 +188,14 @@ class ZaloAdapter(BasePlatformAdapter):
             with suppress(asyncio.CancelledError):
                 await tickets_task
         await self.cancel_background_tasks()
+        if self._archive_task:
+            self._archive_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await self._archive_task
+            self._archive_task = None
+        if self.conversations:
+            self.conversations.close()
+            self.conversations = None
         if self.work:
             await self.work.close()
             self.work = None
@@ -176,6 +207,22 @@ class ZaloAdapter(BasePlatformAdapter):
             self.store = None
         self._reply_chat = None
         self._release_platform_lock()
+
+    async def _archive_maintenance(self):
+        while True:
+            self.conversations.maintenance()
+            await asyncio.sleep(3600)
+
+    def _archive_member(self, message):
+        registration = getattr(self.work, 'registration', None)
+        record = registration.identity(message.user_id) if registration else None
+        if record and (message.chat_type == 'GROUP' or record.chat_id == message.chat_id):
+            return record.member_id
+        return None
+
+    def _archive_outgoing(self, text, status, key):
+        if self.conversations and self._current_message:
+            self.conversations.record_outgoing(self._current_message, text, status=status, delivery_key=key)
 
     async def _reminder_loop(self) -> None:
         try:
@@ -386,6 +433,8 @@ class ZaloAdapter(BasePlatformAdapter):
             reply_expected=True,
         )
         self._current_event, self._current_outcome = event, None
+        self._current_message = message
+        self._archive_sequence = 0
         self._reply_chat = message.chat_id
         self._reply_budget = self.settings.max_reply_chars
         self._delivery_failed = False
@@ -394,6 +443,17 @@ class ZaloAdapter(BasePlatformAdapter):
         started = time.monotonic()
         try:
             self.store.finish(message.key, "admitted")
+            if self.conversations:
+                self.conversations.record_incoming(message, self._archive_member(message))
+                if self.conversations.notice_needed(message):
+                    notice = (f'ℹ️ Bot lưu tin bạn gửi cho bot và câu trả lời trong {self.conversations.retention_days} ngày '
+                              'để hỗ trợ và kiểm tra lỗi. Quản trị được cấp quyền có thể xem hội thoại '
+                              'và chọn thông tin ghi nhớ; thông tin riêng không tự chia sẻ sang nhóm.')
+                    delivered_notice = await self.send(message.chat_id, notice, reply_to=message.message_id)
+                    if not delivered_notice.success:
+                        self.store.finish(message.key, 'failed_uncertain')
+                        return
+                    self.conversations.mark_notice(message)
             if self.work:
                 response = await self.work.handle(message)
                 if response is not None:
@@ -408,6 +468,21 @@ class ZaloAdapter(BasePlatformAdapter):
                 # scoped work reads before a group member reaches Hermes.
                 # If that boundary is unavailable, remain closed.
                 self.store.finish(message.key, "not_admitted")
+                return
+            if self.conversations:
+                context = self.conversations.prepare_context(message, self._archive_member(message))
+                try:
+                    response = await self.managed_chat.reply(message, context)
+                    is_chat = True
+                except ManagedChatError:
+                    response = 'Bot chưa kết nối được AI. Bạn vẫn có thể dùng /menu và các lệnh công việc.'
+                    is_chat = False
+                delivered = await self.send(message.chat_id, response, reply_to=message.message_id)
+                self.conversations.complete_turn(message, is_chat=is_chat and delivered.success)
+                self.store.finish(message.key, 'completed' if delivered.success else 'failed_uncertain')
+                if self.work:
+                    self.work.pilot.record('chat', 'ok' if delivered.success and is_chat else 'uncertain',
+                                           (time.monotonic() - started) * 1000)
                 return
             await self.handle_message(event)
             # handle_message returns before generation. Await the task owned by
@@ -437,6 +512,7 @@ class ZaloAdapter(BasePlatformAdapter):
             permit["active"] = False
             self._send_permit.reset(permit_token)
             self._current_event = None
+            self._current_message = None
             self._reply_chat = None
 
     async def on_processing_complete(self, event: MessageEvent, outcome: ProcessingOutcome) -> None:
@@ -475,24 +551,37 @@ class ZaloAdapter(BasePlatformAdapter):
             return SendResult(success=False, error="ZALO_SEND_DENIED", retryable=False)
         if not content or self._reply_budget <= 0:
             return SendResult(success=False, error="ZALO_REPLY_LIMIT", retryable=False)
+        if self.work and self._current_message and getattr(self.work, 'member_admin_locked', lambda *args: False)(
+                self._current_message.user_id, self._current_message.chat_id):
+            return SendResult(success=False, error='ZALO_ACCESS_CHANGED', retryable=False)
         text = content[:self._reply_budget]
         if len(text) < len(content):
             suffix = "\n[Da rut gon cau tra loi.]"
             text = text[:max(0, len(text) - len(suffix))] + suffix
         self._reply_budget -= len(text)
         ids = []
+        key = None
+        chunk = ''
         try:
             for chunk in split_text(text):
+                if self.work and self._current_message and getattr(self.work, 'member_admin_locked', lambda *args: False)(
+                        self._current_message.user_id, self._current_message.chat_id):
+                    return SendResult(success=False, error='ZALO_ACCESS_CHANGED', retryable=False)
+                self._archive_sequence += 1
+                key = 'reply-' + str(self._archive_sequence)
                 result = await self.client.send_text_chunk(str(chat_id), chunk)
+                self._archive_outgoing(chunk, 'sent', key)
                 message_id = result.get("message_id")
                 if message_id is not None:
                     ids.append(str(message_id))
             return SendResult(success=True, message_id=ids[-1] if ids else None, continuation_message_ids=tuple(ids[:-1]))
         except AuthenticationError:
+            self._archive_outgoing(chunk, 'failed', key)
             self._delivery_failed = True
             self._set_fatal_error("zalo_auth", "Zalo rejected the token while sending.", retryable=False)
             return SendResult(success=False, error="ZALO_AUTH_REJECTED", retryable=False)
         except (DeliveryUncertain, ZaloAPIError):
+            self._archive_outgoing(chunk, 'uncertain', key)
             self._delivery_failed = True
             # Opaque error code avoids Hermes heuristic transport retries, which
             # could duplicate already-delivered earlier chunks.
