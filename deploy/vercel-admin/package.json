@@ -3,9 +3,14 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "engines": { "node": "22.x" },
+  "engines": {
+    "node": "22.x"
+  },
   "scripts": {
     "build": "node scripts/build.js",
     "test": "node --test tests/*.test.js"
+  },
+  "devDependencies": {
+    "@vercel/routing-utils": "6.5.0"
   }
 }

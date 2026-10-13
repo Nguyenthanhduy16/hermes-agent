@@ -57,4 +57,6 @@ Vào **Settings → Build and Deployment**, đặt **Root Directory** là `deplo
 
 **`Frontend source missing`**: bật **Include source files outside of the Root Directory in the Build Step** và kiểm tra commit có đủ ba file giao diện nêu trên.
 
+**`Tham số không được hỗ trợ hoặc bị lặp` ngay khi mở trang/đăng nhập**: bản cấu hình cũ dùng wildcard `:path*`, khiến Vercel tự thêm `path` vào query bên cạnh `__route`; gateway từ chối tham số ngoài danh sách. Bản sửa dùng cùng tên `:__route*` ở cả source và destination. Deploy commit chứa bản sửa `vercel.json`, rồi tải lại trang. Không cần đổi mật khẩu hoặc nới kiểm tra tham số. Kiểm thử định tuyến dùng bộ chuyển đổi cấu hình chính thức của Vercel để kiểm tra yêu cầu thực tế tới gateway.
+
 Tài liệu nền tảng: [Vercel Node.js Functions](https://vercel.com/docs/functions/runtimes/node-js), [truy cập nguồn ngoài Root Directory](https://vercel.com/docs/monorepos/monorepo-faq), [cấu hình Node.js helpers](https://vercel.com/docs/functions/runtimes/node-js/advanced-node-configuration).

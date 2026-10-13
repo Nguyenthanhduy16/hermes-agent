@@ -6,7 +6,7 @@
   "env": { "NODEJS_HELPERS": "0" },
   "functions": { "api/proxy.js": { "maxDuration": 60 } },
   "rewrites": [
-    { "source": "/api/:path*", "destination": "/api/proxy?__route=:path*" }
+    { "source": "/api/:__route*", "destination": "/api/proxy?__route=:__route" }
   ],
   "headers": [
     {
