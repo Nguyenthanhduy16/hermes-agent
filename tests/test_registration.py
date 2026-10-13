@@ -3,6 +3,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
+import sqlite3
 import unittest
 
 from hermes_zalo.events import IncomingMessage
@@ -61,6 +62,89 @@ class RegistrationTests(unittest.TestCase):
                 operation()
         for table in ('registration_requests', 'registration_members', 'registration_attempts'):
             self.assertEqual(0, self.store.db.execute('SELECT COUNT(*) FROM ' + table).fetchone()[0])
+
+    def test_auto_approval_is_atomic_persistent_idempotent_and_audited_as_system(self):
+        message = self.message()
+        first = self.store.request(message, self.person, auto_approve=True)
+        self.assertEqual('approved', first.status)
+        for again in (message, self.message()):
+            self.assertEqual(first, self.store.request(again, self.person, auto_approve=True))
+        self.assertEqual([('system:workload-auto', 'auto_approved')], [tuple(r) for r in self.store.db.execute(
+            'SELECT actor,action FROM registration_events')])
+        self.assertEqual([], self.store.pending('admin'))
+        self.store.close()
+        self.open()
+        self.assertEqual(first, self.store.approved(message))
+        with self.assertRaises(RegistrationError):
+            self.store.pending(message.user_id)
+
+    def test_auto_approval_upgrades_matching_pending_and_preserves_member_id(self):
+        first = self.store.request(self.message(), self.person)
+        approved = self.store.request(self.message(), self.person, auto_approve=True)
+        self.assertEqual((first.id, first.member_id), (approved.id, approved.member_id))
+        self.assertEqual('approved', approved.status)
+        with self.assertRaises(RegistrationError):
+            self.store.request(self.message(), self.person_with(fingerprint='changed'), auto_approve=True)
+
+    def test_auto_approval_never_reopens_admin_rejection_or_revocation(self):
+        for revoked in (False, True):
+            user = 'revoked-user' if revoked else 'rejected-user'
+            person = self.person_with(phone='0900000002' if revoked else '0900000001')
+            original = self.message(user)
+            first = self.store.request(original, person)
+            if revoked:
+                self.store.approve('admin', first.id, person)
+                self.store.revoke('admin', first.member_id)
+            else:
+                self.store.reject('admin', first.id)
+            self.assertIn(self.store.request(original, person, auto_approve=True).status, ('rejected', 'revoked'))
+            pending = self.store.request(self.message(user), person, auto_approve=True)
+            self.assertEqual('pending', pending.status)
+            self.assertEqual(first.member_id, pending.member_id)
+            self.assertEqual('pending', self.store.request(self.message(user), person, auto_approve=True).status)
+            approved = self.store.approve('admin', pending.id, person)
+            self.assertEqual(approved, self.store.request(self.message(user), person, auto_approve=True))
+
+    def test_auto_approval_hold_follows_user_chat_and_member_independently(self):
+        first = self.store.request(self.message(), self.person, auto_approve=True)
+        self.store.revoke('admin', first.member_id)
+        cases = ((self.message('a', chat='new-chat'), self.person_with(phone='0900000002')),
+                 (self.message('new-user', chat='dm-a'), self.person_with(phone='0900000003')),
+                 (self.message('new-owner'), self.person))
+        for message, person in cases:
+            with self.subTest(scope=message.user_id):
+                self.assertEqual('pending', self.store.request(message, person, auto_approve=True).status)
+
+    def test_auto_approval_race_cannot_assign_one_phone_to_two_users(self):
+        messages = [self.message('auto-' + str(i)) for i in range(8)]
+        def claim(message):
+            other = RegistrationStore(self.path, admins={'admin'})
+            try:
+                return other.request(message, self.person, auto_approve=True)
+            except RegistrationError:
+                return None
+            finally:
+                other.close()
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            accepted = [r for r in executor.map(claim, messages) if r]
+        self.assertEqual(1, len(accepted))
+        self.assertEqual('approved', accepted[0].status)
+
+    def test_auto_approval_failure_rolls_back_identity_and_receipt(self):
+        self.store.db.execute("CREATE TRIGGER refuse_auto BEFORE INSERT ON registration_events "
+                              "WHEN NEW.action='auto_approved' BEGIN SELECT RAISE(ABORT, 'synthetic failure'); END")
+        self.store.db.commit()
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.store.request(self.message(), self.person, auto_approve=True)
+        for table in ('registration_requests', 'registration_members', 'registration_receipts', 'registration_events'):
+            self.assertEqual(0, self.store.db.execute('SELECT COUNT(*) FROM ' + table).fetchone()[0])
+
+    def test_auto_mode_flag_and_group_cannot_bypass_request_validation(self):
+        for flag in ('true', 'false', 1, None):
+            with self.assertRaises(RegistrationError):
+                self.store.request(self.message(), self.person, auto_approve=flag)
+        with self.assertRaises(RegistrationError):
+            self.store.request(self.message(kind='GROUP'), self.person, auto_approve=True)
 
     def test_admin_acl_applies_to_reads_and_all_decisions(self):
         request = self.store.request(self.message(), self.person)

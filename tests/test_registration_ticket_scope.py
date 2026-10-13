@@ -231,6 +231,25 @@ class RegistrationTicketScopeTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('thu hồi', await self.say('b', '/doica'))
         self.sheets._request.assert_not_awaited()
 
+    async def test_auto_registration_provisions_member_without_manual_approval_or_schedule_write(self):
+        self.work.registration.auto_approve = True
+        self.work.settings = replace(self.settings, allowed_users=frozenset({'admin'}))
+        self.work.registration.settings = self.work.settings
+        self.sheets.settings = replace(self.sheets.settings, users=frozenset())
+        for who in ('a', 'b'):
+            reply = await self.say(who, '/dangky ' + self.people[who].phone)
+            self.assertIn('Đăng ký thành công', reply)
+            record = self.work.registration.identity(who)
+            self.assertIsNotNone(record)
+            binding = self.identities.resolve(self.bot, who, 'dm-' + who)
+            self.assertIsNotNone(binding)
+            self.assertEqual(record.name, binding['name'])
+        self.assertEqual([], self.work.registration.store.pending('admin'))
+        self.assertIsNone(self.dialog('b'))
+        self.assertIn('Bước 1/4', await self.say('a', '/doica'))
+        self.provider.swap.assert_not_called()
+        self.sheets._request.assert_not_awaited()
+
     async def test_unbound_static_user_gets_phone_registration_guide(self):
         reply = await self.say('admin', '/doica')
         self.assertIn('/dangky SỐ_ĐIỆN_THOẠI', reply)

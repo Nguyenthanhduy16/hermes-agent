@@ -149,7 +149,9 @@ class RegistrationStore:
                 raise RegistrationError('Đã đạt giới hạn tra đăng ký. Vui lòng thử lại sau một giờ.')
             db.execute('INSERT INTO registration_attempts VALUES (?,?,?)', (message_key, message.user_id, self.clock()))
 
-    def request(self, message, person):
+    def request(self, message, person, *, auto_approve=False):
+        if type(auto_approve) is not bool:
+            raise RegistrationError('Chế độ duyệt đăng ký chưa hợp lệ.')
         message_key, person = self._message(message), self._person(person)
         with self._transaction() as db:
             old = db.execute('SELECT r.* FROM registration_requests r JOIN registration_receipts receipt '
@@ -158,7 +160,7 @@ class RegistrationStore:
                 if (any(old[key] != person[key] for key in ('phone', 'name', 'source_key', 'fingerprint'))
                         or bool(old['name_unique']) != person['name_unique']):
                     raise RegistrationError('Tin nhắn này đã dùng cho nội dung khác; chưa thay đổi đăng ký.')
-                return self._record(old)
+                return self._finish_request(db, old, auto_approve)
             current = db.execute("SELECT * FROM registration_requests WHERE status IN ('pending','approved') "
                                  'AND (user_id=? OR chat_id=?)', (message.user_id, message.chat_id)).fetchone()
             if current:
@@ -166,7 +168,7 @@ class RegistrationStore:
                         and all(current[key] == person[key] for key in ('phone', 'name', 'source_key', 'fingerprint'))
                         and bool(current['name_unique']) == person['name_unique']):
                     db.execute('INSERT INTO registration_receipts VALUES (?,?)', (message_key, current['id']))
-                    return self._record(current)
+                    return self._finish_request(db, current, auto_approve)
                 raise RegistrationError('Tài khoản hoặc cuộc trò chuyện đã có đăng ký. Nhờ quản trị kiểm tra trước khi thay đổi.')
             member = db.execute('SELECT member_id FROM registration_members WHERE source_key=? AND phone=?',
                                 (person['source_key'], person['phone'])).fetchone()
@@ -188,7 +190,24 @@ class RegistrationStore:
                        (request_id, member_id, message.user_id, message.chat_id, person['phone'], person['name'],
                         person['source_key'], person['fingerprint'], int(person['name_unique']), 'pending', now, now, message_key))
             db.execute('INSERT INTO registration_receipts VALUES (?,?)', (message_key, request_id))
-            return self._record(db.execute('SELECT * FROM registration_requests WHERE id=?', (request_id,)).fetchone())
+            row = db.execute('SELECT * FROM registration_requests WHERE id=?', (request_id,)).fetchone()
+            return self._finish_request(db, row, auto_approve)
+
+    def _finish_request(self, db, row, auto_approve):
+        """Approve only inside the conflict-checked request transaction.
+
+        The flag is operator configuration, never a chat argument. Explicit
+        administrator rejection/revocation still requires manual reapproval.
+        """
+        if not auto_approve or row['status'] != 'pending':
+            return self._record(row)
+        for key in ('user_id', 'chat_id', 'member_id'):
+            previous = db.execute(
+                f"SELECT status FROM registration_requests WHERE {key}=? AND status<>'pending' "
+                'ORDER BY updated DESC,rowid DESC LIMIT 1', (row[key],)).fetchone()
+            if previous and previous['status'] in ('rejected', 'revoked'):
+                return self._record(row)
+        return self._decision(db, row, 'approved', 'system:workload-auto', action='auto_approved')
 
     def status(self, message):
         self._message(message)
@@ -252,10 +271,10 @@ class RegistrationStore:
                 "SELECT * FROM registration_requests WHERE status='approved' AND source_key=? ORDER BY created,rowid",
                 (source_key,))]
 
-    def _decision(self, db, row, status, admin):
+    def _decision(self, db, row, status, admin, *, action=None):
         db.execute('UPDATE registration_requests SET status=?,updated=? WHERE id=?', (status, self.clock(), row['id']))
         db.execute('INSERT INTO registration_events(request_id,actor,action,at) VALUES (?,?,?,?)',
-                   (row['id'], admin, status, self.clock()))
+                   (row['id'], admin, action or status, self.clock()))
         return self._record(db.execute('SELECT * FROM registration_requests WHERE id=?', (row['id'],)).fetchone())
 
     def approve(self, admin, request_id, person):

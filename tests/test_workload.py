@@ -59,9 +59,20 @@ class PhoneAndSettingsTests(unittest.TestCase):
         for value in ('912345678', '9.12345678E+08', '091234567', '09123456789', '+840912345678',
                       '84912345678', '0212345678', '0612345678', '(091)2345678', '0912/345678',
                       '0912345678 ext1', '٠٩١٢٣٤٥٦٧٨', '０９１２３４５６７８', '0912\n345678',
-                      '0912\t345678', '0912\u200b345678', '', None, 912345678, True):
+                      '0912\t345678', '0912\u200d345678', '0912\u202e345678', '`0912345678',
+                      '\u200b912345678', '0912345678\u200b0387654321', '\u200b' * 81 + '0912345678',
+                      '\u200b\ufeff\u00a0\u202f', '', None, 912345678, True):
             with self.subTest(value=value), self.assertRaises(WorkloadError):
                 normalize_phone(value)
+
+    def test_known_copy_format_is_removed_without_changing_digits(self):
+        for prefix in ('03', '05', '07', '08', '09'):
+            local = prefix + '12345678'
+            for char in ('\u200b', '\ufeff', '\u00a0', '\u202f'):
+                for value in (char + local, local + char, local[:4] + char + local[4:],
+                              char + '+84' + char + local[1:]):
+                    with self.subTest(prefix=prefix, code=ord(char), value=value):
+                        self.assertEqual(local, normalize_phone(value))
 
     def test_disabled_is_noop_and_enabled_requires_every_explicit_schema_field(self):
         base = SimpleNamespace(spreadsheet_id='synthetic_directory_123')
@@ -133,6 +144,27 @@ class WorkloadDirectoryTests(unittest.IsolatedAsyncioTestCase):
         cfg = settings(header_row=6)
         moved, _ = self.directory(payload(cfg=cfg), cfg=cfg)
         self.assertEqual(first, await moved.lookup('0912345678'))
+
+    async def test_copy_format_in_input_and_sheet_preserves_existing_identity(self):
+        clean, _ = self.directory()
+        original = await clean.lookup('0912345678')
+        copied, calls = self.directory(payload([('Nguyễn Văn An', '\u200b+84\u00a0912\u202f345.678\ufeff')]))
+        self.assertEqual(original, await copied.lookup('\ufeff0912\u200b345678'))
+        self.assertEqual(original, await copied.resolve_name('Nguyễn Văn An'))
+        self.assertEqual({'0912345678': original}, await copied.lookup_many(['\u200b0912345678']))
+        self.assertTrue(all(call.method == 'GET' for call in calls))
+
+    async def test_copy_format_cannot_hide_a_duplicate_phone_from_registration_or_sync(self):
+        for name in ('Nguyễn Văn An', 'Trần Văn Bình', ''):
+            directory, _ = self.directory(payload([('Nguyễn Văn An', '0912345678'),
+                                                    (name, '\u200b+84\u00a0912\u202f345678\ufeff')]))
+            with self.subTest(name=name):
+                with self.assertRaises(WorkloadError) as caught:
+                    await directory.lookup('0912345678')
+                self.assertEqual(DUPLICATE_PHONE_ERROR, str(caught.exception))
+                self.assertEqual({}, await directory.lookup_many(['0912345678']))
+                with self.assertRaises(WorkloadError):
+                    await directory.resolve_name('Nguyễn Văn An')
 
     async def test_name_phone_or_source_change_invalidates_fingerprint(self):
         directory, _ = self.directory()

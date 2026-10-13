@@ -19,6 +19,9 @@ LOOKUP_ERROR = 'Chưa đối chiếu được một người duy nhất với s�
 NOT_FOUND_ERROR = 'Không tìm thấy số điện thoại này trong Workload. Kiểm tra lại số hoặc nhờ quản trị cập nhật danh sách.'
 DUPLICATE_PHONE_ERROR = 'Số điện thoại bị trùng trong Workload. Nhờ quản trị kiểm tra và giữ đúng một người trước khi đăng ký.'
 NAME_ERROR = 'Tên trong Workload chưa xác định được duy nhất một người có số điện thoại hợp lệ.'
+# Explicit copy/paste formatting only; do not strip arbitrary Unicode controls
+# or infer digits that Sheets has dropped. Apply to both input and roster rows.
+PHONE_COPY_FORMAT = str.maketrans({'\u200b': '', '\ufeff': '', '\u00a0': ' ', '\u202f': ' '})
 
 
 class WorkloadError(Exception):
@@ -27,7 +30,10 @@ class WorkloadError(Exception):
 
 def normalize_phone(value):
     """Accept complete VN mobile numbers; never infer a missing leading zero."""
-    if not isinstance(value, str) or not 1 <= len(value) <= 80 or not re.fullmatch(r'[+0-9 .-]+', value):
+    if not isinstance(value, str) or not 1 <= len(value) <= 80:
+        raise WorkloadError(PHONE_ERROR)
+    value = value.translate(PHONE_COPY_FORMAT)
+    if not re.fullmatch(r'[+0-9 .-]+', value):
         raise WorkloadError(PHONE_ERROR)
     phone = value.replace(' ', '').replace('.', '').replace('-', '')
     if re.fullmatch(r'\+84[35789][0-9]{8}', phone):

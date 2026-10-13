@@ -87,6 +87,23 @@ class RegistrationFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual('pending', record.status)
         return message, record, response
 
+    async def test_copied_phone_registers_once_but_still_requires_admin_approval(self):
+        first = self.message('/dangky \u200b0900\u00a0000\u202f001\ufeff')
+        response = await self.flow.handle(first)
+        record = self.flow.store.status(first)
+        self.assertIsNotNone(record)
+        self.assertEqual('pending', record.status)
+        self.assertEqual('0900000001', record.phone)
+        self.assertIsNone(self.flow.approved(first))
+        self.assertFalse(self.flow.member_allows(first.user_id, first.chat_id, 'PRIVATE'))
+        self.assertNotIn(record.phone, response)
+        self.assertNotIn(record.name, response)
+        await self.flow.handle(self.message('/dangky +84\u200b900000001'))
+        self.assertEqual(record.id, self.flow.store.status(first).id)
+        self.assertEqual(1, len(self.flow.store.pending('admin-user')))
+        await self.flow.handle(self.message('/duyetdangky ' + record.id, user='new-user'))
+        self.assertEqual('pending', self.flow.store.status(first).status)
+
     async def approve(self, *, user='new-user'):
         message, record, _ = await self.request(user=user)
         response = await self.flow.handle(self.message('/duyetdangky ' + record.id, user='admin-user'))
@@ -116,7 +133,8 @@ class RegistrationFlowTests(unittest.IsolatedAsyncioTestCase):
     async def test_disabled_or_invalid_setup_never_opens_unknown_dm_bootstrap(self):
         cases = ({'REGISTRATION_ENABLED': 'false'}, {'REGISTRATION_ENABLED': 'maybe'},
                  {'REGISTRATION_ADMIN_USERS': 'not-an-allowed-user'},
-                 {'REGISTRATION_ADMIN_USERS': ''}, {'REGISTRATION_WORKLOAD_NAME_HEADER': ''})
+                 {'REGISTRATION_ADMIN_USERS': ''}, {'REGISTRATION_WORKLOAD_NAME_HEADER': ''},
+                 {'REGISTRATION_AUTO_APPROVE': 'yes'})
         for index, changes in enumerate(cases):
             with self.subTest(changes=changes):
                 flow = self.open(values=self.values | changes,
@@ -189,6 +207,61 @@ class RegistrationFlowTests(unittest.IsolatedAsyncioTestCase):
             self.assertIsInstance(response, str)
             self.assertNotIn(phone, response)
         self.assertEqual([], self.flow.store.pending('admin-user'))
+
+    async def test_auto_registration_returns_short_success_and_only_own_dm_grant(self):
+        flow = self.open(values=self.values | {'REGISTRATION_AUTO_APPROVE': 'true'})
+        message = self.message('/dangky \u200b' + self.directory.person.phone)
+        reply = await flow.handle(message)
+        self.assertTrue(reply.startswith('✅ Đăng ký thành công!'))
+        self.assertIn(self.directory.person.name, reply)
+        self.assertIn('/menu', reply)
+        self.assertNotIn(self.directory.person.phone, reply)
+        self.assertLess(len(reply), 200)
+        self.assertNotIn('chờ', reply.lower())
+        self.assertTrue(flow.member_allows(message.user_id, message.chat_id, 'PRIVATE'))
+        self.assertFalse(flow.member_allows(message.user_id, 'other-chat', 'PRIVATE'))
+        self.assertFalse(flow.member_allows(message.user_id, message.chat_id, 'GROUP'))
+        self.assertFalse(flow.admin_command(self.message('/dangkychoduyet')))
+        self.assertNotIn(message.user_id, self.settings.allowed_users)
+        self.assertIn('tự động', await flow.handle(self.message('/dangky')))
+        self.assertEqual(reply, await flow.handle(self.message('/dangky trangthai')))
+
+    async def test_auto_mode_requires_fresh_successful_lookup_and_keeps_rate_limit(self):
+        flow = self.open(values=self.values | {'REGISTRATION_AUTO_APPROVE': 'true'})
+        self.directory.lookup.side_effect = WorkloadError('Không tìm thấy hoặc trùng số')
+        for _ in range(5):
+            reply = await flow.handle(self.message('/dangky ' + self.directory.person.phone))
+            self.assertNotIn('thành công', reply)
+            self.assertIsNone(flow.identity('new-user'))
+        self.assertIn('giới hạn', await flow.handle(self.message('/dangky ' + self.directory.person.phone)))
+        self.assertEqual(5, self.directory.lookup.await_count)
+
+    async def test_pending_status_does_not_claim_auto_success_until_resubmitted(self):
+        message, record, _ = await self.request()
+        flow = self.open(values=self.values | {'REGISTRATION_AUTO_APPROVE': 'true'})
+        reply = await flow.handle(self.message('/dangky trangthai'))
+        self.assertIn('gửi lại /dangky', reply)
+        self.assertIsNone(flow.approved(message))
+        self.assertIn('thành công', await flow.handle(self.message('/dangky ' + record.phone)))
+        self.assertEqual(record.member_id, flow.approved(message).member_id)
+
+    async def test_auto_mode_group_registration_never_looks_up_or_discloses_identity(self):
+        flow = self.open(values=self.values | {'REGISTRATION_AUTO_APPROVE': 'true'})
+        reply = await flow.handle(self.message('/dangky ' + self.directory.person.phone, kind='GROUP'))
+        self.assertIn('nhắn riêng', reply)
+        self.assertNotIn(self.directory.person.name, reply)
+        self.directory.lookup.assert_not_awaited()
+
+    async def test_auto_approval_preserves_duplicate_name_block_for_personal_calendar(self):
+        flow = self.open(values=self.values | {'REGISTRATION_AUTO_APPROVE': 'true'})
+        self.directory.person = replace(self.directory.person, name_unique=False)
+        message = self.message('/dangky ' + self.directory.person.phone)
+        await flow.handle(message)
+        record = flow.approved(message)
+        self.assertIsNotNone(record)
+        with self.assertRaises(RegistrationError):
+            await flow.validate(record)
+        self.assertEqual(self.directory.person, await flow.validate(record, require_unique_name=False))
 
     async def test_wrong_admin_and_group_admin_cannot_read_or_decide_or_call_source(self):
         _, record, _ = await self.request()

@@ -179,6 +179,7 @@ def validate(values, config):
     sheets = SheetsSettings.from_mapping(values)
     workload = WorkloadSettings.from_mapping(values, sheets)
     if workload is not None:
+        flag(values, "REGISTRATION_AUTO_APPROVE")
         admins = id_set(values.get("REGISTRATION_ADMIN_USERS", ""))
         if not admins or not admins <= settings.allowed_users:
             raise ContainerError("REGISTRATION_ADMIN_USERS cần thuộc ZALO_ALLOWED_USERS.")

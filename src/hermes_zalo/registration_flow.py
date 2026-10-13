@@ -14,6 +14,10 @@ ENTRY_COMMANDS = frozenset(('/dangky', '/trangthaidangky'))
 GUIDE = ('Đăng ký bằng tin nhắn riêng: /dangky SỐ_ĐIỆN_THOẠI\n'
          'Dùng đúng số trong Workload. Quản trị xác minh và duyệt để cấp quyền thành viên theo tính năng đã bật.\n'
          'Xem trạng thái: /dangky trangthai')
+AUTO_GUIDE = ('Nhắn riêng: /dangky SỐ_ĐIỆN_THOẠI\n'
+              'Số khớp duy nhất trong Workload sẽ được đăng ký tự động.\n'
+              '/dangky trangthai — xem trạng thái')
+SUCCESS_PREFIX = '✅ Đăng ký thành công!'
 UNAVAILABLE = 'Đăng ký bằng số điện thoại chưa sẵn sàng. Nhờ quản trị kiểm tra cấu hình đăng ký.'
 AMBIGUOUS = ('Chưa có ánh xạ lịch xác định duy nhất đúng người. Nhờ quản trị bổ sung mã người '
              'vào phân công hoặc kiểm tra tên trùng; bot chưa tra lịch cá nhân hay đổi ca theo tên này.')
@@ -23,12 +27,17 @@ class RegistrationFlow:
     def __init__(self, settings, values, sheets_client, path, *, directory=None):
         self.settings, self.sheets = settings, sheets_client
         self.enabled, self.store, self.directory = False, None, None
+        self.auto_approve = False
         self.requested = str(values.get('REGISTRATION_ENABLED') or 'false').strip().lower() != 'false'
         self.error = None
         if not self.requested:
             return
         try:
             config = WorkloadSettings.from_mapping(values, sheets_client.settings if sheets_client else None)
+            auto = str(values.get('REGISTRATION_AUTO_APPROVE') or 'false').strip().lower()
+            if auto not in ('true', 'false'):
+                raise RegistrationError('REGISTRATION_AUTO_APPROVE cần là true hoặc false.')
+            self.auto_approve = auto == 'true'
             admins = id_set(values.get('REGISTRATION_ADMIN_USERS', ''))
             if not admins or not admins <= settings.allowed_users:
                 raise RegistrationError('Cần khai báo quản trị đăng ký thuộc danh sách được phép dùng bot.')
@@ -43,6 +52,10 @@ class RegistrationFlow:
     def close(self):
         if self.store:
             self.store.close()
+
+    @property
+    def guide(self):
+        return AUTO_GUIDE if self.auto_approve else GUIDE
 
     def bootstrap(self, message):
         return bool(self.enabled and message.chat_type == 'PRIVATE' and route(message.text)[0] in ENTRY_COMMANDS)
@@ -93,16 +106,20 @@ class RegistrationFlow:
             raise RegistrationError(AMBIGUOUS)
         return person
 
-    @staticmethod
-    def _status(record):
+    def _status(self, record, *, manual_review=False):
         if record is None:
-            return GUIDE
+            return self.guide
         if record.status == 'approved':
+            if self.auto_approve:
+                return f'{SUCCESS_PREFIX}\n{record.name}\nBạn đã có quyền dùng bot.\n/menu — xem các tính năng'
             return (f'Đã duyệt đăng ký: {record.name}\nMã thành viên: {record.member_id}\n'
                     'Đã có quyền thành viên: lịch, đổi ca, nhắc việc, góp ý và issue khi đã bật.\n'
                     'Đổi ca vẫn theo phạm vi lịch đang bật; tên trùng cần quản trị bổ sung ánh xạ.\n'
                     '/menu — các tính năng')
-        labels = {'pending': 'Đang chờ quản trị xác minh và duyệt',
+        pending = ('Cần quản trị duyệt lại đăng ký từng bị từ chối hoặc thu hồi.' if manual_review else
+                   'Đăng ký đang chờ; gửi lại /dangky SỐ_ĐIỆN_THOẠI để đối chiếu.' if self.auto_approve else
+                   'Đang chờ quản trị xác minh và duyệt')
+        labels = {'pending': pending,
                   'rejected': 'Đăng ký đã bị từ chối; nhờ quản trị kiểm tra',
                   'revoked': 'Liên kết đã bị thu hồi; nhờ quản trị kiểm tra'}
         # A phone lookup is not proof of ownership: do not reveal a roster name
@@ -127,11 +144,12 @@ class RegistrationFlow:
                 if command == '/trangthaidangky' or normalized(argument.strip()) in ('trangthai', 'trang thai'):
                     return self._status(self.store.status(message))
                 if not argument.strip() or normalized(argument.strip()) in ('help', 'huong dan'):
-                    return GUIDE
+                    return self.guide
                 self.store.check_attempt(message)
                 phone = normalize_phone(argument.strip())
                 person = await self.directory.lookup(phone)
-                return self._status(self.store.request(message, person))
+                record = self.store.request(message, person, auto_approve=self.auto_approve)
+                return self._status(record, manual_review=self.auto_approve and record.status == 'pending')
             # Check admin before a network lookup or showing a pending record.
             if message.user_id not in self.store.admins or message.user_id not in self.settings.allowed_users:
                 raise RegistrationError('Bạn chưa được cấp quyền quản trị đăng ký.')
@@ -225,7 +243,7 @@ class RegistrationFlow:
         if (not self.enabled or not self.sheets or record is None or
                 not self.member_allows(record.user_id, record.chat_id, 'PRIVATE') or
                 self.identity(record.user_id) != record):
-            raise RegistrationError('Cần đăng ký được quản trị duyệt trong đúng chat riêng để dùng đổi ca.')
+            raise RegistrationError('Cần đăng ký thành công trong đúng chat riêng để dùng đổi ca.')
         person = (await self.validate(record) if _person is None else self._validated_person(record, _person))
         if chat.service.mode not in ('lab_live', 'lab_live_test'):
             raise RegistrationError('Nguồn Tickets này cần quản trị liên kết mã thành viên riêng; chưa tự ghép theo tên.')

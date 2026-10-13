@@ -22,7 +22,7 @@ TICKETS_TOPICS = frozenset(("tickets", "doica", "doi ca", "yeucau", "yeu cau", "
                           "lichsudoica", "choduyet", "dongy", "tuchoi", "huydoica", "duyet", "doisoat"))
 TICKETS_DM_GUIDE = ("Đổi ca được xử lý trong tin nhắn riêng với bot. "
                     "Hãy mở cuộc trò chuyện riêng và gửi /doica để chọn ca. "
-                    "Quản trị cần xác minh và liên kết tài khoản của bạn trước khi dùng; "
+                    "Cần đăng ký hoặc liên kết tài khoản của bạn trước khi dùng; "
                     "đăng ký tên tra lịch không cấp quyền đổi ca.")
 
 

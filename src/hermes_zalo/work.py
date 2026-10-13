@@ -16,7 +16,7 @@ from .commands import normalized, help_text, help_topic, parse_calendar, route, 
 from .events import is_allowed
 from .natural import interpret, is_work_question
 from .profiles import ProfileStore
-from .registration_flow import RegistrationFlow, GUIDE as REGISTRATION_GUIDE, UNAVAILABLE as REGISTRATION_UNAVAILABLE
+from .registration_flow import RegistrationFlow, SUCCESS_PREFIX, UNAVAILABLE as REGISTRATION_UNAVAILABLE
 from .registration import RegistrationError
 from .workload import WorkloadError
 
@@ -329,7 +329,7 @@ class WorkService:
                         return chat.handle(message)
                 response = await asyncio.to_thread(dispatch)
                 if self.registration.enabled and response == TICKETS_UNVERIFIED:
-                    response = (REGISTRATION_GUIDE + '\nDuyệt xong bạn được tra lịch và đổi ca theo phạm vi đã bật, '
+                    response = (self.registration.guide + '\nĐăng ký thành công bạn được tra lịch và đổi ca theo phạm vi đã bật, '
                                 'không cần thêm ID riêng vào cấu hình.')
             except (RegistrationError, WorkloadError, TicketError) as error:
                 return str(error)
@@ -371,7 +371,7 @@ class WorkService:
             answer += "\nQuyền của bạn tại nhóm: hỏi lịch/tài liệu đã chia sẻ và đăng ký tên. Nhắc việc/tạo issue cần cấp quyền riêng."
         if self.registration.enabled:
             answer = answer.replace('Lịch của bạn: /dangky Họ tên đầy đủ, rồi /lichcuatoi homnay.',
-                                    'Lịch của bạn: /lichcuatoi homnay sau khi đăng ký số điện thoại và được duyệt.')
+                                    'Lịch của bạn: /lichcuatoi homnay sau khi đăng ký số điện thoại thành công.')
         if self.registration.enabled and not topic.strip():
             answer = answer.replace('Chưa đăng ký tên? /dangky Họ tên đầy đủ', 'Đăng ký danh tính: nhắn riêng /dangky SỐ_ĐIỆN_THOẠI')
             if message.chat_type == 'PRIVATE':
@@ -394,17 +394,25 @@ class WorkService:
             registration_response = await self.registration.handle(message)
             if registration_response is not None:
                 kind = 'command'
+                record = None
+                auto_success = (self.registration.auto_approve and command == '/dangky'
+                                and normalized(argument.strip()) not in ('trangthai', 'trang thai')
+                                and registration_response.startswith(SUCCESS_PREFIX))
                 if (command == '/duyetdangky' and self.registration.admin_command(message)
                         and registration_response.startswith('Đã duyệt ')):
+                    record = self.registration.store.get_for_admin(message.user_id, argument.strip())
+                elif auto_success:
+                    record = self.registration.approved(message)
+                if record is not None:
                     # Provision the private Tickets route immediately after
                     # approval, so a peer can select this member without CSV
                     # or requiring the member to open the wizard first.
                     chat = await self._open_tickets()
                     if chat is not None:
                         try:
-                            record = self.registration.store.get_for_admin(message.user_id, argument.strip())
                             await self.registration.sync_tickets(record, chat)
-                            registration_response += '\nLiên kết đổi ca đã sẵn sàng.'
+                            if not auto_success:
+                                registration_response += '\nLiên kết đổi ca đã sẵn sàng.'
                         except (RegistrationError, WorkloadError) as error:
                             registration_response += '\nĐã lưu quyền thành viên; liên kết đổi ca chưa sẵn sàng: ' + str(error)
                 return registration_response
@@ -440,7 +448,7 @@ class WorkService:
                     if record:
                         return (f'Danh tính đã duyệt: {record.name}\nMã thành viên: {record.member_id}\n'
                                 'Không đổi danh tính bằng tên tự khai. Nhờ quản trị xử lý nếu cần sửa hoặc thu hồi.')
-                    return REGISTRATION_GUIDE
+                    return self.registration.guide
                 if command == "/hoso":
                     if normalized(argument.strip()) == "xoa":
                         self.profiles.remove(message)
@@ -521,7 +529,7 @@ class WorkService:
                         if self.registration.enabled:
                             record = self.registration.identity(message.user_id)
                             if not record:
-                                return REGISTRATION_GUIDE
+                                return self.registration.guide
                             name = (await self.registration.validate(record)).name
                         else:
                             name = self.profiles.get(message)

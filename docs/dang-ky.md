@@ -1,15 +1,19 @@
 # Đăng ký thành viên qua số điện thoại
 
-Thành viên nhắn riêng số điện thoại → bot đối chiếu Workload và tự lấy ID → quản trị xác minh, duyệt lần đầu. **Duyệt xong tự có quyền thành viên trong chat riêng: lịch, đổi ca, nhắc việc, góp ý và trò chuyện**, không thêm từng người vào `.env`, không cần gửi CSV hoặc khởi động lại sau mỗi lần duyệt. Tính năng mặc định **tắt**, chỉ bật sau khi đã chỉ định quản trị.
+Thành viên nhắn riêng `/dangky SỐ_ĐIỆN_THOẠI` → bot đối chiếu Workload và lưu tài khoản Zalo. Với `REGISTRATION_AUTO_APPROVE=true`, số khớp duy nhất sẽ **được duyệt ngay**, có quyền thành viên trong chat riêng: lịch, đổi ca, nhắc việc, góp ý và trò chuyện. Không thêm từng người vào `.env`, không cần gửi CSV. Quản trị vẫn quản lý và thu hồi quyền; tự duyệt không cấp quyền quản trị.
 
 ## Thành viên làm gì?
 
 1. Mở chat **riêng** với bot, gửi `/dangky` để xem hướng dẫn.
 2. Gửi `/dangky SỐ_ĐIỆN_THOẠI`, thay phần viết hoa bằng số của bạn đã có trong Workload. Dùng số di động Việt Nam đủ 10 chữ số, bắt đầu bằng `0`, hoặc dạng `+84` tương ứng. Có thể có khoảng trắng, dấu chấm hoặc gạch ngang.
-3. Nhận mã yêu cầu `DK-…` và chờ quản trị xác minh. Bot chưa trả tên đầy đủ hoặc số điện thoại của dòng được đối chiếu cho người đang chờ duyệt.
-4. Gửi `/dangky trangthai` hoặc `/trangthaidangky` để xem kết quả. **Chưa có thông báo duyệt tự động.**
+3. Khi bật tự duyệt, nhận ngay **“✅ Đăng ký thành công!”**, tên trong Workload và hướng dẫn `/menu`. Người đang chờ từ trước gửi lại `/dangky SỐ_ĐIỆN_THOẠI` để được đối chiếu, không tạo bản ghi trùng. Khi tắt tự duyệt, bot trả mã `DK-…` để quản trị duyệt.
+4. Gửi `/menu` để bắt đầu; `/dangky trangthai` hoặc `/trangthaidangky` để xem trạng thái.
+
+Số khớp Workload không xác minh người nhắn sở hữu số đó; chế độ tự duyệt không có OTP. Một người/số chỉ liên kết với một tài khoản và chat riêng; không tự ghi đè liên kết cũ. Số trùng trong Workload bị chặn. Tài khoản, chat hoặc thành viên từng bị quản trị từ chối/thu hồi vẫn cần duyệt lại thủ công. Tên trùng chưa có ánh xạ phân biệt vẫn bị chặn lịch cá nhân/đổi ca.
 
 Không gửi số điện thoại trong nhóm. Bot lưu ID từ chính tin nhắn riêng nhận được; không suy ra chat riêng từ ID nhóm. Mỗi số trong Workload phải xác định một người; số bị trùng, mất số `0` đầu hoặc hiển thị dạng khoa học không được tự đoán sửa. Nếu Sheets làm mất số `0` đầu, quản trị đối chiếu số gốc rồi nhập lại ô theo định dạng văn bản; bot không tự sửa bảng.
+
+Bot bỏ ký tự ẩn thường gặp khi sao chép (`U+200B`, `U+FEFF`) và chấp nhận khoảng trắng không ngắt (`U+00A0`, `U+202F`) trong cả tin đăng ký lẫn ô số điện thoại Workload. Cách này không thêm/bớt chữ số hoặc bỏ bước duyệt; số bị trùng sau chuẩn hóa vẫn bị chặn. Nếu còn báo không tìm thấy, kiểm tra cột C: số phải đủ chữ số, không kèm chữ, dấu nháy hoặc ký tự lạ khác; đặt ô ở định dạng văn bản rồi nhập lại từ nguồn đã xác minh.
 
 Mỗi tài khoản được tra đăng ký tối đa 5 lần/giờ, toàn bot tối đa 60 lần/giờ. Giới hạn còn hiệu lực sau khi khởi động lại. Xem trạng thái không tiêu tốn lượt tra.
 
@@ -30,6 +34,7 @@ Dừng bot bằng `Ctrl+C`, mở `.env` **trên máy** và bổ sung các biến
 
 ```dotenv
 REGISTRATION_ENABLED=false
+REGISTRATION_AUTO_APPROVE=false
 REGISTRATION_ADMIN_USERS=
 REGISTRATION_WORKLOAD_TAB=Workload - Lab coach
 REGISTRATION_WORKLOAD_NAME_COLUMN=D
@@ -49,7 +54,7 @@ Lệnh này dùng được khi đăng ký còn tắt và chưa điền quản tr
 
 Điền ID Zalo của quản trị vào `REGISTRATION_ADMIN_USERS`; nhiều ID cách nhau dấu phẩy. **Tất cả ID quản trị phải có trong `ZALO_ALLOWED_USERS`.** Dùng ID quản trị đã được cấp quyền ban đầu; nếu chưa có, làm bước `Discover` trong README. Không cần lấy ID thủ công cho các thành viên đăng ký sau đó.
 
-Khi đã đủ cấu hình, đổi `REGISTRATION_ENABLED=true`, lưu `.env`, rồi chạy:
+Khi đã đủ cấu hình, đổi `REGISTRATION_ENABLED=true`. Đặt `REGISTRATION_AUTO_APPROVE=true` để tự duyệt, hoặc `false` để quản trị duyệt như trước. Mẫu mặc định tắt cả hai. Lưu `.env`, rồi chạy:
 
 ```powershell
 .\scripts\run.ps1 Update
@@ -58,6 +63,8 @@ Khi đã đủ cấu hình, đổi `REGISTRATION_ENABLED=true`, lưu `.env`, r�
 ```
 
 `Check` kiểm tra cấu hình bot chung. `RegistrationCheck` kiểm tra kết nối và cấu trúc Workload; bot tiếp tục đọc lại nguồn khi đăng ký và duyệt. Không đưa `.env`, file khóa, số điện thoại hoặc dữ liệu đăng ký lên Git.
+
+**Bot trên Railway:** sửa `REGISTRATION_AUTO_APPROVE` trong Variables của service rồi triển khai lại bản code có tính năng này. Giữ nguyên các quyền, nguồn Sheets và Volume. Không bật đồng thời bot Windows. Bật tự duyệt không duyệt hàng loạt dữ liệu đang chờ; thành viên gửi lại lệnh để bot đọc mới Workload. Lịch sử quyết định ghi `auto_approved` do hệ thống, không mạo danh quản trị.
 
 Nếu đã bật đăng ký nhưng cấu hình chưa hợp lệ, bot dừng xử lý tính năng và báo cần kiểm tra; không tự quay về đăng ký tên cũ hoặc bỏ qua bước xác minh.
 
@@ -72,7 +79,7 @@ Quản trị nhắn **riêng** bot:
 
 Mỗi trang tối đa 5 yêu cầu, gồm tên Workload, số điện thoại đã che chỉ giữ 4 số cuối, `user_id`, `chat_id` và mã đăng ký bot tự thu nhận. Không chuyển tiếp danh sách này vào nhóm.
 
-**Số điện thoại có trong bảng không chứng minh người gửi là chủ số đó.** Trước khi duyệt, quản trị xác minh qua cách liên hệ đã biết hoặc đối chiếu trực tiếp với thành viên. Luồng này chưa có xác thực OTP bằng SMS.
+Phần duyệt thủ công dùng khi `REGISTRATION_AUTO_APPROVE=false` hoặc cần xử lý đăng ký từng bị từ chối/thu hồi. Quản trị xác minh qua cách liên hệ đã biết hoặc đối chiếu trực tiếp trước khi duyệt lại.
 
 | Thao tác | Lệnh |
 | --- | --- |
@@ -81,7 +88,7 @@ Mỗi trang tối đa 5 yêu cầu, gồm tên Workload, số điện thoại đ
 | Xem thành viên đã duyệt | `/thanhvien` hoặc `/thanhvien 2` |
 | Thu hồi liên kết | `/thuhoidangky MÃ_THÀNH_VIÊN` |
 
-Khi duyệt và Tickets đã bật, bot tự tạo liên kết đổi ca nếu nguồn/ánh xạ hợp lệ; thành viên không cần gửi CSV hoặc mở Tickets trước để được người khác chọn. Nếu liên kết chưa sẵn sàng, bot báo rõ cho quản trị và vẫn lưu quyền thành viên. Sau khi sửa nguồn, người dùng có thể mở `/tickets` hoặc quản trị gửi lại lệnh duyệt để thử lại.
+Khi tự duyệt hoặc duyệt thủ công và Tickets đã bật, bot tự tạo liên kết đổi ca nếu nguồn/ánh xạ hợp lệ; thành viên không cần gửi CSV hoặc mở Tickets trước để được người khác chọn. Nếu liên kết chưa sẵn sàng, bot báo rõ trong phản hồi và vẫn lưu quyền thành viên. Sau khi sửa nguồn, người dùng có thể mở `/doica` để thử lại. Đăng ký không tạo yêu cầu đổi ca hoặc sửa lịch.
 
 Sao chép đúng mã từ phản hồi của bot. Trước khi duyệt, bot đọc lại Workload; dữ liệu người đăng ký đã đổi thì cần kiểm tra lại, không âm thầm ghép sang người khác. Sau duyệt, thành viên tự xem `/dangky trangthai`; quản trị nhận mã thành viên và lệnh thu hồi.
 

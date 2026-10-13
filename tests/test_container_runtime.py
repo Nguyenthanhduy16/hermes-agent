@@ -156,6 +156,9 @@ class ContainerRuntimeTests(unittest.TestCase):
                            REGISTRATION_WORKLOAD_PHONE_HEADER="Phone")
         with self.assertRaisesRegex(runtime.ContainerError, "REGISTRATION_ADMIN_USERS"):
             runtime.validate(self.values, config)
+        self.values['REGISTRATION_AUTO_APPROVE'] = 'yes'
+        with self.assertRaisesRegex(runtime.ContainerError, "REGISTRATION_AUTO_APPROVE"):
+            runtime.validate(self.values, config)
 
     def test_standby_never_prepares_or_launches_gateway(self):
         with patch.dict(os.environ, {"BOT_DATA_DIR": str(self.root)}, clear=True), \

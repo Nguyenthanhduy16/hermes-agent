@@ -62,6 +62,24 @@ class RegistrationAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.directory.lookup.assert_not_awaited()
         self.assertIsNone(self.adapter.work.registration.store.user_state('new-user'))
 
+    async def test_auto_registration_replies_then_opens_member_access_without_model_receiving_phone(self):
+        self.adapter.work.registration.auto_approve = True
+        await self.send('/dangky ' + self.directory.person.phone, mid='auto-first')
+        self.assertIn('Đăng ký thành công', self.replies()[-1])
+        self.assertNotIn(self.directory.person.phone, self.replies()[-1])
+        self.handler.assert_not_awaited()
+        await self.send('/dangky ' + self.directory.person.phone, mid='auto-first')
+        self.assertEqual(1, len(self.replies()))
+        await self.send('/lich homnay')
+        self.assertEqual('Synthetic approved calendar', self.replies()[-1])
+        await self.send('Giải thích Python là gì?')
+        self.handler.assert_awaited_once()
+        self.assertNotIn(self.directory.person.phone, self.handler.await_args.args[0].text)
+        await self.send('/dangkychoduyet')
+        self.assertIn('chưa được cấp quyền quản trị', self.replies()[-1])
+        self.assertNotIn('new-user', self.adapter.settings.allowed_users)
+        self.assertNotIn('new-user', self.sheets.settings.users)
+
     async def test_pending_registration_and_invalid_phone_never_reach_model_or_echo_identity(self):
         await self.send('/dangky invalid-private-input')
         self.directory.lookup.assert_not_awaited()

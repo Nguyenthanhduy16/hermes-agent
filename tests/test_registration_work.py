@@ -128,6 +128,15 @@ class RegistrationWorkTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(self.directory.lookup.await_count >= 2)
         self.assertEqual(frozenset(), self.sheets.settings.users)
 
+    async def test_auto_registered_new_member_immediately_reads_calendar_without_static_ids(self):
+        self.service.registration.auto_approve = True
+        reply = await self.send('/dangky ' + self.directory.person.phone, user='new-user')
+        self.assertIn('Đăng ký thành công', reply)
+        self.assertNotIn('new-user', self.settings.allowed_users)
+        self.assertNotIn('new-user', self.sheets.settings.users)
+        self.assertIn('MY-COURSE', await self.send('/lichcuatoi 06/10/2026', user='new-user'))
+        self.assertIn('Đã đặt nhắc', await self.send('/nhac sau 1 phut | Việc thử', user='new-user'))
+
     async def test_approval_opens_ordinary_features_without_static_ids(self):
         await self.approve('new-user')
         for text in ('/lichcuatoi 06/10/2026', '/lich 06/10/2026'):

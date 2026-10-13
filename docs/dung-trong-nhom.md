@@ -29,10 +29,10 @@ Nếu quản trị đã bật đăng ký bằng số điện thoại:
 
 1. Mở hồ sơ bot → **Nhắn tin**, gửi `/dangky SỐ_ĐIỆN_THOẠI` đúng trong Workload. **Không gửi số điện thoại trong nhóm.**
 2. Bot tự ghi nhận ID người gửi và chat riêng; bạn không cần tìm hoặc gửi ID cho quản trị.
-3. Chờ quản trị xác minh và duyệt, rồi nhắn `/dangky trangthai` để xem kết quả. Bot chưa tự gửi thông báo duyệt.
+3. Khi bật tự duyệt, số khớp duy nhất Workload sẽ nhận ngay “Đăng ký thành công”. Nếu dùng chế độ duyệt thủ công hoặc từng bị từ chối/thu hồi, quản trị cần duyệt. Nhắn `/dangky trangthai` để xem kết quả.
 4. Duyệt xong tự có quyền lịch, đổi ca, nhắc việc, góp ý và trò chuyện tại chat riêng đã liên kết, không thêm ID vào `.env`. Khi tên xác định duy nhất, hỏi `Mai mình có ca nào?` tại cuộc trò chuyện được cấp quyền.
 
-Số điện thoại chỉ là thông tin đối chiếu, chưa chứng minh danh tính. Trong lúc chờ duyệt, bot không trả tên đầy đủ của người trong Workload. Đăng ký đã duyệt mở các chức năng thành viên tại chat riêng đã liên kết; issue cần bật toàn hệ thống và có tab đích hợp lệ, tài liệu chỉ mở khi được chia sẻ. Không tự mở nhóm mới hoặc vai trò quản trị. Trường hợp trùng toàn bộ tên, bot chặn ghép lịch cá nhân/đổi ca cho đến khi có cách phân biệt trong dữ liệu. Xem [hướng dẫn đầy đủ](dang-ky.md).
+Số điện thoại chỉ là thông tin đối chiếu, chưa chứng minh người gửi sở hữu số đó; tự duyệt được bật bằng `REGISTRATION_AUTO_APPROVE=true`. Đăng ký thành công mở các chức năng thành viên tại chat riêng đã liên kết; issue cần bật toàn hệ thống và có tab đích hợp lệ, tài liệu chỉ mở khi được chia sẻ. Không tự mở nhóm mới hoặc vai trò quản trị. Trường hợp trùng toàn bộ tên, bot chặn ghép lịch cá nhân/đổi ca cho đến khi có cách phân biệt trong dữ liệu. Xem [hướng dẫn đầy đủ](dang-ky.md).
 
 **Nếu đăng ký Workload đang tắt:** tên trong ví dụ là họ tên đầy đủ đúng trong Sheets. `/dangky Họ tên` chỉ lưu bộ lọc tên tự khai theo từng chat; `/hoso` xem tên, `/hoso xoa` xóa hồ sơ cũ. Hồ sơ còn sau khi khởi động lại nhưng không dùng chung giữa các nhóm hoặc giữa nhóm và nhắn riêng. Tên tự khai không xác minh danh tính hoặc cấp quyền dữ liệu. Khi đã có liên kết Workload được duyệt, hồ sơ tên cũ không ghi đè liên kết đó.
 
