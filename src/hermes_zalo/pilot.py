@@ -8,7 +8,7 @@ import time
 import uuid
 
 
-KINDS = frozenset(("chat", "documents", "reminders", "calendar", "issues", "feedback", "poll", "access", "command", "tickets_notification"))
+KINDS = frozenset(("chat", "documents", "reminders", "calendar", "issues", "feedback", "poll", "access", "command", "tickets_notification", "nlu"))
 OUTCOMES = frozenset((
     "ok", "error", "denied", "blocked", "uncertain", "created", "cancelled", "sent",
     "not_found", "unsupported", "pending", "expired", "timeout", "rate_limited", "ignored", "duplicate",

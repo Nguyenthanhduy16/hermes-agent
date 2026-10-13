@@ -99,6 +99,18 @@ class RealHermesTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(_select_tool_names([], None, True), set())
         self.assertIsNone(await self.adapter._record_delivery_obligation(None, None, None, None, False))
 
+    async def test_real_adapter_routes_structured_intent_without_exposing_tools(self):
+        data = dict(intent='menu', personal=False, when='', period='', person='', room='', course='',
+                    title='', description='', needs='')
+        router = SimpleNamespace(classify=AsyncMock(return_value=data), close=AsyncMock())
+        self.adapter.work = self.module.WorkService(self.adapter.settings, environ={}, intent_router=router)
+        await self.adapter._dispatch(self.update('nlu-real-hermes', text='Bạn hỗ trợ được việc j nhỉ'))
+        router.classify.assert_awaited_once()
+        self.handler.assert_not_awaited()
+        self.assertEqual('g1', self.adapter.client.send_text_chunk.await_args.args[0])
+        self.assertIn('MENU BOT', self.adapter.client.send_text_chunk.await_args.args[1])
+        self.module.assert_chat_only()
+
     async def test_actual_base_routes_completes_and_deduplicates(self):
         await self.adapter._dispatch(self.update("m1", text="/update"))
         await self.adapter._dispatch(self.update("m1", text="/update"))

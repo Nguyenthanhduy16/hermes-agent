@@ -87,6 +87,7 @@ COPY src/ ./src/
 RUN python -m pip install --no-cache-dir '.[sheets]'
 COPY plugin/ ./plugin/
 COPY config/hermes.config.example.yaml ./config/hermes.config.example.yaml
+COPY scripts/nlu_check.py ./scripts/nlu_check.py
 
 # PyYAML belongs to the system-Python bootstrap installed above; Hermes uses
 # ruamel.yaml. Exercise the actual copied plugin with Hermes' sealed runtime,

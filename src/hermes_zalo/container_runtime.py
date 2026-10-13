@@ -175,6 +175,11 @@ def prepare(values, app_root=None):
 
 def validate(values, config):
     """Validate local configuration only; no Zalo, Google, model or DB writes."""
+    from .nlu import options
+    try:
+        options(values)
+    except ValueError as error:
+        raise ContainerError(str(error)) from None
     settings = Settings.from_mapping(values)
     sheets = SheetsSettings.from_mapping(values)
     workload = WorkloadSettings.from_mapping(values, sheets)

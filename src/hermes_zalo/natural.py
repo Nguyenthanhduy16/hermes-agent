@@ -80,7 +80,9 @@ def interpret(text):
     command, argument = route(text)
     if command == "/lich" and "|" in argument:
         return command, argument
-    personal = availability or bool(re.search(r"\b(?:cua\s+(?:toi|minh|em)|(?:toi|minh|em)\s+(?:co|day|truc|lam|hoc)|lich\s+(?:toi|minh|em))\b", folded))
+    pronouns = normalized(re.sub(r'\btối\b', '', text.casefold()))
+    pronouns = re.sub(r'\b(?:buoi|ca) toi\b', '', pronouns)
+    personal = availability or bool(re.search(r"\b(?:cua\s+(?:toi|minh|em)|(?:toi|minh|em)\s+(?:co|day|truc|lam|hoc)|lich\s+(?:toi|minh|em))\b", pronouns))
     if re.search(r"\bcua\s+(?!toi\b|minh\b|em\b)", folded):
         return "/lich", "help"  # named people need the explicit coach filter
     date_pattern = r"(?<![\d/-])(?:\d{4}-\d{2}-\d{2}|\d{1,2}/\d{1,2}(?:/\d{4})?)(?![\d/-])"

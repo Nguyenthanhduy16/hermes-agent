@@ -31,6 +31,10 @@ class NaturalConversationTests(unittest.TestCase):
             self.assertEqual("", interpret(question)[0], question)
             self.assertFalse(is_work_question(question), question)
 
+    def test_calendar_evening_does_not_imply_first_person(self):
+        self.assertEqual(('/lich', 'mai | buoi=toi'), interpret('Lịch tối mai'))
+        self.assertEqual(('/lichcuatoi', 'ngay mai'), interpret('Lịch tôi ngày mai'))
+
     def test_reminder_navigation_precedes_calendar_and_preserves_explicit_content(self):
         for text, expected in (("nhắc lịch giúp mình", ("/trogiup", "nhac")),
                                ("Xem các nhắc lịch của tôi", ("/nhac", "xem")),

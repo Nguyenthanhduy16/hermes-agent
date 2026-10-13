@@ -18,6 +18,8 @@
 !plugin/plugin.yaml
 !config/
 !config/hermes.config.example.yaml
+!scripts/
+!scripts/nlu_check.py
 
 # Defensive exclusions even under an allowed source directory.
 **/__pycache__/

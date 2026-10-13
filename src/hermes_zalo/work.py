@@ -19,6 +19,7 @@ from .profiles import ProfileStore
 from .registration_flow import RegistrationFlow, SUCCESS_PREFIX, UNAVAILABLE as REGISTRATION_UNAVAILABLE
 from .registration import RegistrationError
 from .workload import WorkloadError
+from . import nlu
 
 
 logger = logging.getLogger(__name__)
@@ -35,8 +36,15 @@ def state_prefix(settings):
 
 class WorkService:
     def __init__(self, settings, *, sheets_client=None, environ=None, tickets_chat=_LAZY_TICKETS,
-                 registration_directory=None):
+                 registration_directory=None, intent_router=None):
         values = os.environ if environ is None else environ
+        self._nlu_error = False
+        try:
+            nlu_enabled, nlu_timeout = nlu.options(values)
+        except ValueError:
+            nlu_enabled, nlu_timeout, self._nlu_error = True, 12, True
+            logger.warning('Natural-language configuration invalid; explicit commands remain available')
+        self.intent_router = intent_router or (nlu.IntentRouter(timeout=nlu_timeout) if nlu_enabled and not self._nlu_error else None)
         prefix = state_prefix(settings)
         self.settings = settings
         self._tickets_values = dict(values)
@@ -145,6 +153,8 @@ class WorkService:
         self.issues.recover()
 
     async def close(self):
+        if self.intent_router is not None:
+            await self.intent_router.close()
         if self._tickets_chat is not None:
             chat, self._tickets_chat = self._tickets_chat, None
             try:
@@ -380,7 +390,79 @@ class WorkService:
                     answer += '\n/dangkychoduyet — quản trị duyệt đăng ký\n/thanhvien — xem và thu hồi quyền thành viên'
         return answer
 
-    async def handle(self, message):
+    def _natural_intents(self, message):
+        allowed = {'menu', 'chat', 'documents', 'clarify'}
+        scope = (message.user_id, message.chat_id, message.chat_type)
+        if self._calendar_scope_allowed(*scope):
+            allowed.add('calendar')
+        if self.member_feature_allowed(*scope):
+            allowed.update(('reminder_list', 'reminder_history', 'reminder_help'))
+        if self._issue_scope_allowed(*scope) and self.sheets.settings.issues_enabled:
+            allowed.update(('issue_help', 'issue_draft'))
+        if self._tickets_chat is not None or str(self._tickets_values.get('TICKETS_CHAT_MODE') or 'off').lower() in ('sheets_test', 'lab_live', 'lab_live_test'):
+            allowed.update(('tickets_start', 'tickets_pending', 'tickets_list', 'tickets_history'))
+        return frozenset(allowed)
+
+    async def _natural_response(self, message):
+        # Adapter admission is repeated here so this service remains safe in isolation.
+        if not (is_allowed(message, self.settings.allowed_users, self.settings.allowed_groups,
+                           group_members=self.settings.group_access == 'members') or self.registration.approved(message)):
+            return 'Bạn hoặc cuộc trò chuyện này chưa được cấp quyền dùng bot.'
+        if self._nlu_error:
+            return nlu.UNAVAILABLE
+        started = time.monotonic()
+        outcome = 'ok'
+        grant = self.registration.identity(message.user_id)
+        try:
+            allowed = self._natural_intents(message)
+            data = await self.intent_router.classify(message.text, allowed=allowed,
+                                                     user_key=sha256(message.user_id.encode()).hexdigest())
+            # Revalidate even injected classifiers; none may bypass the closed schema.
+            data = nlu.validate(data, message.text, allowed)
+            if self.registration.identity(message.user_id) != grant or self.registration.blocked(message):
+                outcome = 'denied'
+                return 'Quyền đăng ký đã thay đổi. Gửi /dangky trangthai trong chat riêng rồi thử lại.'
+            action = nlu.to_action(data, message.text)
+            if action.reply:
+                return action.reply
+            if not action.command:
+                return None  # Hermes general chat, still no tools or internal context.
+            argument = action.argument
+            if action.person:
+                if not self._calendar_scope_allowed(message.user_id, message.chat_id, message.chat_type):
+                    return 'Bạn hoặc cuộc trò chuyện này chưa được cấp quyền dùng Google Sheets.'
+                if not self.registration.enabled:
+                    return nlu.CLARIFY['person']
+                # Certify an exact, unique Workload identity before a name-only schedule read.
+                person = await self.registration.directory.resolve_name(action.person)
+                argument += ' | coach=' + person.name
+            if self.registration.identity(message.user_id) != grant or self.registration.blocked(message):
+                outcome = 'denied'
+                return 'Quyền đăng ký đã thay đổi. Gửi /dangky trangthai trong chat riêng rồi thử lại.'
+            response = await self.handle(replace(message, text=action.command + (' ' + argument if argument else '')),
+                                         _exact_coach=bool(action.person))
+            # Do not imply a wizard started when scope/config/identity checks rejected it.
+            if action.prefix and response and 'Bước 1/4' in response:
+                return action.prefix + response
+            return response
+        except nlu.IntentError as error:
+            outcome = 'timeout' if str(error) == 'timeout' else 'rate_limited' if str(error) == 'rate_limited' else 'error'
+            logger.warning('Natural-language routing unavailable (%s); no message or provider details logged', outcome)
+            return nlu.UNAVAILABLE
+        except (WorkloadError, RegistrationError):
+            outcome = 'blocked'
+            return ('Chưa xác định được duy nhất người này trên Workload. Hãy dùng họ tên chính xác; '
+                    'nếu trùng tên, nhờ quản trị bổ sung ánh xạ mã thành viên. Bot chưa thực hiện thao tác.')
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            outcome = 'error'
+            logger.warning('Natural-language routing unavailable; no private details logged')
+            return nlu.UNAVAILABLE
+        finally:
+            self.pilot.record('nlu', outcome, (time.monotonic() - started) * 1000)
+
+    async def handle(self, message, *, _exact_coach=False):
         command, argument = interpret(message.text)
         if (message.chat_type == "PRIVATE" and command == "/dangky" and
                 not message.text.lstrip().startswith("/") and
@@ -424,6 +506,24 @@ class WorkService:
                 if (message.chat_type == 'PRIVATE' and message.user_id not in self.settings.allowed_users
                         and not self.registration.approved(message)):
                     return 'Bạn chưa được duyệt đăng ký. Chỉ dùng /dangky SỐ_ĐIỆN_THOẠI hoặc /dangky trangthai.'
+            if (self.intent_router is not None or self._nlu_error) and not message.text.lstrip().startswith('/'):
+                # Existing Tickets dialog owns free-form reasons and numeric choices.
+                # They must never enter an AI request, including expired dialogs.
+                if (message.chat_type == 'PRIVATE' and (not command or command == '/hoi') and
+                        not normalized(message.text).startswith('nhac minh')):
+                    chat = await self._open_tickets()
+                    if chat is not None and await asyncio.to_thread(chat.has_dialog, message):
+                        response = await self._handle_tickets(message, command, argument)
+                        if response is not None:
+                            return response
+                candidate = nlu.should_classify(message.text, command, argument)
+                if candidate and nlu.private_input(message.text):
+                    return self.registration.guide
+                if (not normalized(message.text).startswith('nhac minh') and nlu.multiple_requests(message.text)
+                        and not (command == '/hoi' and not candidate)):
+                    return nlu.MULTIPLE
+                if candidate:
+                    return await self._natural_response(message)
             ticket_response = await self._handle_tickets(message, command, argument)
             if ticket_response is not None:
                 kind = "command"
@@ -539,7 +639,7 @@ class WorkService:
                             return "Lịch của tôi dùng tên đã đăng ký. Muốn tìm tên khác, dùng /lich homnay | coach=Họ tên."
                         query = replace(query, filters=query.filters + (("coach", name),))
                     if self.sheets.settings.calendar_format == "lab":
-                        options = {'exact_coach': True} if command == '/lichcuatoi' and self.registration.enabled else {}
+                        options = {'exact_coach': True} if _exact_coach or command == '/lichcuatoi' and self.registration.enabled else {}
                         return await self.sheets.lab_calendar(query, message.user_id, message.chat_id, message.chat_type, **options)
                     if query.start != query.end or query.filters or query.page != 1:
                         outcome = "unsupported"
