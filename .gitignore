@@ -20,3 +20,4 @@ build/
 dist/
 .coverage
 htmlcov/
+railway-transfer*.zip

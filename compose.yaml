@@ -1,0 +1,25 @@
+services:
+  bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: hermes-zalo-bot:local
+    # Deliberately fixed: a second polling process must not share one bot token.
+    container_name: hermes-zalo-bot
+    # The image already runs tini as PID 1.
+    restart: unless-stopped
+    stop_grace_period: 60s
+    env_file:
+      - path: .env.docker
+        required: true
+    volumes:
+      - bot-data:/data
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '3'
+    # Long polling needs no host port or public domain.
+
+volumes:
+  bot-data:

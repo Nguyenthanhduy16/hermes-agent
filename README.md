@@ -28,6 +28,10 @@ Chế độ `lab_live` mở đổi ca cho mọi thành viên đã duyệt, kiể
 
 Ngày 06/10/2026: đã kiểm tra đọc thật 3 tab Lịch lab và lệnh `/lich` cục bộ cho ba ngày thuộc ba tab. Tạo issue đang tắt trong cấu hình máy thử. Cần khởi động lại bot rồi gửi `/lich 2026-10-06` trên Zalo để xác nhận luồng trả lời thực tế.
 
+## Chạy liên tục trên Railway
+
+Repo có Dockerfile, cấu hình Railway và mẫu biến môi trường. Xem [hướng dẫn deploy và chuyển dữ liệu Windows](docs/deploy-railway.md): dùng **một bot long polling + Volume `/data`**. Ngày 13/10/2026 đã build, chuyển dữ liệu và chạy trên Railway; người dùng xác nhận bot trả lời, nhận đúng thành viên đã đăng ký. Giữ bot Windows tắt khi Railway đang chạy. Chi phí Railway và AI phụ thuộc mức dùng. Bản triển khai hiện tại được tải từ mã cục bộ qua CLI; các thay đổi Docker/Railway chưa được commit/push lên GitHub.
+
 ## 1. Chuẩn bị
 
 - Windows và PowerShell; mở terminal tại thư mục repo này.

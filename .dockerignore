@@ -1,0 +1,31 @@
+# Deny by default: local data, credentials and generated outputs must never
+# enter the build context, including files Git ignores.
+**
+!Dockerfile
+!.dockerignore
+!pyproject.toml
+!src/
+!src/hermes_zalo/
+!src/hermes_zalo/*.py
+!src/hermes_zalo/tickets/
+!src/hermes_zalo/tickets/*.py
+!src/hermes_zalo/tickets/static/
+!src/hermes_zalo/tickets/static/*.html
+!src/hermes_zalo/tickets/static/*.css
+!src/hermes_zalo/tickets/static/*.js
+!plugin/
+!plugin/*.py
+!plugin/plugin.yaml
+!config/
+!config/hermes.config.example.yaml
+
+# Defensive exclusions even under an allowed source directory.
+**/__pycache__/
+**/*.py[cod]
+**/.env
+**/.env.*
+**/secrets/
+**/*service-account*.json
+**/*.sqlite*
+**/*.db
+**/*.log
