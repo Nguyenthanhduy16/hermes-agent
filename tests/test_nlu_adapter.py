@@ -1,7 +1,7 @@
 """NLU through actual adapter dispatch with synthetic Zalo events and model."""
 from types import SimpleNamespace
 import unittest
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import test_adapter as contract
 from test_nlu import intent
@@ -44,6 +44,30 @@ class NluAdapterTests(unittest.IsolatedAsyncioTestCase):
         await self.adapter._dispatch(contract.update('menu', text='/menu'))
         self.assertIn('MENU BOT', self.adapter.client.send_text_chunk.await_args.args[1])
         self.assertEqual(2, self.router.classify.await_count)
+
+    async def test_enabled_transport_settings_reach_router(self):
+        await self.adapter.work.close()
+        values = {'ZALO_NLU_ENABLED': 'true', 'ZALO_NLU_TIMEOUT_SECONDS': '30',
+                  'ZALO_NLU_RESPONSE_FORMAT': 'json_object', 'ZALO_NLU_MAX_TOKENS': '4096',
+                  'ZALO_NLU_MAX_RETRIES': '1', 'ZALO_NLU_THINKING': 'disabled'}
+        with patch('hermes_zalo.work.nlu.IntentRouter', return_value=self.router) as constructor:
+            self.adapter.work = WorkService(self.adapter.settings, environ=values)
+        constructor.assert_called_once_with(timeout=30, response_format='json_object', max_tokens=4096,
+                                            max_retries=1, thinking='disabled')
+        await self.adapter._dispatch(contract.update('configured', text='Bạn hỗ trợ được việc j'))
+        self.router.classify.assert_awaited_once()
+        self.assertIn('MENU BOT', self.adapter.client.send_text_chunk.await_args.args[1])
+
+    async def test_invalid_transport_settings_keep_explicit_commands_available(self):
+        await self.adapter.work.close()
+        with patch('hermes_zalo.work.nlu.IntentRouter') as constructor:
+            self.adapter.work = WorkService(self.adapter.settings, environ={
+                'ZALO_NLU_ENABLED': 'true', 'ZALO_NLU_RESPONSE_FORMAT': 'text'})
+        constructor.assert_not_called()
+        await self.adapter._dispatch(contract.update('invalid-format', text='Bạn hỗ trợ được việc j'))
+        self.handler.assert_not_awaited()
+        await self.adapter._dispatch(contract.update('safe-command', text='/menu'))
+        self.assertIn('MENU BOT', self.adapter.client.send_text_chunk.await_args.args[1])
 
 
 if __name__ == '__main__':

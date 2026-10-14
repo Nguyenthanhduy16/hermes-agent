@@ -554,8 +554,8 @@ class ZaloAdapter(BasePlatformAdapter):
                 try:
                     response = await self.managed_chat.reply(message, context)
                     is_chat = True
-                except ManagedChatError:
-                    response = 'Bot chưa kết nối được AI. Bạn vẫn có thể dùng /menu và các lệnh công việc.'
+                except ManagedChatError as error:
+                    response = error.user_message
                     is_chat = False
                 delivered = await self.send(message.chat_id, response, reply_to=message.message_id)
                 self.conversations.complete_turn(message, is_chat=is_chat and delivered.success)

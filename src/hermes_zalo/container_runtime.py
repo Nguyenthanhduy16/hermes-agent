@@ -149,6 +149,15 @@ def prepare(values, app_root=None):
     if not all(isinstance(model.get(k), str) and model[k].strip() for k in ("provider", "default")):
         raise ContainerError("Cần cấu hình HERMES_PROVIDER và HERMES_MODEL cho lần chạy đầu.")
     config["model"] = model
+    effort = values.get("HERMES_REASONING_EFFORT", "").strip().lower()
+    if effort:
+        if effort not in ("none", "low", "medium", "high", "max"):
+            raise ContainerError("HERMES_REASONING_EFFORT cần là none, low, medium, high hoặc max.")
+        agent = config.setdefault("agent", {})
+        overrides = agent.get("reasoning_overrides")
+        overrides = dict(overrides) if isinstance(overrides, dict) else {}
+        overrides[model["default"]] = effort
+        agent.update(reasoning_effort=effort, reasoning_overrides=overrides)
     credentials(values)
     plugin = home / "plugins" / "zalo-platform"
     require_plain_path(plugin, home)

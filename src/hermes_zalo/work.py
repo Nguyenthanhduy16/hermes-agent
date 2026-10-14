@@ -45,7 +45,9 @@ class WorkService:
         except ValueError:
             nlu_enabled, nlu_timeout, self._nlu_error = True, 12, True
             logger.warning('Natural-language configuration invalid; explicit commands remain available')
-        self.intent_router = intent_router or (nlu.IntentRouter(timeout=nlu_timeout) if nlu_enabled and not self._nlu_error else None)
+        self.intent_router = intent_router or (
+            nlu.IntentRouter(timeout=nlu_timeout, **nlu.transport_options(values))
+            if nlu_enabled and not self._nlu_error else None)
         prefix = state_prefix(settings)
         self.settings = settings
         self._tickets_values = dict(values)

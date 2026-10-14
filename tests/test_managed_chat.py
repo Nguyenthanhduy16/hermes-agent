@@ -94,6 +94,78 @@ class ManagedChatTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('credential', str(error.exception))
         self.assertTrue(agent.closed)
 
+    async def test_structured_failures_use_fixed_actionable_copy_without_replaying_turn(self):
+        for reason, category in (('rate_limit', 'rate_limit'), ('upstream_rate_limit', 'rate_limit'),
+                ('billing', 'quota'), ('auth_permanent', 'auth'), ('model_not_found', 'configuration'),
+                ('timeout', 'timeout'), ('truncated', 'empty_response'), ('secret reason', 'unavailable')):
+            with self.subTest(reason=reason):
+                agent = FakeAgent({'failed': True, 'failure_reason': reason,
+                                   'final_response': 'secret provider diagnostic'})
+                factory = Mock(return_value=agent)
+                with self.assertRaises(ManagedChatError) as error:
+                    await ManagedChat(factory).reply(message(), {})
+                self.assertEqual(category, error.exception.category)
+                self.assertNotIn('secret', str(error.exception))
+                self.assertNotIn('secret', error.exception.user_message)
+                self.assertIn('/menu', error.exception.user_message)
+                self.assertEqual(1, len(agent.calls))
+                factory.assert_called_once()
+                self.assertTrue(agent.closed)
+
+    async def test_incomplete_results_and_unverified_billing_do_not_escape_as_answers(self):
+        for result in ({'completed': False, 'final_response': 'secret diagnostic'},
+                       {'error': 'secret body', 'failure_reason': 'billing', 'billing_unverified': True},
+                       {'error': 'secret body', 'failure_reason': ['malformed']}):
+            with self.subTest(result=result):
+                with self.assertRaises(ManagedChatError) as error:
+                    await ManagedChat(lambda: FakeAgent(result)).reply(message(), {})
+                self.assertEqual('unavailable', error.exception.category)
+                self.assertNotIn('secret', str(error.exception))
+
+    async def test_escaped_sdk_status_and_quota_code_are_sanitized(self):
+        for status, body, expected in (
+                (429, {'error': {'code': 'rate_limit_exceeded', 'message': 'secret'}}, 'rate_limit'),
+                (429, {'error': {'code': 'terminal_quota_exhausted', 'message': 'secret'}}, 'quota'),
+                (429, {'code': 'insufficient_quota', 'message': 'secret'}, 'quota'),
+                (402, {}, 'quota'), (401, {}, 'auth'), (503, {}, 'unavailable')):
+            with self.subTest(status=status, body=body):
+                failure = RuntimeError('secret provider URL and credential')
+                failure.status_code, failure.body = status, body
+                agent = FakeAgent()
+                agent.run_conversation = Mock(side_effect=failure)
+                with self.assertRaises(ManagedChatError) as error:
+                    await ManagedChat(lambda: agent).reply(message(), {})
+                self.assertEqual(expected, error.exception.category)
+                self.assertNotIn('secret', str(error.exception))
+                self.assertNotIn('secret', error.exception.user_message)
+                agent.run_conversation.assert_called_once()
+                self.assertTrue(agent.closed)
+
+    async def test_rate_limit_cooldown_suppresses_new_calls_then_expires(self):
+        rate_limited = FakeAgent({'error': 'secret body', 'failure_reason': 'rate_limit'})
+        healthy = FakeAgent()
+        factory = Mock(side_effect=[rate_limited, healthy])
+        chat = ManagedChat(factory)
+        with patch('hermes_zalo.managed_chat.time') as clock:
+            clock.monotonic.return_value = 100
+            with self.assertRaises(ManagedChatError):
+                await chat.reply(message(), {})
+            with self.assertRaises(ManagedChatError) as error:
+                await chat.reply(message('Next question'), {})
+            self.assertEqual('rate_limit', error.exception.category)
+            factory.assert_called_once()
+        with patch('hermes_zalo.managed_chat.time') as clock:
+            clock.monotonic.return_value = 111
+            self.assertEqual('Câu trả lời.', await chat.reply(message(), {}))
+        self.assertEqual(2, factory.call_count)
+        self.assertEqual(1, len(rate_limited.calls))
+        self.assertEqual(1, len(healthy.calls))
+
+    async def test_user_message_never_uses_error_text_or_unknown_category(self):
+        error = ManagedChatError('secret upstream body', category='secret category')
+        self.assertEqual('unavailable', error.category)
+        self.assertNotIn('secret', error.user_message)
+
     async def test_context_size_limit_rejects_before_creating_agent_and_answer_is_bounded(self):
         factory = Mock()
         with self.assertRaises(ManagedChatError):
@@ -144,8 +216,9 @@ class ManagedChatTests(unittest.IsolatedAsyncioTestCase):
             finished.set()
 
         agent.run_conversation, agent.interrupt, agent.close = run, interrupt, close
-        with self.assertRaises(ManagedChatError):
+        with self.assertRaises(ManagedChatError) as error:
             await ManagedChat(lambda: agent, timeout=0.02).reply(message(), {})
+        self.assertEqual('timeout', error.exception.category)
         self.assertTrue(agent.interrupted)
         self.assertTrue(await asyncio.to_thread(finished.wait, 1))
         self.assertTrue(agent.closed)
@@ -222,17 +295,28 @@ def module(name, **attributes):
 
 
 class ConfiguredAgentTests(unittest.TestCase):
-    def test_existing_provider_model_and_strict_no_tools_or_history_options(self):
+    def configured_modules(self, provider='custom', name='deepseek/deepseek-v4-flash', reasoning=None):
         agent = Mock(tools=[], _session_db=None)
         constructor = Mock(return_value=agent)
-        resolve = Mock(return_value={'provider': 'openrouter', 'api_mode': 'chat_completions', 'api_key': 'fake-test-key', 'base_url': 'https://synthetic.invalid/v1'})
+        resolve = Mock(return_value={'provider': provider, 'api_mode': 'chat_completions',
+            'api_key': 'fake-test-key', 'base_url': 'https://synthetic.invalid/v1'})
+        config = {'model': {'provider': provider, 'default': name},
+                  'agent': {'reasoning_effort': 'none', 'reasoning_overrides': {name: 'none'}}}
+        reasoning_resolver = Mock(return_value=reasoning)
         modules = {
-            'hermes_constants': module('hermes_constants', get_hermes_home=lambda: Path('synthetic-home')),
-            'hermes_cli.config_effective': module('hermes_cli.config_effective', load_user_config_effective=lambda *args, **kwargs: {'model': {'provider': 'openrouter', 'default': 'existing/free'}}),
+            'hermes_constants': module('hermes_constants', get_hermes_home=lambda: Path('synthetic-home'),
+                                      resolve_reasoning_config=reasoning_resolver),
+            'hermes_cli.config_effective': module('hermes_cli.config_effective',
+                load_user_config_effective=lambda *args, **kwargs: config),
             'hermes_cli.runtime_provider': module('hermes_cli.runtime_provider', resolve_runtime_provider=resolve),
             'run_agent': module('run_agent', AIAgent=constructor),
         }
-        with patch.dict('sys.modules', modules):
+        return modules, agent, constructor, resolve, reasoning_resolver, config
+
+    def test_existing_provider_model_and_strict_no_tools_or_history_options(self):
+        modules, agent, constructor, resolve, reasoning_resolver, config = self.configured_modules(
+            provider='openrouter', name='existing/free')
+        with patch.dict('sys.modules', modules), patch.dict('os.environ', {}, clear=True):
             self.assertIs(agent, configured_agent())
         args = constructor.call_args.kwargs
         self.assertEqual('existing/free', args['model'])
@@ -245,11 +329,42 @@ class ConfiguredAgentTests(unittest.TestCase):
         self.assertTrue(args['skip_context_files'])
         self.assertFalse(args['load_soul_identity'])
         self.assertIsNone(args['fallback_model'])
+        self.assertEqual(4096, args['max_tokens'])
+        self.assertEqual(1, args['max_iterations'])
+        self.assertEqual(60, args['run_budget_seconds'])
+        self.assertIsNone(args['reasoning_config'])
+        reasoning_resolver.assert_called_once_with(config, 'existing/free')
         resolve.assert_called_once_with(requested='openrouter', target_model='existing/free')
         agent.tools = ['unsafe_tool']
         with patch.dict('sys.modules', modules), self.assertRaises(ManagedChatError):
             configured_agent()
         agent.close.assert_called_once()
+
+    def test_custom_provider_preserves_routing_and_resolved_reasoning_with_token_budget(self):
+        modules, agent, constructor, resolve, reasoning_resolver, config = self.configured_modules(
+            reasoning={'enabled': False})
+        with patch.dict('sys.modules', modules), patch.dict('os.environ', {'ZALO_CHAT_MAX_TOKENS': '8192'}):
+            self.assertIs(agent, configured_agent())
+        args = constructor.call_args.kwargs
+        self.assertEqual('deepseek/deepseek-v4-flash', args['model'])
+        self.assertEqual('custom', args['provider'])
+        self.assertEqual('https://synthetic.invalid/v1', args['base_url'])
+        self.assertEqual({'enabled': False}, args['reasoning_config'])
+        self.assertEqual(8192, args['max_tokens'])
+        reasoning_resolver.assert_called_once_with(config, 'deepseek/deepseek-v4-flash')
+        resolve.assert_called_once_with(requested='custom', target_model='deepseek/deepseek-v4-flash')
+
+    def test_invalid_token_budget_fails_before_resolving_provider_or_creating_agent(self):
+        modules, _, constructor, resolve, _, _ = self.configured_modules()
+        for value in ('secret-value', '', '0', '255', '16385', '4096.0'):
+            with self.subTest(value=value), patch.dict('sys.modules', modules), \
+                    patch.dict('os.environ', {'ZALO_CHAT_MAX_TOKENS': value}):
+                with self.assertRaises(ManagedChatError) as error:
+                    configured_agent()
+                self.assertEqual('configuration', error.exception.category)
+                self.assertNotIn('secret-value', str(error.exception))
+        resolve.assert_not_called()
+        constructor.assert_not_called()
 
 
 if __name__ == '__main__':

@@ -84,6 +84,27 @@ class ContainerRuntimeTests(unittest.TestCase):
         self.values["HERMES_BASE_URL"] = "https://new.invalid"
         self.assertEqual("https://new.invalid", self.prepare()[1]["model"]["base_url"])
 
+    def test_custom_model_reasoning_override_is_applied_without_storing_key(self):
+        self.prepare()
+        self.values.update(HERMES_PROVIDER="custom", HERMES_MODEL="synthetic-flash",
+                           HERMES_BASE_URL="https://proxy.invalid/v1", OPENAI_BASE_URL="https://proxy.invalid/v1",
+                           OPENAI_API_KEY="private-synthetic-proxy-key", HERMES_REASONING_EFFORT="none")
+        _, config = self.prepare()
+        self.assertEqual("custom", config["model"]["provider"])
+        self.assertEqual("none", config["agent"]["reasoning_overrides"]["synthetic-flash"])
+        self.assertEqual(3, config["agent"]["api_max_retries"])
+        self.assertEqual(0, config["agent"]["auto_recovery_cycles"])
+        self.assertFalse(config["model"]["streaming"])
+        self.assertNotIn("private-synthetic-proxy-key", yaml.safe_dump(config))
+        self.assertEqual(config["agent"], self.prepare()[1]["agent"])
+
+    def test_bad_reasoning_override_fails_without_echoing_value(self):
+        self.values['HERMES_REASONING_EFFORT'] = 'private-invalid-value'
+        with self.assertRaises(runtime.ContainerError) as caught:
+            self.prepare()
+        self.assertNotIn('private-invalid-value', str(caught.exception))
+        self.assertIn('HERMES_REASONING_EFFORT', str(caught.exception))
+
     def test_plugin_ancestor_link_is_rejected_before_writing(self):
         home = self.root / "hermes-home"
         home.mkdir()

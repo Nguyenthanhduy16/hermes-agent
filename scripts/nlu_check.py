@@ -35,7 +35,7 @@ def main(argv=None):
     import hermes_bootstrap  # Activate the sealed runtime too when invoked directly in Docker.
     from hermes_zalo.config import load_env
     from hermes_zalo.logging_utils import protect_logs
-    from hermes_zalo.nlu import IntentError, IntentRouter, configured_endpoint, options, to_action
+    from hermes_zalo.nlu import IntentError, IntentRouter, configured_endpoint, options, to_action, transport_options
     from hermes_constants import get_hermes_home
     load_env(ROOT / '.env')
     load_env(Path(get_hermes_home()) / '.env')
@@ -48,7 +48,7 @@ def main(argv=None):
             print('Cấu hình đọc được. Chưa gọi model; cần NluCheckLive để kiểm tra phản hồi có cấu trúc.')
             return 0
         async def probe():
-            router = IntentRouter(timeout=timeout)
+            router = IntentRouter(timeout=timeout, **transport_options(os.environ))
             try:
                 question = 'Giúp kiểm tra lịch của mình ngày kế tiếp nhé'
                 data = await router.classify(question, allowed={'calendar', 'clarify'}, user_key='synthetic-probe')
@@ -63,7 +63,7 @@ def main(argv=None):
         print('Không nhắn Zalo, không đọc/ghi Sheets. Đây chưa phải thử nghiệm Zalo thật.')
         return 0
     except IntentError as error:
-        reasons = {'unsupported': 'Model/endpoint hiện tại chưa đáp ứng yêu cầu JSON Schema.',
+        reasons = {'unsupported': 'Model/endpoint hiện tại chưa đáp ứng chế độ JSON đã cấu hình.',
                    'credentials': 'Nhà cung cấp từ chối thông tin xác thực.',
                    'quota': 'Tài khoản nhà cung cấp không đủ hạn mức.',
                    'forbidden': 'Nhà cung cấp từ chối truy cập.',
@@ -76,7 +76,7 @@ def main(argv=None):
         print('Chưa đạt. ' + reasons.get(str(error), 'Không nhận được ý định hợp lệ.'))
         return 1
     except Exception:
-        print('Chưa đạt. Kiểm tra model có hỗ trợ JSON Schema, API key, mạng và hạn mức. Không đổi model tự động.')
+        print('Chưa đạt. Kiểm tra chế độ JSON, API key, mạng và hạn mức. Không đổi model tự động.')
         return 1
 
 

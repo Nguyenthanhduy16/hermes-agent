@@ -2,6 +2,7 @@
 import asyncio
 from dataclasses import replace
 from datetime import date, datetime, timezone
+from email.utils import format_datetime
 import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -86,14 +87,30 @@ class ContractTests(unittest.TestCase):
 
     def test_invalid_options(self):
         for values in ({'ZALO_NLU_ENABLED': 'yes'}, {'ZALO_NLU_TIMEOUT_SECONDS': '0'},
-                       {'ZALO_NLU_TIMEOUT_SECONDS': '3.5'}, {'ZALO_NLU_TIMEOUT_SECONDS': '99'}):
+                       {'ZALO_NLU_TIMEOUT_SECONDS': '3.5'}, {'ZALO_NLU_TIMEOUT_SECONDS': '99'},
+                       {'ZALO_NLU_RESPONSE_FORMAT': 'text'}, {'ZALO_NLU_MAX_TOKENS': '255'},
+                       {'ZALO_NLU_MAX_TOKENS': '8193'}, {'ZALO_NLU_MAX_TOKENS': '2.5'},
+                       {'ZALO_NLU_MAX_RETRIES': '-1'}, {'ZALO_NLU_MAX_RETRIES': '4'},
+                       {'ZALO_NLU_THINKING': 'yes'}):
             with self.assertRaises(ValueError):
                 nlu.options(values)
+
+    def test_transport_options_keep_original_enabled_timeout_api(self):
+        self.assertEqual((False, 12), nlu.options({}))
+        self.assertEqual({'response_format': 'json_schema', 'max_tokens': 2048,
+                          'max_retries': 2, 'thinking': 'default'}, nlu.transport_options({}))
+        values = {'ZALO_NLU_ENABLED': 'true', 'ZALO_NLU_TIMEOUT_SECONDS': '30',
+                  'ZALO_NLU_RESPONSE_FORMAT': 'json_object', 'ZALO_NLU_MAX_TOKENS': '4096',
+                  'ZALO_NLU_MAX_RETRIES': '0', 'ZALO_NLU_THINKING': 'disabled'}
+        self.assertEqual((True, 30), nlu.options(values))
+        self.assertEqual({'response_format': 'json_object', 'max_tokens': 4096,
+                          'max_retries': 0, 'thinking': 'disabled'}, nlu.transport_options(values))
 
 
 class TransportTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.requests = []
+        self.responses = []
         self.response = httpx.Response(200, json=completion(intent('calendar', when='ngày kế tiếp')))
         self.endpoint = nlu.Endpoint('openrouter/free', 'openrouter', 'https://model.invalid/api/v1', 'private-test-key')
         self.resolver = Mock(return_value=self.endpoint)
@@ -102,7 +119,7 @@ class TransportTests(unittest.IsolatedAsyncioTestCase):
 
     def respond(self, request):
         self.requests.append(request)
-        return self.response
+        return self.responses.pop(0) if self.responses else self.response
 
     async def asyncTearDown(self):
         await self.client.aclose()
@@ -118,6 +135,8 @@ class TransportTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual({'require_parameters': True}, body['provider'])
         self.assertEqual('json_schema', body['response_format']['type'])
         self.assertTrue(body['response_format']['json_schema']['strict'])
+        self.assertEqual(2048, body['max_tokens'])
+        self.assertNotIn('thinking', body)
         self.assertNotIn('tools', body)
         self.assertNotIn('private-user-hash', request.content.decode())
         self.assertNotIn('private-test-key', request.content.decode())
@@ -125,7 +144,7 @@ class TransportTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('private-test-key', repr(self.endpoint))
 
     async def test_failures_cool_down_without_retry_or_plaintext_fallback(self):
-        for status in (400, 401, 404, 429, 500):
+        for status in (400, 401, 402, 403, 404, 422, 500):
             self.router._cooldown = 0
             self.response = httpx.Response(status, text='SECRET PROVIDER BODY')
             before = len(self.requests)
@@ -136,15 +155,135 @@ class TransportTests(unittest.IsolatedAsyncioTestCase):
                 await self.classify()
             self.assertEqual(before + 1, len(self.requests))
 
+    async def test_json_object_has_schema_and_same_local_validation(self):
+        self.resolver.return_value = replace(self.endpoint, provider='custom')
+        self.router = nlu.IntentRouter(client=self.client, resolver=self.resolver,
+                                      **nlu.transport_options({'ZALO_NLU_RESPONSE_FORMAT': 'json_object',
+                                                               'ZALO_NLU_MAX_TOKENS': '4096',
+                                                               'ZALO_NLU_THINKING': 'disabled'}))
+        self.assertEqual('calendar', (await self.classify())['intent'])
+        body = json.loads(self.requests[-1].content)
+        self.assertEqual({'type': 'json_object'}, body['response_format'])
+        self.assertEqual(4096, body['max_tokens'])
+        self.assertEqual({'type': 'disabled'}, body['thinking'])
+        self.assertNotIn('provider', body)
+        self.assertEqual(nlu.SCHEMA, json.loads(body['messages'][0]['content'].split('\n')[-1]))
+        for data in (intent('calendar', when='ngày kế tiếp', execute='bad'),
+                     intent('calendar', when='ngày kế tiếp', person='Invented Person'),
+                     intent('calendar', when='ngày kế tiếp', personal='true')):
+            self.response = httpx.Response(200, json=completion(data))
+            before = len(self.requests)
+            with self.assertRaises(nlu.IntentError):
+                await self.classify()
+            self.assertEqual(before + 1, len(self.requests))
+
+    def retry_clock(self):
+        self.now, self.waits = 100.0, []
+        async def sleep(delay):
+            self.waits.append(delay)
+            self.now += delay
+        self.router.clock = lambda: self.now
+        self.router.wall_clock = lambda: 1700000000 + self.now - 100
+        self.router.sleep = sleep
+
+    async def test_429_retry_after_then_success(self):
+        self.retry_clock()
+        self.responses = [httpx.Response(429, headers={'Retry-After': '2'}, text='PRIVATE ERROR'), self.response]
+        self.assertEqual('calendar', (await self.classify())['intent'])
+        self.assertEqual([2], self.waits)
+        self.assertEqual(2, len(self.requests))
+        self.assertEqual(self.requests[0].content, self.requests[1].content)
+        self.resolver.assert_called_once()
+        await self.classify()
+        self.assertEqual(3, len(self.requests))
+
+    async def test_429_exhaustion_is_bounded_and_cools_down(self):
+        self.retry_clock()
+        self.response = httpx.Response(429, text='PRIVATE ERROR')
+        with self.assertRaisesRegex(nlu.IntentError, '^rate_limited$'):
+            await self.classify()
+        self.assertEqual([1, 2], self.waits)
+        self.assertEqual(3, len(self.requests))
+        self.assertEqual(self.now + 60, self.router._cooldown)
+        with self.assertRaisesRegex(nlu.IntentError, '^rate_limited$'):
+            await self.classify()
+        self.assertEqual(3, len(self.requests))
+
+    async def test_retry_after_http_date(self):
+        self.retry_clock()
+        when = datetime.fromtimestamp(self.router.wall_clock() + 3, timezone.utc)
+        self.responses = [httpx.Response(429, headers={'Retry-After': format_datetime(when, usegmt=True)}), self.response]
+        self.assertEqual('calendar', (await self.classify())['intent'])
+        self.assertEqual([3], self.waits)
+
+    async def test_daily_retry_after_cools_down_without_waiting(self):
+        self.retry_clock()
+        self.responses = [httpx.Response(429, headers={'Retry-After': '86400'})]
+        with self.assertRaisesRegex(nlu.IntentError, '^rate_limited$'):
+            await self.classify()
+        self.assertEqual([], self.waits)
+        self.assertEqual(1, len(self.requests))
+        self.now += 61
+        with self.assertRaisesRegex(nlu.IntentError, '^rate_limited$'):
+            await self.classify()
+        self.assertEqual(1, len(self.requests))
+        self.now += 86400
+        self.assertEqual('calendar', (await self.classify())['intent'])
+
+    async def test_zero_retries_and_malformed_retry_after(self):
+        self.retry_clock()
+        self.router.max_retries = 0
+        self.response = httpx.Response(429, headers={'Retry-After': 'bad'})
+        with self.assertRaisesRegex(nlu.IntentError, '^rate_limited$'):
+            await self.classify()
+        self.assertEqual([], self.waits)
+        self.assertEqual(1, len(self.requests))
+        for header in ('bad', '-3', 'nan', 'inf', 'x' * 129):
+            self.assertEqual(2, self.router._retry_delay(header, 1))
+        self.assertEqual(1, self.router._retry_delay('0', 0))
+
+    async def test_retries_share_one_deadline_including_network_time(self):
+        self.retry_clock()
+        self.router.timeout = 5
+        def rate_limited(request):
+            self.requests.append(request)
+            self.now += 2
+            return httpx.Response(429)
+        async with httpx.AsyncClient(transport=httpx.MockTransport(rate_limited)) as client:
+            self.router.client = client
+            with self.assertRaisesRegex(nlu.IntentError, '^rate_limited$'):
+                await self.classify()
+        self.assertEqual([1], self.waits)
+        self.assertEqual(2, len(self.requests))
+        self.assertEqual([5, 2], [request.extensions['timeout']['read'] for request in self.requests])
+
+    async def test_cancelled_retry_wait_never_sends_next_request(self):
+        self.retry_clock()
+        waiting = asyncio.Event()
+        async def wait(delay):
+            waiting.set()
+            await asyncio.sleep(30)
+        self.router.sleep = wait
+        self.response = httpx.Response(429)
+        task = asyncio.create_task(self.classify())
+        await asyncio.wait_for(waiting.wait(), 1)
+        task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await task
+        self.assertEqual(1, len(self.requests))
+
     async def test_invalid_truncated_tool_and_unavailable_intents_fail_closed(self):
+        valid = json.dumps(intent('calendar', when='ngày kế tiếp'))
         samples = [httpx.Response(200, json={}), httpx.Response(200, json=completion({'intent': 'menu'})),
-                   httpx.Response(200, json={'choices': [{'finish_reason': 'length', 'message': {'content': '{}'}}]}),
-                   httpx.Response(200, json={'choices': [{'finish_reason': 'stop', 'message': {'content': '{}', 'tool_calls': [1]}}]}),
+                   httpx.Response(200, json={'choices': [{'finish_reason': 'length', 'message': {'content': valid}}]}),
+                   httpx.Response(200, json={'choices': [{'finish_reason': 'stop', 'message': {'content': valid, 'tool_calls': [1]}}]}),
                    httpx.Response(200, text='x' * 70000)]
         for response in samples:
             self.response = response
+            before = len(self.requests)
             with self.assertRaises(nlu.IntentError):
                 await self.classify()
+            self.assertEqual(before + 1, len(self.requests))
         self.response = httpx.Response(200, json=completion(intent('calendar', when='ngày kế tiếp')))
         with self.assertRaises(nlu.IntentError):
             await self.classify(allowed={'chat'})
@@ -177,6 +316,14 @@ class TransportTests(unittest.IsolatedAsyncioTestCase):
                 await task
         finally:
             await client.aclose()
+
+    async def test_http_client_timeout_has_fixed_timeout_category(self):
+        def wait(request):
+            raise httpx.ReadTimeout('PRIVATE ERROR', request=request)
+        async with httpx.AsyncClient(transport=httpx.MockTransport(wait)) as client:
+            self.router.client = client
+            with self.assertRaisesRegex(nlu.IntentError, '^timeout$'):
+                await self.classify()
 
 
 class ServiceTests(unittest.IsolatedAsyncioTestCase):
@@ -352,6 +499,8 @@ class TicketTests(unittest.IsolatedAsyncioTestCase):
         f = self.fixture
         self.router.classify.return_value = intent('tickets_pending')
         self.assertIn('CHƯA CÓ', await f.say('b', 'Có yêu cầu đổi ca nào đang chờ mình đồng ý không?'))
+        # Group access requires registration before the ticket DM boundary runs.
+        await f.approve('a')
         f.work.settings = replace(f.work.settings, allowed_groups=frozenset({'g1'}))
         message = replace(f.message('a', 'Đổi giúp ca sáng 16/10 với Lãm'), chat_id='g1', chat_type='GROUP')
         self.router.classify.return_value = intent('tickets_start', when='16/10', period='sang', person='Lãm')

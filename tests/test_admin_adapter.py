@@ -172,6 +172,17 @@ class AdminAdapterTests(unittest.IsolatedAsyncioTestCase):
         await self.adapter._dispatch(contract.update('menu-aftererror', text='/menu'))
         self.assertIn('MENU BOT', self.adapter.client.send_text_chunk.await_args.args[1])
 
+    async def test_model_rate_limit_shows_safe_guidance_without_archiving_as_chat(self):
+        event = contract.update('rate-limit')
+        self.acknowledge_notice(event)
+        self.ai.reply.side_effect = contract.adapter_module.ManagedChatError(
+            'private-provider-body', category='rate_limit')
+        await self.adapter._dispatch(event)
+        reply = self.adapter.client.send_text_chunk.await_args.args[1]
+        self.assertIn('giới hạn tốc độ', reply)
+        self.assertNotIn('private-provider-body', reply)
+        self.assertEqual([], self.archive.context(parse_update(event).session_key)['messages'])
+
 
 if __name__ == '__main__':
     unittest.main()

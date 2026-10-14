@@ -18,6 +18,8 @@ Thành viên có thể dùng câu thường hoặc lệnh. Trong nhóm đã đư
 
 AI có thể hiểu khác giữa các lần gọi, nhất là `openrouter/free`. Bảng trên là tình huống cần thử, không bảo đảm chất lượng của mọi model. Nếu chưa hiểu, dùng `/menu`, `/lich`, `/lichcuatoi`, `/doica`, `/choxacnhan`, `/issue`.
 
+**LiteLLM / DeepSeek Flash:** xem [cấu hình model, JSON mode, token và hạn mức](model-litellm.md). Máy chủ đã kiểm tra dùng JSON mode; không áp nguyên cấu hình JSON Schema của OpenRouter.
+
 ## Bật trên Windows
 
 1. Giữ bot Windows tắt nếu Railway đang chạy cùng Bot Token.
@@ -54,8 +56,8 @@ Muốn tắt bước AI: đặt `ZALO_NLU_ENABLED=false` rồi khởi động/tr
 - AI có thể chuẩn bị bản nháp issue; chỉ lệnh xác nhận của đúng người, đúng cuộc trò chuyện mới ghi Sheets. Không có intent cho duyệt thành viên, tự đồng ý đổi ca, xóa dữ liệu hay chạy công cụ.
 - Nhắc việc qua AI mới gồm xem, lịch sử và hướng dẫn tạo. Cú pháp tạo/hủy hiện có vẫn dùng trực tiếp. Tính năng chưa bật hoặc ngoài quyền không được AI mở thêm.
 - Hiện hỗ trợ provider Hermes `openrouter` và `custom` dùng Chat Completions qua HTTPS. Những API khác chưa được hỗ trợ ở bước phân loại, không tự chuyển provider/model.
-- Mỗi câu chưa hiểu gọi phân loại tối đa một lần; không tự thử lại/đổi model. Cần JSON Schema, kiểm tra cấu trúc và nguồn thông tin ở code kể cả khi nhà cung cấp không tuân thủ schema. Lỗi mạng, timeout, hết hạn mức hoặc model không tương thích: gợi ý dùng lệnh.
-- Giới hạn bổ sung: 2.000 ký tự đầu vào (quá giới hạn thì yêu cầu dùng lệnh, không cắt nội dung), 10 lượt/người/phút, 60 lượt/toàn bot/phút, timeout cấu hình 3–30 giây; sau lỗi HTTP tạm ngừng phân loại 60 giây. Bộ đếm trong bộ nhớ được đặt lại sau khởi động.
+- Mỗi câu chưa hiểu có một lượt phân loại, mặc định chỉ thử lại HTTP 429 tối đa 2 lần (cấu hình `ZALO_NLU_MAX_RETRIES=0..3`); chờ theo `Retry-After` hoặc tăng từ 1 giây, trong cùng timeout. Không tự đổi model. Mặc định yêu cầu JSON Schema; endpoint chỉ hỗ trợ JSON dùng `ZALO_NLU_RESPONSE_FORMAT=json_object`. Cả hai đều kiểm tra cấu trúc và nguồn thông tin ở code. Lỗi mạng, timeout, hết hạn mức hoặc model không tương thích: gợi ý dùng lệnh.
+- Giới hạn bổ sung: 2.000 ký tự đầu vào (quá giới hạn thì yêu cầu dùng lệnh, không cắt nội dung), 10 lượt/người/phút, 60 lượt/toàn bot/phút, timeout cấu hình 3–30 giây. Sau lỗi HTTP không khôi phục được tạm ngừng phân loại ít nhất 60 giây, có thể lâu hơn theo `Retry-After`. Bộ đếm trong bộ nhớ được đặt lại sau khởi động. `ZALO_NLU_MAX_TOKENS` mặc định 2.048; tham số suy nghĩ chỉ gửi nếu cấu hình `ZALO_NLU_THINKING=enabled/disabled` và endpoint hỗ trợ.
 - Báo cáo thử nghiệm có mục `nlu` (số lượt, lỗi, thời gian). Bước phân loại không lưu nội dung câu/đầu ra model trong log. Chi phí lượt phân loại chưa gộp vào chi phí hội thoại Hermes; xem Usage tại nhà cung cấp để biết tổng chi phí.
 
 ## Kiểm thử

@@ -1,4 +1,9 @@
 # Model tools remain disabled. The adapter handles explicit work commands.
+agent:
+  api_max_retries: 3
+  auto_recovery_cycles: 0
+model:
+  streaming: false
 platform_toolsets:
   zalo: []
   cli: []

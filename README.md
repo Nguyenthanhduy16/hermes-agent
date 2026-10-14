@@ -34,6 +34,8 @@ Ngày 06/10/2026: đã kiểm tra đọc thật 3 tab Lịch lab và lệnh `/li
 
 ## Chạy liên tục trên Railway
 
+**Model LiteLLM / DeepSeek Flash:** [cấu hình kết nối, giới hạn token và xử lý 429](docs/model-litellm.md). Khóa nằm trong Railway Variables; không đưa file bàn giao vào Git.
+
 Repo có Dockerfile, cấu hình Railway và mẫu biến môi trường. Xem [hướng dẫn deploy và chuyển dữ liệu Windows](docs/deploy-railway.md): dùng **một bot long polling + Volume `/data`**. Ngày 13/10/2026 đã build, chuyển dữ liệu và chạy trên Railway; người dùng xác nhận bot trả lời, nhận đúng thành viên đã đăng ký. Giữ bot Windows tắt khi Railway đang chạy. Chi phí Railway và AI phụ thuộc mức dùng. Bản triển khai hiện tại được tải từ mã cục bộ qua CLI; các thay đổi Docker/Railway chưa được commit/push lên GitHub.
 
 ## Trang Admin — Thành viên, Hội thoại & Ghi nhớ
