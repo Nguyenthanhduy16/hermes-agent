@@ -143,6 +143,30 @@ class AdminHttpTests(unittest.TestCase):
         with self.assertRaises(AdminError):
             guard()
 
+    def test_registration_reset_requires_members_csrf_confirmation_and_exact_payload(self):
+        path = '/api/member/registration/reset'
+        payload = dict(member_id=self.member.member_id, request_id=self.member.id, expected_revision=1,
+                       reason='Cho thành viên đăng ký lại đúng thông tin', confirm=True)
+        self.members.reset_registration = AsyncMock(return_value={'ok': True, 'status': 'reset'})
+        anonymous = self.client()
+        reader = self.client(['conversations'], 'reader')
+        operator = self.client(['members'])
+        for client, status in ((anonymous,401),(reader,403)):
+            self.assertEqual(status,self.request('POST',path,client=client,data=payload)[0])
+        for options in ({'csrf':False},{'origin':'https://untrusted.invalid'}):
+            self.assertEqual(403,self.request('POST',path,client=operator,data=payload,**options)[0])
+        for data in ({},dict(payload,confirm=False),dict(payload,user_id='other-user')):
+            self.assertEqual(400,self.request('POST',path,client=operator,data=data)[0])
+        self.assertEqual(400,self.request('POST',path+'?extra=1',client=operator,data=payload)[0])
+        self.members.reset_registration.assert_not_awaited()
+        self.assertEqual(200,self.request('POST',path,client=operator,data=payload)[0])
+        call=self.members.reset_registration.await_args
+        self.assertEqual((self.member.member_id,self.member.id,1,payload['reason'],'web:operator'),call.args)
+        self.assertTrue(call.kwargs['confirm'])
+        self.auth.create_account('operator',self.PASSWORD,[],replace=True)
+        with self.assertRaises(AdminError):
+            call.kwargs['authorize']()
+
     def test_password_change_checks_session_origin_csrf_and_clears_cookie(self):
         client = self.client([])
         payload = dict(current_password=self.PASSWORD, new_password='Synthetic-new-password-123',

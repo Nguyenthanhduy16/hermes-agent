@@ -66,6 +66,51 @@ class ManagedIssueTests(unittest.TestCase):
         with self.assertRaises(IssueError):
             self.draft(member='different-person')
 
+    def test_registration_reset_cancels_only_exact_private_drafts_and_preserves_issues(self):
+        old = self.draft()
+        others = [(message(user='u2', mid='other-user'), 'member-1'),
+                  (message(chat='dm2', mid='other-chat'), 'member-1'),
+                  (message(mid='other-member'), 'member-2'),
+                  (message(kind='GROUP', mid='group'), 'member-1')]
+        kept = [(self.draft(event, member), event, member) for event, member in others]
+        issued = self.issue(message(mid='issued'))
+        self.assertEqual({'drafts': 1, 'notifications': 0}, self.store.detach_registration('member-1', 'u1', 'dm1'))
+        self.assertEqual({'drafts': 0, 'notifications': 0}, self.store.detach_registration('member-1', 'u1', 'dm1'))
+        reopened = ManagedIssueStore(self.path, clock=lambda: self.now)
+        try:
+            with self.assertRaises(IssueError):
+                reopened.confirm(old['id'], message(), 'member-1', access_guard=lambda: True)
+            self.assertEqual('cancelled', reopened.create(message(), 'member-1', old['title'], old['body'],
+                                                        access_guard=lambda: True)['status'])
+            self.assertEqual(issued['id'], reopened.member_detail(issued['id'], 'member-1')['id'])
+            for draft, event, member in kept:
+                self.assertTrue(reopened.confirm(draft['id'], event, member, access_guard=lambda: True)['id'])
+        finally:
+            reopened.close()
+
+    def test_registration_reset_blocks_unsent_notices_and_keeps_partial_send_uncertain(self):
+        identities = {}
+        for index, status in enumerate(('pending', 'failed', 'sending', 'sent', 'uncertain', 'blocked')):
+            issue = self.issue(message(mid=f'notice-{index}'))
+            self.action(issue, 'claim')
+            notice = self.store.db.execute('SELECT id FROM managed_issue_outbox WHERE issue_id=?', (issue['id'],)).fetchone()[0]
+            with self.store.transaction() as db:
+                db.execute('UPDATE managed_issue_outbox SET status=? WHERE id=?', (status, notice))
+            identities[status] = notice
+        other_issue = self.issue(message(user='u2', chat='dm2', mid='other-notice'), member='member-2')
+        self.action(other_issue, 'claim')
+        self.assertEqual({'drafts': 0, 'notifications': 3}, self.store.detach_registration('member-1', 'u1', 'dm1'))
+        for before, identity in identities.items():
+            current = self.store.db.execute('SELECT status FROM managed_issue_outbox WHERE id=?', (identity,)).fetchone()[0]
+            self.assertEqual({'pending': 'blocked', 'failed': 'blocked', 'sending': 'uncertain'}.get(before, before), current)
+            self.assertFalse(self.store.notification_delivery_current(identity))
+        self.assertFalse(self.store.finish_notification(identities['sending'], 'sent'))
+        with self.assertRaises(IssueError):
+            self.store.retry_notification(identities['failed'], ADMIN)
+        remaining = self.store.claim_notification(lambda notice: True)
+        self.assertEqual(other_issue['id'], remaining['issue_id'])
+        self.assertTrue(self.store.notification_delivery_current(remaining['id']))
+
     def test_confirm_and_cancel_require_same_user_member_chat_type(self):
         draft = self.draft(message(chat='group', kind='GROUP'))
         for event, member in ((message(user='u2', chat='group', kind='GROUP'), 'member-1'),

@@ -437,7 +437,7 @@ class ConversationStore:
         result['payload'] = self._payload(result['summary'], result['messages'], result['memories'])
         return result
 
-    def detach_registration_context(self, user_id, old_member_id, actor):
+    def detach_registration_context(self, user_id, old_member_id, actor, *, stop_personal=False):
         """Discard usable route context before an authorized identity correction.
 
         The caller must hold the registration/route mutation guards until its
@@ -445,11 +445,16 @@ class ConversationStore:
         never attaches the proposed replacement identity. A failed correction
         may therefore lose usable context, but cannot disclose another member's
         memories. Historical messages and personal memories keep their original
-        member IDs. A later admitted message establishes the current identity.
+        member IDs. A registration reset also stops personal memories so that a
+        new request reusing the same fixed member ID cannot revive old context.
+        Corrections keep their existing behavior unless stop_personal is true.
+        A later admitted message establishes the current identity.
         """
         user_id = _bounded(user_id, 'Tài khoản Zalo')
         old_member_id = _bounded(old_member_id, 'Mã thành viên')
         actor = _bounded(actor, 'Người thực hiện')
+        if type(stop_personal) is not bool:
+            raise ConversationError('Lựa chọn ngừng ghi nhớ chưa hợp lệ.')
         if ':' in user_id:
             raise ConversationError('Tài khoản Zalo không hợp lệ.')
         changed_sessions, stopped_memories = 0, 0
@@ -484,6 +489,18 @@ class ConversationStore:
                             details={'before_revision': row['revision'], 'after_revision': row['revision'] + 1,
                                      'cutoff': cutoff, 'stopped_memories': len(memories)})
                 changed_sessions += 1
+                stopped_memories += len(memories)
+            if stop_personal:
+                memories = self.db.execute("SELECT * FROM conversation_memories WHERE scope='personal' "
+                                           'AND member_id=? AND active=1', (old_member_id,)).fetchall()
+                for memory in memories:
+                    self.db.execute('UPDATE conversation_memories SET active=0,revision=revision+1,updated=? WHERE id=?',
+                                    (self.clock(), memory['id']))
+                    after = dict(self.db.execute('SELECT * FROM conversation_memories WHERE id=?', (memory['id'],)).fetchone())
+                    self._version(after, actor)
+                    self._audit(actor, 'memory_stopped_registration_reset', member_id=old_member_id,
+                                session_key=memory['session_key'], target_id=memory['id'],
+                                details={'before': self._memory_snapshot(memory), 'after': self._memory_snapshot(after)})
                 stopped_memories += len(memories)
         return {'sessions': changed_sessions, 'stopped_memories': stopped_memories}
 

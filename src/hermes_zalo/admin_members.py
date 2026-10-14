@@ -85,7 +85,7 @@ class MemberAdmin:
 
     async def list_members(self, query='', status='', link='', page=1, limit=20):
         self._page(page, limit)
-        if not isinstance(query, str) or len(query) > 160 or status not in ('', 'pending', 'approved', 'rejected', 'revoked', 'locked'):
+        if not isinstance(query, str) or len(query) > 160 or status not in ('', 'pending', 'approved', 'rejected', 'revoked', 'reset', 'locked'):
             raise AdminMemberError('Bộ lọc thành viên chưa hợp lệ.')
         if link not in ('', 'linked', 'missing', 'conflict', 'disabled'):
             raise AdminMemberError('Bộ lọc liên kết chưa hợp lệ.')
@@ -94,6 +94,8 @@ class MemberAdmin:
             with chat.store.lock if chat else nullcontext():
                 result = []
                 for record in self.flow.store.latest_members():
+                    if not status and record.status == 'reset':
+                        continue
                     item = self._basic(record) | self._local_link(chat, record)
                     if query and normalized(query) not in normalized(record.name + ' ' + record.member_id):
                         continue
@@ -428,6 +430,99 @@ class MemberAdmin:
                     raise AdminMemberError(str(error)) from None
         return self._basic(result) | dict(ok=True, message='Đã sửa đăng ký thành công: ' + result.name +
                 '. Thành viên có thể gửi /dangky trangthai, /lichcuatoi hoặc /doica; không cần đăng ký lại.')
+
+    def _reset_tickets_snapshot(self, chat, record):
+        """Inspect only local ownership and open work; roster reads are unnecessary.
+
+        A reset must work when the phone/name in Workload was corrected. It
+        removes a route, never grants or selects a replacement person.
+        """
+        if chat is None:
+            if (str(getattr(self.work, '_tickets_values', {}).get('TICKETS_CHAT_MODE') or 'off').lower() != 'off' or
+                    getattr(self.work, '_tickets_error', False)):
+                raise AdminMemberError('Đổi ca đang bật nhưng chưa kiểm tra được liên kết. Thử lại sau.')
+            return None
+        db = chat.store.db
+        bindings = [dict(row) for row in db.execute(
+            'SELECT * FROM ticket_zalo_bindings WHERE bot=? AND (user_id=? OR chat_id=?) ORDER BY account',
+            (chat.bot_scope, record.user_id, record.chat_id))]
+        if any(row['user_id'] != record.user_id or row['chat_id'] != record.chat_id for row in bindings):
+            raise AdminMemberError('Liên kết chat đang xung đột với tài khoản khác; cần kiểm tra trước khi xóa đăng ký.')
+        if any(row['role'] != 'member' for row in bindings):
+            raise AdminMemberError('Liên kết có quyền quản trị; cần người vận hành kiểm tra riêng.')
+        links = []
+        if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='ticket_registration_links'").fetchone():
+            links = [dict(row) for row in db.execute(
+                'SELECT * FROM ticket_registration_links WHERE bot=? AND member_id=?',
+                (chat.bot_scope, record.member_id))]
+            if any(row['registration_id'] != record.id for row in links):
+                raise AdminMemberError('Liên kết đổi ca thuộc đăng ký khác; tải lại và kiểm tra trước khi xóa.')
+        accounts = {row['account'] for row in bindings + links}
+        names = [dict(row) for row in db.execute('SELECT id,member_id FROM ticket_accounts WHERE name=?', (record.name,))]
+        # A legacy account may exist without a route. Its outstanding work must
+        # still be resolved, but the reset never changes its account or owners.
+        accounts.update(row['id'] for row in names)
+        members = {row['member_id'] for row in bindings + names}
+        for link in links:
+            owner = db.execute('SELECT user_id,chat_id,role FROM ticket_zalo_bindings WHERE bot=? AND account=?',
+                               (chat.bot_scope, link['account'])).fetchone()
+            if owner and (owner['user_id'] != record.user_id or owner['chat_id'] != record.chat_id or owner['role'] != 'member'):
+                raise AdminMemberError('Liên kết đổi ca đang thuộc tài khoản khác; chưa xóa đăng ký.')
+            account = db.execute('SELECT member_id,role FROM ticket_accounts WHERE id=?', (link['account'],)).fetchone()
+            if account:
+                if account['role'] != 'member':
+                    raise AdminMemberError('Liên kết có quyền quản trị; cần người vận hành kiểm tra riêng.')
+                members.add(account['member_id'])
+        for ticket in db.execute('SELECT creator,recipient,body FROM exchange_tickets WHERE status IN (?,?,?,?)', ACTIVE):
+            body = json.loads(ticket['body'])
+            if (ticket['creator'] in accounts or ticket['recipient'] in members or any(
+                    body.get(side, {}).get('member_id') in members for side in ('a', 'b'))):
+                raise AdminMemberError('Còn yêu cầu đổi ca đang xử lý. Hoàn tất hoặc hủy yêu cầu trước khi xóa đăng ký.')
+        return dict(bindings=bindings, links=links)
+
+    async def reset_registration(self, member_id, request_id, expected_revision, reason, actor, *, confirm=False, authorize=None):
+        """Withdraw this enrollment, keeping a tombstone until a fresh DM request.
+
+        Cleanup only removes capabilities and completes before the final store
+        transaction. No await between cleanup and commit: stale model turns or
+        background deliveries cannot inherit a newly registered identity.
+        """
+        self._actor(actor)
+        if (confirm is not True or type(expected_revision) is not int or expected_revision < 0 or
+                not isinstance(request_id, str) or not re.fullmatch(r'DK-[A-F0-9]{8}', request_id)):
+            raise AdminMemberError('Cần xác nhận đúng đăng ký và phiên bản thông tin đang xem.')
+        record = self._record(member_id)
+        if record.id != request_id:
+            raise AdminMemberError('Đăng ký vừa thay đổi; tải lại trước khi xóa.')
+        chat = await self._chat()
+        store = self.flow.store
+        with chat.store.lock if chat else nullcontext():
+            with store.lock:
+                if authorize:
+                    authorize()
+                try:
+                    reason = store._correction_actor_reason(actor, reason)
+                    snapshot = store.reset_snapshot(record)
+                    if store.member_control(member_id)['revision'] != expected_revision:
+                        raise AdminMemberError('Thông tin vừa được cập nhật; tải lại trước khi xóa.')
+                    self._reset_tickets_snapshot(chat, record)
+                    self.work.reminders.detach_registration(record.user_id)
+                    self.work.issues.detach_registration(record.user_id)
+                    self.work._managed_issue_store.detach_registration(record.member_id, record.user_id, record.chat_id)
+                    if self.conversations is not None:
+                        self.conversations.detach_registration_context(record.user_id, record.member_id, actor, stop_personal=True)
+                    if chat:
+                        with chat.store.transaction() as db:
+                            db.execute('DELETE FROM ticket_zalo_bindings WHERE bot=? AND user_id=? AND chat_id=?',
+                                       (chat.bot_scope, record.user_id, record.chat_id))
+                            if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='ticket_registration_links'").fetchone():
+                                db.execute('DELETE FROM ticket_registration_links WHERE bot=? AND member_id=? AND registration_id=?',
+                                           (chat.bot_scope, record.member_id, record.id))
+                    result = store.reset_registration(actor, record, snapshot, reason)
+                except RegistrationError as error:
+                    raise AdminMemberError(str(error)) from None
+        return self._basic(result) | dict(ok=True, message='Đã xóa đăng ký. Thành viên nhắn riêng bot: '
+            '/dangky SỐ_ĐIỆN_THOẠI, dùng số hiện tại trên Workload để đăng ký lại.')
 
     async def audit(self, member_id, page=1, limit=20):
         self._record(member_id)

@@ -239,8 +239,11 @@ class ZaloAdapter(BasePlatformAdapter):
         return None
 
     def _registration_turn_identity(self, message):
+        return self._registration_delivery_identity(message.user_id)
+
+    def _registration_delivery_identity(self, user_id):
         registration = getattr(self.work, 'registration', None)
-        record = registration.identity(message.user_id) if registration else None
+        record = registration.identity(user_id) if registration else None
         return (getattr(record, 'member_id', None), getattr(record, 'id', None))
 
     def _registration_turn_changed(self, permit):
@@ -441,28 +444,36 @@ class ZaloAdapter(BasePlatformAdapter):
                 break
             # User/chat IDs originate from administrator-verified DM bindings.
             # This separate transport path is not available to Hermes/model sends.
-            delivery_allowed = getattr(self.work, 'ticket_delivery_allowed', None)
-            if delivery_allowed is not None:
-                authorized = delivery_allowed(notice['user_id'], notice['chat_id'])
-            else:
-                authorized = (notice['user_id'] in self.settings.allowed_users and not
+            def authorized():
+                delivery_allowed = getattr(self.work, 'ticket_delivery_allowed', None)
+                if delivery_allowed is not None:
+                    return delivery_allowed(notice['user_id'], notice['chat_id'])
+                return (notice['user_id'] in self.settings.allowed_users and not
                     getattr(self.work, 'background_registration_blocked', lambda *args: False)(
                         notice['user_id'], notice['chat_id']))
-            if not authorized:
+            grant = self._registration_delivery_identity(notice['user_id'])
+            if not authorized():
                 await self.work.finish_ticket_notification(notice['id'], 'blocked')
                 continue
-            started = time.monotonic()
+            started, sent_chunks = time.monotonic(), 0
+            status = 'sent'
             try:
                 for chunk in split_text(notice['text']):
+                    # A reset/re-registration can keep the same member and DM,
+                    # but it is a new grant. Stop the old in-flight notice.
+                    if (not authorized() or
+                            self._registration_delivery_identity(notice['user_id']) != grant):
+                        status = 'uncertain' if sent_chunks else 'blocked'
+                        break
                     await self.client.send_text_chunk(notice['chat_id'], chunk)
-                status = 'sent'
+                    sent_chunks += 1
             except AuthenticationError:
-                status = 'failed'
+                status = 'uncertain' if sent_chunks else 'failed'
                 self._set_fatal_error('zalo_auth', 'Token rejected when delivering ticket notification.', retryable=False)
             except DeliveryUncertain:
                 status = 'uncertain'
             except ZaloAPIError:
-                status = 'failed'
+                status = 'uncertain' if sent_chunks else 'failed'
             except BaseException:
                 await self.work.finish_ticket_notification(notice['id'], 'uncertain')
                 raise
@@ -496,13 +507,16 @@ class ZaloAdapter(BasePlatformAdapter):
                 break
             started, sent_chunks = time.monotonic(), 0
             status, error_code = 'sent', ''
+            grant = self._registration_delivery_identity(notice['user_id'])
             try:
                 for chunk in split_text(notice['text']):
                     # No allowlist fallback: the current stable member, Zalo
                     # account and authorized private route must all still match.
                     # Recheck after every await, so locking/rebinding a member
                     # stops later chunks without replaying the earlier ones.
-                    if notice.get('chat_type') != 'PRIVATE' or not self.work.issue_delivery_allowed(notice):
+                    if (notice.get('chat_type') != 'PRIVATE' or not self.work.issue_delivery_allowed(notice)
+                            or self._registration_delivery_identity(notice['user_id']) != grant
+                            or not store.notification_delivery_current(notice['id'])):
                         status = 'uncertain' if sent_chunks else 'blocked'
                         error_code = 'access_revoked'
                         break

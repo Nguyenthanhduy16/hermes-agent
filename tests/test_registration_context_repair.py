@@ -127,6 +127,72 @@ class RegistrationContextRepairTests(unittest.TestCase):
             with self.subTest(args=args), self.assertRaises(ConversationError):
                 self.store.detach_registration_context(*args)
 
+    def test_reset_stops_personal_memories_and_preserves_history_shared_and_other_member_data(self):
+        message, source = self.turn('Tin trước khi xóa đăng ký')
+        personal = self.memory('Ghi nhớ riêng cũ', scope='personal', member_id='member-old', source_message_id=source['id'])
+        session = self.memory('Ghi nhớ phiên cũ', scope='session', session_key=message.session_key)
+        other = self.memory('Ghi nhớ người khác', scope='personal', member_id='member-other')
+        shared = self.memory('Thông tin nhóm', scope='group', group_id='group', confirm_shared=True)
+        history = self.store.history()['items']
+
+        result = self.store.detach_registration_context('u', 'member-old', 'web:admin', stop_personal=True)
+
+        self.assertEqual({'sessions': 1, 'stopped_memories': 2}, result)
+        self.assertEqual(history, self.store.history()['items'])
+        memories = {item['id']: item for item in self.store.list_memories()['items']}
+        for stopped in (personal, session):
+            self.assertFalse(memories[stopped['id']]['active'])
+            self.assertEqual(stopped['revision'] + 1, memories[stopped['id']]['revision'])
+            self.assertEqual(2, len(self.store.memory_versions(stopped['id'])['items']))
+        for unchanged in (other, shared):
+            self.assertEqual(unchanged, memories[unchanged['id']])
+        self.assertEqual(1, len([item for item in self.store.audit()['items']
+                                 if item['action'] == 'memory_stopped_registration_reset']))
+        # Registering again with the same Workload phone preserves member_id,
+        # but must not re-use its old summary, messages or personal memories.
+        new, _ = self.turn('Tin sau đăng ký lại')
+        context = self.store.context(new.session_key)
+        self.assertEqual([], context['included_memory_ids'])
+        self.assertEqual(['Tin sau đăng ký lại', 'Trả lời: Tin sau đăng ký lại'],
+                         [item['body'] for item in context['messages']])
+
+    def test_reset_stops_personal_memories_without_existing_session_and_is_idempotent_after_restart(self):
+        memory = self.memory('Ghi nhớ đã nhập bởi Admin', scope='personal', member_id='member-old')
+        self.assertEqual({'sessions': 0, 'stopped_memories': 1},
+                         self.store.detach_registration_context('u', 'member-old', 'web:admin', stop_personal=True))
+        before = (self.store.list_memories(), self.store.memory_versions(memory['id']), self.store.audit())
+        self.store.close()
+        self.store = ConversationStore(self.path)
+        self.assertEqual({'sessions': 0, 'stopped_memories': 0},
+                         self.store.detach_registration_context('u', 'member-old', 'web:admin', stop_personal=True))
+        self.assertEqual(before, (self.store.list_memories(), self.store.memory_versions(memory['id']), self.store.audit()))
+
+    def test_personal_reset_failure_rolls_back_already_detached_session_memory_and_history(self):
+        message, _ = self.turn('Tin cũ')
+        session = self.memory('Ghi nhớ phiên', scope='session', session_key=message.session_key)
+        personal = self.memory('Ghi nhớ riêng', scope='personal', member_id='member-old')
+        snapshot = lambda: (self.store.sessions(), self.store.list_memories(), self.store.history(), self.store.audit(),
+                            self.store.memory_versions(session['id']), self.store.memory_versions(personal['id']))
+        before = snapshot()
+        audit = self.store._audit
+        def fail_personal(actor, action, **kwargs):
+            if action == 'memory_stopped_registration_reset':
+                raise RuntimeError('synthetic personal reset failure')
+            return audit(actor, action, **kwargs)
+        with patch.object(self.store, '_audit', side_effect=fail_personal):
+            with self.assertRaises(RuntimeError):
+                self.store.detach_registration_context('u', 'member-old', 'web:admin', stop_personal=True)
+        self.assertEqual(before, snapshot())
+
+    def test_reset_rejects_ambiguous_personal_memory_flag_without_mutation(self):
+        self.turn('Tin cũ')
+        self.memory('Ghi nhớ riêng', scope='personal', member_id='member-old')
+        before = (self.store.sessions(), self.store.list_memories(), self.store.audit())
+        for flag in (None, 1, 'true', 'false'):
+            with self.subTest(flag=flag), self.assertRaises(ConversationError):
+                self.store.detach_registration_context('u', 'member-old', 'web:admin', stop_personal=flag)
+        self.assertEqual(before, (self.store.sessions(), self.store.list_memories(), self.store.audit()))
+
 
 if __name__ == '__main__':
     unittest.main()

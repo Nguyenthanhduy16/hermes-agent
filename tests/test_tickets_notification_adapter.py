@@ -140,6 +140,34 @@ class TicketNotificationAdapterTests(unittest.IsolatedAsyncioTestCase):
         await self.adapter._deliver_ticket_notifications()
         self.assertEqual(2, self.adapter.client.send_text_chunk.await_count)
 
+    async def test_lock_between_chunks_stops_ticket_notice(self):
+        self.set_queue(notice(text='a' * 4500))
+        allowed = True
+        self.work.ticket_delivery_allowed = lambda user, chat: allowed
+        async def send_then_lock(chat, text):
+            nonlocal allowed
+            allowed = False
+            return {'message_id': 'first'}
+        self.adapter.client.send_text_chunk.side_effect = send_then_lock
+        await self.adapter._deliver_ticket_notifications()
+        self.assertEqual(1, self.adapter.client.send_text_chunk.await_count)
+        self.assertEqual([('notice-1', 'uncertain')], self.work.finished)
+
+    async def test_reset_and_same_member_reregister_stops_ticket_notice(self):
+        self.set_queue(notice(text='a' * 4500))
+        grant = SimpleNamespace(member_id='member-b', id='DK-OLD')
+        self.work.registration = SimpleNamespace(identity=lambda user: grant)
+        self.work.ticket_delivery_allowed = lambda user, chat: True
+        async def send_then_reregister(chat, text):
+            grant.id = 'DK-NEW'
+            return {'message_id': 'first'}
+        self.adapter.client.send_text_chunk.side_effect = send_then_reregister
+        await self.adapter._deliver_ticket_notifications()
+        self.assertEqual(1, self.adapter.client.send_text_chunk.await_count)
+        self.assertEqual([('notice-1', 'uncertain')], self.work.finished)
+        await self.adapter._deliver_ticket_notifications()
+        self.assertEqual(1, self.adapter.client.send_text_chunk.await_count)
+
     async def test_partial_send_stops_before_confirmation_commands_in_later_chunks(self):
         self.set_queue(notice(text=('Nội dung đối chiếu lịch 🚀.\n' * 250) + '\n/dongy 2345\n/tuchoi 2345'))
         self.adapter.client.send_text_chunk.side_effect = [{'message_id': 'first-chunk'}, DeliveryUncertain()]

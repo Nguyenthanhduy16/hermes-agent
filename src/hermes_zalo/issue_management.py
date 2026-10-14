@@ -131,6 +131,38 @@ class ManagedIssueStore:
         with self.transaction() as db:
             db.execute("UPDATE managed_issue_outbox SET status='uncertain',error_code='interrupted',updated=? WHERE status='sending'", (self.clock(),))
 
+    def detach_registration(self, member_id, user_id, chat_id):
+        """Retire unfinished actions for one verified private registration.
+
+        The caller holds the registration mutation guard. Keep issued Issues
+        and their ownership/history; a later registration must not revive a
+        previously prepared confirmation or an unsent old notification.
+        """
+        member_id = _member(member_id)
+        user_id = _text(user_id, 'Tài khoản Zalo', 200)
+        chat_id = _text(chat_id, 'Cuộc trò chuyện riêng', 200)
+        scope = (member_id, user_id, chat_id)
+        with self.transaction() as db:
+            drafts = db.execute("UPDATE managed_issue_drafts SET status='cancelled' "
+                                "WHERE member_id=? AND user_id=? AND chat_id=? AND chat_type='PRIVATE' AND status='draft'",
+                                scope).rowcount
+            notices = db.execute("SELECT id,issue_id,status FROM managed_issue_outbox "
+                                 "WHERE member_id=? AND user_id=? AND chat_id=? AND chat_type='PRIVATE' "
+                                 "AND status IN ('pending','failed','sending')", scope).fetchall()
+            for notice in notices:
+                status = 'uncertain' if notice['status'] == 'sending' else 'blocked'
+                db.execute("UPDATE managed_issue_outbox SET status=?,error_code='access_revoked',updated=? WHERE id=?",
+                           (status, self.clock(), notice['id']))
+                self._audit(db, self._row(db, notice['issue_id']), 'system:registration-reset',
+                            'notification_registration_reset', {'notification_id': notice['id'], 'status': status}, self.clock())
+        return {'drafts': drafts, 'notifications': len(notices)}
+
+    def notification_delivery_current(self, identity):
+        """A detached in-flight notification may not continue after an await."""
+        with self.lock:
+            return bool(self.db.execute("SELECT 1 FROM managed_issue_outbox WHERE id=? AND status='sending'",
+                                        (identity,)).fetchone())
+
     def create(self, message, member_id, title, body, kind='support', *, access_guard=None, now=None):
         _allowed(access_guard)
         member_id = _member(member_id)

@@ -186,6 +186,13 @@ class AdminApplication:
                     raise AdminError('Cần xác nhận đã kiểm tra đúng chủ tài khoản.')
                 return await self.members.confirm_registration(data['preview_token'], actor,
                     authorize=lambda: self.auth.user(session, 'members'))
+            if method == 'POST' and path == '/api/member/registration/reset':
+                if (query or set(data) != {'member_id', 'request_id', 'expected_revision', 'reason', 'confirm'} or
+                        data['confirm'] is not True):
+                    raise AdminError('Cần xác nhận đúng đăng ký muốn xóa.')
+                return await self.members.reset_registration(data['member_id'], data['request_id'],
+                    data['expected_revision'], data['reason'], actor, confirm=True,
+                    authorize=lambda: self.auth.user(session, 'members'))
         if path in ('/api/sessions', '/api/history', '/api/context', '/api/context/reset', '/api/context/rebuild'):
             self.auth.user(session, 'conversations')
             if method == 'GET' and path == '/api/sessions':

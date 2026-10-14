@@ -108,6 +108,8 @@ Quản trị dùng `/thanhvien` trong chat riêng để tìm thành viên đã d
 
 Giữ `REGISTRATION_AUTO_APPROVE=true`: thành viên mới có số khớp duy nhất vẫn đăng ký tự động. Không cần Admin duyệt từng người. Nếu tin “Đăng ký thành công” hiện sai tên, thành viên dừng dùng lịch cá nhân/đổi ca và báo Admin; không thử số của người khác.
 
+**Muốn thành viên tự đăng ký lại:** Admin có quyền `members` mở **Thành viên → hồ sơ → Xóa đăng ký**, kiểm tra tên/số đã che, nhập lý do rồi tích xác nhận. Sau khi báo thành công, thành viên nhắn riêng `/dangky SỐ_ĐIỆN_THOẠI` dùng số hiện có trên Workload và kiểm tra lại họ tên. Quyền cũ bị thu hồi; liên kết chat riêng/Tickets cũ được gỡ, ngữ cảnh được làm mới và ghi nhớ cá nhân cũ ngừng dùng. Lịch, Workload, lịch sử và issue vẫn được giữ. Hồ sơ cũ có trạng thái **Đã xóa đăng ký**; xem lại bằng bộ lọc cùng tên. Thành viên bị khóa hoặc có đổi ca chưa kết thúc cần xử lý trước; thao tác này không vượt khóa hoặc ghi đè đăng ký của người khác.
+
 **Đúng người đã đăng ký nhưng liên kết Tickets sai:** Admin có quyền `members` mở **Thành viên** → tìm người → xem chi tiết → chọn liên kết hệ thống đã đối chiếu → xem trước → xác nhận. Có thể khóa quyền trong lúc kiểm tra, rồi mở lại sau khi xử lý. Thao tác này chỉ sửa liên kết nội bộ; không đổi danh tính đăng ký hoặc ô lịch thật. Tên trùng, tài khoản đích thuộc người khác hoặc còn yêu cầu đổi ca liên quan thì hệ thống chặn; xử lý đúng nguyên nhân trước, không ghi đè.
 
 **Đã đăng ký nhầm sang người khác:** Admin có quyền `members` có thể xử lý ngay trên trang Admin:

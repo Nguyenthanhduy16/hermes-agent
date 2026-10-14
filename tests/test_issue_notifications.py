@@ -92,6 +92,30 @@ class IssueNotificationTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(IssueError):
             self.outbox.retry_notification(notice['id'], ACTOR)
 
+    async def test_reset_during_send_stops_old_notice_even_if_same_member_is_allowed_again(self):
+        self.notice('a' * 4500)
+        async def send_then_reset(chat, text):
+            self.outbox.detach_registration('member-a', 'u1', 'private-a')
+            self.allowed = True  # Same member immediately registers again.
+            return {'message_id': 'only-first'}
+        self.adapter.client.send_text_chunk.side_effect = send_then_reset
+        await self.adapter._deliver_issue_notifications()
+        self.assertEqual(1, self.adapter.client.send_text_chunk.await_count)
+        self.assertEqual('uncertain', self.row()['status'])
+        self.assertEqual('access_revoked', self.row()['error_code'])
+
+    async def test_new_registration_request_interrupts_old_issue_notification(self):
+        self.notice('a' * 4500)
+        grant = SimpleNamespace(member_id='member-a', id='DK-OLD')
+        self.adapter.work.registration = SimpleNamespace(identity=lambda user: grant)
+        async def send_then_reregister(chat, text):
+            grant.id = 'DK-NEW'
+            return {'message_id': 'only-first'}
+        self.adapter.client.send_text_chunk.side_effect = send_then_reregister
+        await self.adapter._deliver_issue_notifications()
+        self.assertEqual(1, self.adapter.client.send_text_chunk.await_count)
+        self.assertEqual('uncertain', self.row()['status'])
+
     async def test_explicit_first_chunk_rejection_is_failed_and_only_manual_retry_can_resume(self):
         notice = self.notice()
         self.adapter.client.send_text_chunk.side_effect = ZaloAPIError(code=429)

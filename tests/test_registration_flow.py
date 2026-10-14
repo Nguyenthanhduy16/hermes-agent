@@ -1,4 +1,5 @@
 """Private enrollment orchestration with fake Workload reads, never live APIs."""
+import asyncio
 from dataclasses import replace
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -235,6 +236,58 @@ class RegistrationFlowTests(unittest.IsolatedAsyncioTestCase):
             self.assertIsNone(flow.identity('new-user'))
         self.assertIn('giới hạn', await flow.handle(self.message('/dangky ' + self.directory.person.phone)))
         self.assertEqual(5, self.directory.lookup.await_count)
+
+    async def test_inflight_lookup_cannot_undo_admin_reset_without_a_fresh_message(self):
+        flow = self.open(values=self.values | {'REGISTRATION_AUTO_APPROVE': 'true'})
+        first = self.message('/dangky ' + self.directory.person.phone)
+        await flow.handle(first)
+        original = flow.approved(first)
+        entered, resume = asyncio.Event(), asyncio.Event()
+        async def delayed_lookup(phone):
+            entered.set()
+            await resume.wait()
+            return self.directory.person
+        self.directory.lookup.side_effect = delayed_lookup
+        old_turn = asyncio.create_task(flow.handle(self.message('/dangky ' + self.directory.person.phone)))
+        try:
+            await asyncio.wait_for(entered.wait(), 1)
+            flow.store.reset_registration('web:admin', original, flow.store.reset_snapshot(original),
+                                          'Thành viên cần đăng ký lại')
+        finally:
+            resume.set()
+        response = await old_turn
+        self.assertIn('tin nhắn mới', response)
+        self.assertNotIn(self.directory.person.phone, response)
+        self.assertEqual('reset', flow.store.user_state(first.user_id).status)
+        self.assertIsNone(flow.identity(first.user_id))
+        self.assertEqual(1, flow.store.db.execute('SELECT COUNT(*) FROM registration_requests').fetchone()[0])
+        self.directory.lookup.side_effect = self.directory._lookup
+        response = await flow.handle(self.message('/dangky ' + self.directory.person.phone))
+        self.assertIn('Đăng ký thành công', response)
+        self.assertNotEqual(original.id, flow.identity(first.user_id).id)
+
+    async def test_member_revision_change_during_lookup_requires_a_fresh_message(self):
+        flow = self.open(values=self.values | {'REGISTRATION_AUTO_APPROVE': 'true'})
+        first = self.message('/dangky ' + self.directory.person.phone)
+        await flow.handle(first)
+        original = flow.approved(first)
+        entered, resume = asyncio.Event(), asyncio.Event()
+        async def delayed_lookup(phone):
+            entered.set()
+            await resume.wait()
+            return self.directory.person
+        self.directory.lookup.side_effect = delayed_lookup
+        old_turn = asyncio.create_task(flow.handle(self.message('/dangky ' + self.directory.person.phone)))
+        try:
+            await asyncio.wait_for(entered.wait(), 1)
+            # An Admin edit may leave the registration record itself unchanged.
+            with flow.store._transaction() as db:
+                flow.store._bump_revision(db, original.member_id)
+        finally:
+            resume.set()
+        self.assertIn('tin nhắn mới', await old_turn)
+        self.assertEqual(original, flow.identity(first.user_id))
+        self.assertEqual(1, flow.store.db.execute('SELECT COUNT(*) FROM registration_receipts').fetchone()[0])
 
     async def test_pending_status_does_not_claim_auto_success_until_resubmitted(self):
         message, record, _ = await self.request()

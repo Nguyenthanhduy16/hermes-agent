@@ -119,13 +119,14 @@ test('route/method/query allowlist rejects open proxy, unknown endpoints and dup
   const { res, requests } = await call(incoming('/api/member/lock'));
   assert.equal(res.statusCode, 405);
   assert.equal(requests.length, 0);
-  assert.equal(Object.keys(ROUTES).length, 32);
+  assert.equal(Object.keys(ROUTES).length, 33);
 });
 
 test('registration repair stays on fixed POST routes with CSRF and no phone query', async () => {
   for (const [path, data] of [
     ['/api/member/registration/preview', { member_id: 'member-synthetic', phone: '0900000001', reason: 'Synthetic test' }],
     ['/api/member/registration/confirm', { preview_token: 'synthetic-preview', confirm: true }],
+    ['/api/member/registration/reset', { member_id: 'member-synthetic', request_id: 'DK-synthetic', expected_revision: 3, reason: 'Synthetic test', confirm: true }],
   ]) {
     const { res, requests } = await call(incoming(path, { method: 'POST', data, headers: { cookie: COOKIE } }));
     assert.equal(res.statusCode, 200);

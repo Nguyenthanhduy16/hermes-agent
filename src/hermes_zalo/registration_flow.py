@@ -99,6 +99,15 @@ class RegistrationFlow:
                     record.source_key != self.directory.source_key or
                     message.chat_type == 'PRIVATE' and record.chat_id != message.chat_id))
 
+    def _request_snapshot(self, message):
+        """Capture both route owners while the caller holds the store lock."""
+        user = self.store.user_state(message.user_id)
+        chat = self.store.db.execute('SELECT id,member_id,status,updated FROM registration_requests WHERE chat_id=? '
+                                     'ORDER BY created DESC,rowid DESC LIMIT 1', (message.chat_id,)).fetchone()
+        return (user, self.store.member_control(user.member_id)['revision'] if user else None,
+                tuple(chat) if chat else None,
+                self.store.member_control(chat['member_id'])['revision'] if chat else None)
+
     async def validate(self, record, *, require_unique_name=True):
         if not self.enabled or record is None or self.identity(record.user_id) != record:
             raise RegistrationError('Liên kết chưa được duyệt hoặc đã thay đổi; hãy xem /dangky trangthai.')
@@ -127,6 +136,10 @@ class RegistrationFlow:
                     'Đã có quyền thành viên: lịch, đổi ca, nhắc việc, góp ý và issue khi đã bật.\n'
                     'Đổi ca vẫn theo phạm vi lịch đang bật; tên trùng cần quản trị bổ sung ánh xạ.\n'
                     '/menu — các tính năng')
+        if record.status == 'reset':
+            return ('Đăng ký cũ đã được Admin xóa.\n'
+                    'Nhắn riêng: /dangky SỐ_ĐIỆN_THOẠI\n'
+                    'Dùng số điện thoại hiện tại trên Workload để đăng ký lại.')
         pending = ('Cần quản trị duyệt lại đăng ký từng bị từ chối hoặc thu hồi.' if manual_review else
                    'Đăng ký đang chờ; gửi lại /dangky SỐ_ĐIỆN_THOẠI để đối chiếu.' if self.auto_approve else
                    'Đang chờ quản trị xác minh và duyệt')
@@ -160,8 +173,17 @@ class RegistrationFlow:
                     return self.guide
                 self.store.check_attempt(message)
                 phone = normalize_phone(argument.strip())
+                with self.store.lock:
+                    before = self._request_snapshot(message)
                 person = await self.directory.lookup(phone)
-                record = self.store.request(message, person, auto_approve=self.auto_approve)
+                # Admin reset/correction/revocation can run during the network
+                # lookup. An older message must never undo that decision by
+                # becoming the fresh registration authorized after a reset.
+                with self.store.lock:
+                    if self._request_snapshot(message) != before:
+                        return ('Đăng ký vừa được cập nhật. Hãy gửi tin nhắn mới: '
+                                '/dangky SỐ_ĐIỆN_THOẠI, dùng số hiện tại trên Workload.')
+                    record = self.store.request(message, person, auto_approve=self.auto_approve)
                 return self._status(record, manual_review=self.auto_approve and record.status == 'pending')
             # Check admin before a network lookup or showing a pending record.
             if message.user_id not in self.store.admins or message.user_id not in self.settings.allowed_users:

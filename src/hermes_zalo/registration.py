@@ -193,17 +193,28 @@ class RegistrationStore:
             if not member:
                 db.execute('INSERT INTO registration_members VALUES (?,?,?)',
                            (member_id, person['source_key'], person['phone']))
+            reset_source = self._reset_route(db, message.user_id, message.chat_id)
             for _ in range(64):
                 request_id = 'DK-' + secrets.token_hex(4).upper()
                 if not db.execute('SELECT 1 FROM registration_requests WHERE id=?', (request_id,)).fetchone():
                     break
             else:
                 raise RegistrationError('Chưa cấp được mã đăng ký; vui lòng thử lại sau.')
-            now = self.clock()
+            # A reset must not hide its replacement if the host clock moved
+            # backwards. Request order is also used for admission and locks.
+            latest_created = db.execute('SELECT MAX(created) FROM registration_requests '
+                                        'WHERE user_id=? OR chat_id=? OR member_id=?',
+                                        (message.user_id, message.chat_id, member_id)).fetchone()[0] or 0
+            now = max(self.clock(), latest_created)
             db.execute('INSERT INTO registration_requests VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)',
                        (request_id, member_id, message.user_id, message.chat_id, person['phone'], person['name'],
                         person['source_key'], person['fingerprint'], int(person['name_unique']), 'pending', now, now, message_key))
             db.execute('INSERT INTO registration_receipts VALUES (?,?)', (message_key, request_id))
+            if reset_source:
+                db.execute('INSERT INTO registration_events(request_id,actor,action,at) VALUES (?,?,?,?)',
+                           (request_id, 'system:registration-reset', 'identity_reset_to', now))
+                self._audit_admin(db, member_id, 'system:registration-reset', 'identity_reset_to',
+                                  {'request_id': reset_source}, {'request_id': request_id, 'member_id': member_id})
             self._bump_revision(db, member_id)
             row = db.execute('SELECT * FROM registration_requests WHERE id=?', (request_id,)).fetchone()
             return self._finish_request(db, row, auto_approve)
@@ -213,14 +224,21 @@ class RegistrationStore:
 
         The flag is operator configuration, never a chat argument. Explicit
         administrator rejection/revocation still requires manual reapproval.
+        Only an explicit web-admin reset replaces that terminal decision with
+        ``reset``; receipts for the old request remain terminal forever.
         """
         if not auto_approve or row['status'] != 'pending':
             return self._record(row)
         for key in ('user_id', 'chat_id', 'member_id'):
             previous = db.execute(
-                f"SELECT status FROM registration_requests WHERE {key}=? AND status<>'pending' "
+                f"SELECT status,user_id,chat_id FROM registration_requests WHERE {key}=? AND status<>'pending' "
                 'ORDER BY updated DESC,rowid DESC LIMIT 1', (row[key],)).fetchone()
             if previous and previous['status'] in ('rejected', 'revoked'):
+                return self._record(row)
+            if previous and previous['status'] == 'reset' and (
+                    previous['user_id'] != row['user_id'] or previous['chat_id'] != row['chat_id']):
+                # An administrator resets the captured route, not a blanket
+                # permission for another Zalo account to take over its member.
                 return self._record(row)
         return self._decision(db, row, 'approved', 'system:workload-auto', action='auto_approved')
 
@@ -239,7 +257,7 @@ class RegistrationStore:
     def _locked_route(db, user_id, chat_id=None):
         # Historical routes stay blocked too: a new registration cannot bypass
         # a lock by selecting another phone or changing the private chat route.
-        # An explicitly confirmed administrator correction starts a new identity
+        # An explicitly confirmed administrator correction/reset starts a new identity
         # boundary. Locks on the wrong, revoked person must no longer affect the
         # corrected route. Ordinary revoke/re-register never creates this event,
         # and current or later member locks continue to apply independently to
@@ -249,7 +267,7 @@ class RegistrationStore:
                 SELECT COALESCE(MAX(CASE WHEN r.user_id=? THEN r.rowid END),0) AS user_boundary,
                        COALESCE(MAX(CASE WHEN r.chat_id=? THEN r.rowid END),0) AS chat_boundary
                 FROM registration_requests r JOIN registration_events e ON e.request_id=r.id
-                WHERE e.action='identity_corrected_to'
+                WHERE e.action IN ('identity_corrected_to','identity_reset_to')
             )
             SELECT 1 FROM registration_requests r JOIN registration_member_controls c ON c.member_id=r.member_id
                 CROSS JOIN correction_boundaries b
@@ -260,6 +278,17 @@ class RegistrationStore:
     def route_locked(self, user_id, chat_id=None):
         with self.lock:
             return self._locked_route(self.db, user_id, chat_id)
+
+    @staticmethod
+    def _reset_route(db, user_id, chat_id):
+        """A fresh message may replace an explicitly reset, unchanged DM route."""
+        user = db.execute('SELECT id,status,chat_id FROM registration_requests WHERE user_id=? '
+                          'ORDER BY created DESC,rowid DESC LIMIT 1', (user_id,)).fetchone()
+        if not user or user['status'] != 'reset' or user['chat_id'] != chat_id:
+            return None
+        chat = db.execute('SELECT id FROM registration_requests WHERE chat_id=? '
+                          'ORDER BY created DESC,rowid DESC LIMIT 1', (chat_id,)).fetchone()
+        return user['id'] if chat and chat['id'] == user['id'] else None
 
     def member_control(self, member_id):
         with self.lock:
@@ -349,6 +378,58 @@ class RegistrationStore:
         person = self._person(person)
         with self.lock:
             return self._correction_snapshot(self.db, record, person)
+
+    def _reset_snapshot(self, db, record):
+        if not isinstance(record, RegistrationRecord):
+            raise RegistrationError('Thông tin đăng ký cần xóa chưa hợp lệ.')
+        current = self._record(db.execute('SELECT * FROM registration_requests WHERE id=?', (record.id,)).fetchone())
+        if current != record or record.status not in ('pending', 'approved', 'rejected', 'revoked'):
+            raise RegistrationError('Đăng ký đã thay đổi hoặc đã xóa; tải lại trước khi thực hiện.')
+        for key in ('member_id', 'user_id', 'chat_id'):
+            latest = db.execute(f'SELECT id FROM registration_requests WHERE {key}=? '
+                                'ORDER BY created DESC,rowid DESC LIMIT 1', (getattr(record, key),)).fetchone()
+            if latest is None or latest['id'] != record.id:
+                raise RegistrationError('Tài khoản hoặc chat đã có đăng ký mới hơn; chưa xóa đăng ký.')
+        control = self.member_control(record.member_id)
+        if control['locked'] or self._locked_route(db, record.user_id, record.chat_id):
+            raise RegistrationError('Tài khoản đang bị khóa; cần quản trị kiểm tra và mở khóa trước khi xóa đăng ký.')
+        if db.execute("SELECT 1 FROM registration_requests WHERE id<>? AND status IN ('pending','approved') "
+                      'AND (user_id=? OR chat_id=? OR member_id=?)',
+                      (record.id, record.user_id, record.chat_id, record.member_id)).fetchone():
+            raise RegistrationError('Liên kết có đăng ký khác đang dùng; chưa xóa đăng ký.')
+        return dict(source_request_id=record.id, source_member_id=record.member_id, source_control=control,
+                    source_digest=hashlib.sha256(json.dumps(vars(record), sort_keys=True, ensure_ascii=False).encode()).hexdigest())
+
+    def reset_snapshot(self, record):
+        """Validate the exact current registration without disclosing its phone."""
+        with self.lock:
+            return self._reset_snapshot(self.db, record)
+
+    def reset_registration(self, actor, record, expected_snapshot, reason):
+        """Withdraw a registration and permit a fresh self-registration message.
+
+        The caller must authenticate members permission, clear ancillary
+        bindings/context while holding runtime locks, then run this transaction
+        last. This retains stable identities, history and message receipts; it
+        never grants access, removes Workload rows or changes administrator ACLs.
+        """
+        reason = self._correction_actor_reason(actor, reason)
+        if not isinstance(expected_snapshot, dict):
+            raise RegistrationError('Cần xem trước đăng ký trước khi xác nhận xóa.')
+        with self._transaction() as db:
+            if self._reset_snapshot(db, record) != expected_snapshot:
+                raise RegistrationError('Thông tin vừa được cập nhật; tải lại trước khi xóa đăng ký.')
+            now = max(self.clock(), record.created, record.updated)
+            db.execute("UPDATE registration_requests SET status='reset',updated=? WHERE id=?", (now, record.id))
+            db.execute('INSERT INTO registration_events(request_id,actor,action,at) VALUES (?,?,?,?)',
+                       (record.id, actor, 'registration_reset', now))
+            self._bump_revision(db, record.member_id)
+            self._audit_admin(db, record.member_id, actor, 'registration_reset',
+                              {'request_id': record.id, 'member_id': record.member_id,
+                               'phone_masked': '******' + record.phone[-4:], 'status': record.status},
+                              {'request_id': record.id, 'member_id': record.member_id,
+                               'status': 'reset', 'reason': reason})
+            return self._record(db.execute('SELECT * FROM registration_requests WHERE id=?', (record.id,)).fetchone())
 
     def correct_registration(self, actor, record, person, expected_snapshot, reason):
         """Atomically revoke a wrong identity and approve a new request for its route.
@@ -449,9 +530,10 @@ class RegistrationStore:
                 (source_key,))]
 
     def _decision(self, db, row, status, admin, *, action=None):
-        db.execute('UPDATE registration_requests SET status=?,updated=? WHERE id=?', (status, self.clock(), row['id']))
+        now = max(self.clock(), row['created'], row['updated'])
+        db.execute('UPDATE registration_requests SET status=?,updated=? WHERE id=?', (status, now, row['id']))
         db.execute('INSERT INTO registration_events(request_id,actor,action,at) VALUES (?,?,?,?)',
-                   (row['id'], admin, action or status, self.clock()))
+                   (row['id'], admin, action or status, now))
         self._bump_revision(db, row['member_id'])
         self._audit_admin(db, row['member_id'], admin, action or status,
                           {'status': row['status']}, {'status': status})
