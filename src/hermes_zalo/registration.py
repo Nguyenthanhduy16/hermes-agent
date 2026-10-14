@@ -239,10 +239,23 @@ class RegistrationStore:
     def _locked_route(db, user_id, chat_id=None):
         # Historical routes stay blocked too: a new registration cannot bypass
         # a lock by selecting another phone or changing the private chat route.
-        return bool(db.execute('SELECT 1 FROM registration_requests r JOIN registration_member_controls c '
-                               'ON c.member_id=r.member_id WHERE c.locked=1 AND '
-                               '(r.user_id=? OR (? IS NOT NULL AND r.chat_id=?)) LIMIT 1',
-                               (user_id, chat_id, chat_id)).fetchone())
+        # An explicitly confirmed administrator correction starts a new identity
+        # boundary. Locks on the wrong, revoked person must no longer affect the
+        # corrected route. Ordinary revoke/re-register never creates this event,
+        # and current or later member locks continue to apply independently to
+        # both the user and private-chat dimensions (including group admission).
+        return bool(db.execute('''
+            WITH correction_boundaries AS (
+                SELECT COALESCE(MAX(CASE WHEN r.user_id=? THEN r.rowid END),0) AS user_boundary,
+                       COALESCE(MAX(CASE WHEN r.chat_id=? THEN r.rowid END),0) AS chat_boundary
+                FROM registration_requests r JOIN registration_events e ON e.request_id=r.id
+                WHERE e.action='identity_corrected_to'
+            )
+            SELECT 1 FROM registration_requests r JOIN registration_member_controls c ON c.member_id=r.member_id
+                CROSS JOIN correction_boundaries b
+            WHERE c.locked=1 AND ((r.user_id=? AND r.rowid>=b.user_boundary)
+                OR (? IS NOT NULL AND r.chat_id=? AND r.rowid>=b.chat_boundary)) LIMIT 1
+            ''', (user_id, chat_id, user_id, chat_id, chat_id)).fetchone())
 
     def route_locked(self, user_id, chat_id=None):
         with self.lock:

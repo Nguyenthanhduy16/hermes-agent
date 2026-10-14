@@ -135,11 +135,11 @@ Các thay đổi đều có lịch sử người thực hiện, thời gian và 
 | Đổi ca | Tự có quyền thành viên; Tickets đã bật, đúng nguồn lịch và tên duy nhất; vẫn cần xác nhận đổi ca và các điều kiện của chế độ đang chạy |
 | Nhắc việc và thông báo | Tạo, xem, hủy nhắc của mình tại chat riêng đã liên kết; bot cần chạy để gửi đúng hạn |
 | Góp ý | Gửi `/phanhoi Nội dung`; lưu riêng trên máy bot |
-| Tạo issue | Tự có quyền thành viên khi `ZALO_ISSUES_ENABLED=true`, tab đích đúng cấu trúc và có quyền ghi Google; vẫn xem bản nháp rồi xác nhận |
+| Tạo issue | Nhắn riêng khi `ZALO_ISSUES_MODE=managed` đã được đối soát và bật; xem bản nháp rồi xác nhận. Issue lưu trong SQLite trên Railway, Admin xử lý trên Vercel |
 | Tài liệu | Chỉ các file đã cấp quyền riêng hoặc có `approved_members: true` trong manifest; tài liệu riêng không tự được mở |
 | Nhóm | Nhóm vẫn phải được cho phép; đăng ký riêng không mở quyền cho nhóm khác |
 
-Không cần thêm thành viên đã duyệt vào `ZALO_ALLOWED_USERS` hoặc `ZALO_SHEETS_USERS` để dùng các chức năng thành viên trong chat riêng. Các ID cũ vẫn giữ nguyên; `.env` tiếp tục cấu hình quản trị, nhóm, nguồn dữ liệu và các công tắc bật tính năng. Duyệt thành viên không cấp quyền quản trị hoặc mở tài liệu riêng. Issue hiện chưa bật, bảng hiện tại chưa có tab đích; cần [chuẩn bị một lần](lenh-zalo.md#tạo-issue) cho cả hệ thống.
+Không cần thêm thành viên đã duyệt vào `ZALO_ALLOWED_USERS` hoặc `ZALO_SHEETS_USERS` để dùng các chức năng thành viên trong chat riêng. Các ID cũ vẫn giữ nguyên; cấu hình trên Railway tiếp tục quản lý quản trị viên, nhóm, nguồn dữ liệu và các công tắc bật tính năng. Duyệt thành viên không cấp quyền quản trị hoặc mở tài liệu riêng. Chế độ Issue `managed` không cần tab Issues trên Sheets; xem [hướng dẫn Issue](ISSUES.md). `ZALO_ISSUES_ENABLED` chỉ điều khiển luồng Sheets cũ (`legacy`), không bật/tắt chế độ `managed`.
 
 **Người đã duyệt từ bản trước không phải đăng ký hay duyệt lại.** Cập nhật và khởi động lại bot một lần để nạp cơ chế mới; các lần duyệt/thu hồi sau có hiệu lực ngay. Không cần tự chuyển dữ liệu đăng ký. Khi mở Tickets ở chế độ mới, bot tự khôi phục liên kết của các thành viên đã duyệt sau khi đối chiếu nguồn; người đổi cùng không cần mở bot trước.
 
@@ -147,7 +147,7 @@ Không cần thêm thành viên đã duyệt vào `ZALO_ALLOWED_USERS` hoặc `Z
 
 Khi tính năng đăng ký đang bật, người đã có hồ sơ ở trạng thái **chờ duyệt, bị từ chối hoặc bị thu hồi** chỉ được dùng luồng đăng ký/xem trạng thái; các tính năng khác bị chặn dù ID vẫn nằm trong danh sách cấp quyền cũ. Lệnh quản trị đăng ký vẫn theo quyền quản trị riêng. Đăng ký lại sau khi thu hồi chưa mở quyền cho đến khi được duyệt lại.
 
-Danh tính đã duyệt được dùng trước hồ sơ tên tự khai. `/dangky Họ tên` hoặc xóa hồ sơ cũ không đổi người đã liên kết. Nếu cần sửa người/số điện thoại, quản trị thu hồi và xác minh lại; không mượn số của người khác.
+Danh tính đã duyệt được dùng trước hồ sơ tên tự khai. `/dangky Họ tên` hoặc xóa hồ sơ cũ không đổi người đã liên kết. Nếu đăng ký nhầm người, quản trị xác minh rồi dùng **Sửa đăng ký nhầm** theo hướng dẫn trên; không mượn số của người khác.
 
 Nếu hai người trùng toàn bộ họ tên, bot có thể lưu hai danh tính theo số điện thoại nhưng **chưa dùng tên đó để tra lịch cá nhân hoặc đổi ca**. Muốn phân biệt đúng lịch, mỗi người và từng phân công cần mã riêng trong dữ liệu; chỉ thêm hai mã vào danh bạ mà lịch vẫn ghi cùng một tên chưa đủ.
 
@@ -155,11 +155,12 @@ Khi `REGISTRATION_ENABLED=false`, luồng `/dangky Họ tên đầy đủ` cũ v
 
 ## Thử trước khi mở cho nhóm
 
-- Thành viên đăng ký riêng → ở trạng thái chờ chỉ xem/đăng ký, chưa dùng tính năng khác; thử cả người đã có allowlist trước đó.
+- Thành viên chưa đăng ký gọi `@Bot /menu` trong nhóm đã cấp quyền → nhận hướng dẫn đăng ký riêng bằng số hiện tại trên Workload, chưa được đọc dữ liệu nội bộ.
+- Thành viên nhắn riêng `/dangky SỐ_ĐIỆN_THOẠI` của mình → khi tự duyệt bật và khớp duy nhất, bot báo thành công và đúng tên. Hồ sơ chờ/từ chối/thu hồi vẫn bị giới hạn; thử cả người đã có allowlist trước đó.
 - Người không phải quản trị thử xem/duyệt → bị từ chối, không lộ danh sách.
-- Quản trị xác minh và duyệt → thành viên xem trạng thái, thử `/menu`, “Mai mình có ca nào?” và `/doica` tại đúng chat riêng, không sửa `.env` cho người đó.
+- Sau đăng ký thành công → thành viên xem `/dangky trangthai`, thử `/menu`, “Mai mình có ca nào?” và mở `/doica` tại đúng chat riêng, không sửa `.env` cho người đó. Chỉ gửi yêu cầu đổi ca khi đã thống nhất một lần thử có thay đổi lịch thật.
 - Người đã duyệt từ bản trước cũng đọc lịch được sau khi cập nhật/khởi động lại; tên trùng hoặc Workload thay đổi phải yêu cầu kiểm tra.
-- Thành viên đã duyệt thử `/nhac sau 1 phut | Kiểm tra nhắc`, `/nhac xem`, `/phanhoi Nội dung thử`; nhắc gửi đúng chat và chỉ người tạo được xem/hủy. Issue chỉ thử sau khi bật và có tab đích hợp lệ.
+- Khi các chức năng tương ứng đã bật, kiểm tra nhắc gửi đúng chat và chỉ người tạo được xem/hủy. Với Issue `managed`, tạo một yêu cầu ghi rõ “Thử nghiệm” → xác nhận → Admin nhận xử lý/phản hồi → người gửi xem trạng thái; không cần sửa lịch để thử Issue.
 - Quản trị xem `/thanhvien`; người thường không được xem danh sách hoặc tự cấp quyền quản trị. Tài liệu riêng và nhóm chưa cấp quyền vẫn bị chặn.
 - Thu hồi liên kết → chặn tính năng và nhắc đang chờ, kể cả còn allowlist cũ; gửi đăng ký lại vẫn phải chờ duyệt. Bản nháp issue hoặc mã đổi ca cũ không được dùng để vượt quyền.
 

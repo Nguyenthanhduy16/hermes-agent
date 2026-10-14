@@ -1,10 +1,11 @@
 """Existing approved members enter a fresh Tickets DB with bounded source reads."""
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 import unittest
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock, Mock, patch
 
 from hermes_zalo.config import Settings
 from hermes_zalo.events import IncomingMessage
@@ -141,6 +142,42 @@ class RegistrationBootstrapTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(self.binding(first))
         self.assertIsNone(self.binding(second))
         self.assertEqual(0, self.store.db.execute('SELECT COUNT(*) FROM ticket_accounts').fetchone()[0])
+
+    async def test_identity_cleanup_cannot_be_undone_by_an_older_sync_worker(self):
+        record = self.approve(0)
+        original_resolve = self.chat.identities.resolve
+        attempted, corrected = False, False
+
+        def correction_if_idle():
+            # Match Admin correction's lock order. Nonblocking acquisition makes
+            # the exact race deterministic without waiting for a scheduler tick.
+            if not self.store.lock.acquire(blocking=False):
+                return False
+            try:
+                with self.flow.store.lock:
+                    self.chat.identities.revoke(self.chat.bot_scope, record.user_id, record.chat_id)
+                    self.flow.store.revoke('admin', record.member_id)
+                return True
+            finally:
+                self.store.lock.release()
+
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            def resolve_with_concurrent_correction(*args):
+                nonlocal attempted, corrected
+                if not attempted:
+                    attempted = True
+                    # This point follows sync_tickets' last grant check. A
+                    # separate thread tries to remove the old identity now.
+                    corrected = pool.submit(correction_if_idle).result(timeout=5)
+                return original_resolve(*args)
+
+            with patch.object(self.chat.identities, 'resolve', side_effect=resolve_with_concurrent_correction):
+                await self.flow.sync_tickets(record, self.chat)
+            if not corrected:
+                self.assertTrue(pool.submit(correction_if_idle).result(timeout=5))
+        self.assertTrue(attempted)
+        self.assertIsNone(self.binding(record))
+        self.assertIsNone(self.flow.identity(record.user_id))
 
     async def test_source_failure_has_no_partial_bootstrap_and_retry_is_possible(self):
         records = [self.approve(i) for i in range(3)]

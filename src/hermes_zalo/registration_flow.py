@@ -272,33 +272,38 @@ class RegistrationFlow:
             matches = [item for item in members if item['member_name'] == person.name]
             if len(matches) != 1:
                 raise RegistrationError(AMBIGUOUS)
-            if self.identity(record.user_id) != record:
-                raise RegistrationError('Liên kết đã thay đổi; hãy xem /dangky trangthai trước khi đổi ca.')
-            # Reuse a verified legacy binding, but never overwrite a different
-            # account/route or promote an existing member to a manager.
-            current = chat.identities.resolve(chat.bot_scope, record.user_id, record.chat_id)
-            legacy_binding = current is not None
-            if current:
-                if current['member_id'] != matches[0]['member_id'] or current['name'] != person.name:
-                    raise RegistrationError('Liên kết Tickets đang thuộc người khác; nhờ quản trị xử lý xung đột.')
-            else:
-                import_users(chat.store, chat.bot_scope, [dict(matches[0], user_id=record.user_id, chat_id=record.chat_id)])
-                current = chat.identities.resolve(chat.bot_scope, record.user_id, record.chat_id)
-            with chat.store.transaction() as db:
-                db.execute('CREATE TABLE IF NOT EXISTS ticket_registration_links ('
-                           'bot TEXT NOT NULL, member_id TEXT NOT NULL, registration_id TEXT NOT NULL, '
-                           'account TEXT NOT NULL, PRIMARY KEY(bot,member_id))')
-                previous = db.execute('SELECT registration_id,account FROM ticket_registration_links '
-                                      'WHERE bot=? AND member_id=?', (chat.bot_scope, record.member_id)).fetchone()
-            if (previous and (previous['registration_id'] != record.id or previous['account'] != current['id'])
-                    or previous is None and legacy_binding):
-                # First adoption or a new approval must not revive confirmations
-                # from the old binding. Repeated sync preserves this revision.
-                chat.identities.bind(chat.bot_scope, record.user_id, record.chat_id, current['id'])
-            with chat.store.transaction() as db:
-                db.execute('INSERT INTO ticket_registration_links VALUES (?,?,?,?) '
-                           'ON CONFLICT(bot,member_id) DO UPDATE SET registration_id=excluded.registration_id,account=excluded.account',
-                           (chat.bot_scope, record.member_id, record.id, current['id']))
+            # Identity corrections take these locks in the same order. Keep the
+            # final grant check and all local binding writes together: an older
+            # worker must never recreate a binding after the Admin detached it.
+            with chat.store.lock:
+                with self.store.lock:
+                    if self.identity(record.user_id) != record:
+                        raise RegistrationError('Liên kết đã thay đổi; hãy xem /dangky trangthai trước khi đổi ca.')
+                    # Reuse a verified legacy binding, but never overwrite a different
+                    # account/route or promote an existing member to a manager.
+                    current = chat.identities.resolve(chat.bot_scope, record.user_id, record.chat_id)
+                    legacy_binding = current is not None
+                    if current:
+                        if current['member_id'] != matches[0]['member_id'] or current['name'] != person.name:
+                            raise RegistrationError('Liên kết Tickets đang thuộc người khác; nhờ quản trị xử lý xung đột.')
+                    else:
+                        import_users(chat.store, chat.bot_scope, [dict(matches[0], user_id=record.user_id, chat_id=record.chat_id)])
+                        current = chat.identities.resolve(chat.bot_scope, record.user_id, record.chat_id)
+                    with chat.store.transaction() as db:
+                        db.execute('CREATE TABLE IF NOT EXISTS ticket_registration_links ('
+                                   'bot TEXT NOT NULL, member_id TEXT NOT NULL, registration_id TEXT NOT NULL, '
+                                   'account TEXT NOT NULL, PRIMARY KEY(bot,member_id))')
+                        previous = db.execute('SELECT registration_id,account FROM ticket_registration_links '
+                                              'WHERE bot=? AND member_id=?', (chat.bot_scope, record.member_id)).fetchone()
+                    if (previous and (previous['registration_id'] != record.id or previous['account'] != current['id'])
+                            or previous is None and legacy_binding):
+                        # First adoption or a new approval must not revive confirmations
+                        # from the old binding. Repeated sync preserves this revision.
+                        chat.identities.bind(chat.bot_scope, record.user_id, record.chat_id, current['id'])
+                    with chat.store.transaction() as db:
+                        db.execute('INSERT INTO ticket_registration_links VALUES (?,?,?,?) '
+                                   'ON CONFLICT(bot,member_id) DO UPDATE SET registration_id=excluded.registration_id,account=excluded.account',
+                                   (chat.bot_scope, record.member_id, record.id, current['id']))
         try:
             await asyncio.to_thread(bind)
         except RegistrationError:

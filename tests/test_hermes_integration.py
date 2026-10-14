@@ -183,6 +183,19 @@ class RealHermesTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(set(keys)), 3)
         self.assertFalse(self.adapter._session_tasks)
 
+    async def test_registered_hermes_session_rotates_after_identity_correction(self):
+        from gateway.session import build_session_key
+        identity = SimpleNamespace(member_id='member-old', id='DK-00000001')
+        self.adapter.work = SimpleNamespace(registration=SimpleNamespace(identity=lambda user: identity),
+            handle=AsyncMock(return_value=None), pilot=SimpleNamespace(record=lambda *args: None), close=AsyncMock())
+        await self.adapter._dispatch(self.update('before-correction', chat='dm1', kind='PRIVATE'))
+        identity = SimpleNamespace(member_id='member-new', id='DK-00000002')
+        await self.adapter._dispatch(self.update('after-correction', chat='dm1', kind='PRIVATE'))
+        events = [call.args[0] for call in self.handler.await_args_list]
+        self.assertEqual(len(events), 2)
+        self.assertNotEqual(build_session_key(events[0].source), build_session_key(events[1].source))
+        self.assertEqual(events[0].source.chat_id, events[1].source.chat_id)
+
     async def test_old_task_has_no_send_permission_during_new_same_chat_turn(self):
         release = asyncio.Event()
         stale_tasks = []

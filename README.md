@@ -176,7 +176,7 @@ Hermes chỉ xử lý hội thoại; công cụ thao tác máy, duyệt web và 
 
 Hướng dẫn cài, mẫu Sheets, quyền và giới hạn: [docs/huong-dan-tinh-nang.md](docs/huong-dan-tinh-nang.md). Bài thử cho nhóm nhỏ: [docs/pilot-checklist.md](docs/pilot-checklist.md).
 
-Issue hiện đang tắt và bảng hiện tại chưa có tab `Issues`. Quản trị cần chuẩn bị tab `Issues` riêng, giữ đúng tiêu đề và quyền ghi, rồi bật `ZALO_ISSUES_ENABLED=true`; xem [các bước bật issue](docs/lenh-zalo.md#tạo-issue). Hiện mục menu không tự bật ghi hoặc thay đổi bảng. Mỗi issue vẫn cần người tạo đọc bản nháp và xác nhận trong 10 phút.
+Với `ZALO_ISSUES_MODE=managed`, Issue được quản lý trên trang Admin và lưu ở Volume Railway; không cần tạo tab `Issues` trên Sheets. Thành viên nhắn riêng, xem bản nháp rồi xác nhận trong 10 phút. Xem [Issue và đội ngũ hỗ trợ](docs/ISSUES.md). Chế độ `legacy` mới dùng tab Sheets `Issues`; menu không tự bật quyền ghi.
 
 ## 5. Thử trong nhóm Zalo
 
@@ -188,8 +188,14 @@ Khi tài khoản có tính năng:
 2. Tại **Mời Bot vào nhóm**, chia sẻ link vào nhóm thử.
 3. **Trưởng nhóm** mở link và xác nhận thêm bot.
 4. Chạy `Discover`, rồi **@mention bot** hoặc trả lời một tin bot đã gửi.
-5. Lấy `chat_id` có `chat_type: GROUP` điền vào `ZALO_ALLOWED_GROUPS`. Dùng `ZALO_GROUP_ACCESS=members` để các thành viên được hỏi trong nhóm; chế độ `allowlist` yêu cầu thêm từng `user_id` vào `ZALO_ALLOWED_USERS`.
+5. Lấy `chat_id` có `chat_type: GROUP` thêm vào `ZALO_ALLOWED_GROUPS` và `ZALO_SHEETS_GROUPS` để nhóm được tra lịch; giữ các ID cũ, ngăn cách bằng dấu phẩy. Dùng `ZALO_GROUP_ACCESS=members` để các thành viên được hỏi trong nhóm; chế độ `allowlist` yêu cầu thêm từng `user_id` vào `ZALO_ALLOWED_USERS`.
 6. Chạy `Check`, sau đó `Start`; gửi một câu hỏi mới bằng @mention.
+
+**Khi bot đang chạy trên Railway:** không chạy `Start` hoặc `Discover` trên Windows song song với server. Để lấy ID nhóm mới, người vận hành tạm đặt `BOT_START_ENABLED=false` ở service Railway và đợi deployment dừng polling; sau đó mới chạy `Discover` trên máy có đúng Bot Token. Gửi `@Bot LabCoach /menu` trong nhóm để lấy ID (Discover không trả lời). Dừng Discover, cập nhật hai danh sách nhóm trên **Railway Variables**, đặt lại `BOT_START_ENABLED=true` và đợi deployment thành công. Giữ bot Windows tắt. Việc này thực hiện một lần cho mỗi nhóm, không phải từng thành viên. `/ketnoinhom` không phải lệnh tích hợp thường trực của phiên bản hiện tại.
+
+Trước khi mời cả nhóm dùng: kiểm tra Workload cột C là số điện thoại dạng văn bản đủ 10 số hoặc `+84…`, cột D là tên; thử 2–3 người đăng ký riêng, xem đúng tên và lịch, rồi thử `@bot /menu` và `@bot /lich homnay`. Đổi ca tiếp tục qua DM; người nhận đồng ý rồi Admin duyệt mới sửa Sheets. Xác minh hai mốc nhắc ca thực tế và sao lưu trước khi mở rộng. Nhóm nhiều người chưa được kiểm thử tải đồng thời; triển khai dần và theo dõi độ trễ/chi phí.
+
+Giới hạn hiện tại: tối đa **5 lượt tra đăng ký/người/giờ và 60 lượt/toàn bot/giờ**, tính cả lần nhập sai. Chia đợt khoảng 20–30 người/giờ để còn lượt sửa lỗi; không mời hàng trăm người đăng ký đồng thời. Long polling xử lý tin tuần tự, câu trả lời AI chậm có thể làm các tin sau chờ. Zalo khuyến nghị webhook cho vận hành production; endpoint Admin Railway hiện tại không phải webhook nhận tin Zalo. Không tự điền URL Admin vào Bot Creator.
 
 Bot nhận tin nhóm khi được nhắc tên hoặc có người trả lời tin của bot; không nhận toàn bộ hội thoại nhóm. ID dùng gửi về nhóm là `chat.id`. [Quy tắc tương tác nhóm](https://docs.zaloplatforms.com/docs/BOT/best-practices/build-bot-interaction-with-group)
 

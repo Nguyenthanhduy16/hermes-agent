@@ -230,6 +230,53 @@ class RegistrationCorrectionTests(unittest.TestCase):
         result = self.correct()
         self.assertEqual(result, self.store.approved(self.message()))
 
+    def test_lock_on_wrong_revoked_identity_no_longer_blocks_corrected_route(self):
+        corrected = self.correct()
+        self.lock(self.source.member_id)
+        self.assertFalse(self.store.route_locked(self.source.user_id))
+        self.assertFalse(self.store.route_locked(self.source.user_id, self.source.chat_id))
+        self.assertEqual(corrected, self.store.approved(self.message()))
+        self.store.close()
+        self.store = self.open()
+        self.assertEqual(corrected, self.store.approved(self.message()))
+        # The source member itself remains locked; it cannot acquire a new user
+        # or chat merely because an administrator corrected this unrelated user.
+        with self.assertRaisesRegex(RegistrationError, 'khóa'):
+            self.store.request(self.message('old-person', 'old-person-dm'), self.wrong, auto_approve=True)
+
+    def test_current_target_lock_still_blocks_user_private_chat_and_new_registration(self):
+        corrected = self.correct()
+        self.lock(corrected.member_id)
+        self.assertTrue(self.store.route_locked(corrected.user_id))
+        self.assertTrue(self.store.route_locked(corrected.user_id, corrected.chat_id))
+        self.assertTrue(self.store.route_locked('different-user', corrected.chat_id))
+        self.assertTrue(self.store.route_locked(corrected.user_id, 'different-chat'))
+        self.store.revoke('zalo-admin', corrected.member_id)
+        third = self.person('0900000003', 'Người thứ ba')
+        for message in (self.message(), self.message(chat='another-chat'), self.message('another-user')):
+            with self.assertRaisesRegex(RegistrationError, 'khóa'):
+                self.store.request(message, third, auto_approve=True)
+
+    def test_regular_reregistration_after_correction_does_not_reset_lock_boundary(self):
+        corrected = self.correct()
+        self.store.revoke('zalo-admin', corrected.member_id)
+        third = self.person('0900000003', 'Người thứ ba')
+        current = self.store.request(self.message(), third)
+        self.store.approve('zalo-admin', current.id, third)
+        self.lock(corrected.member_id)
+        self.assertTrue(self.store.route_locked(current.user_id, current.chat_id))
+        self.assertIsNone(self.store.approved(self.message()))
+
+    def test_correction_boundary_does_not_unlock_another_routes_historical_lock(self):
+        old_other = self.store.request(self.message('other-user', 'other-chat'),
+                                       self.person('0900000003', 'Người khác'), auto_approve=True)
+        self.store.revoke('zalo-admin', old_other.member_id)
+        self.lock(old_other.member_id)
+        corrected = self.correct()
+        self.assertFalse(self.store.route_locked(corrected.user_id, corrected.chat_id))
+        self.assertTrue(self.store.route_locked('other-user'))
+        self.assertTrue(self.store.route_locked(corrected.user_id, 'other-chat'))
+
 
 if __name__ == '__main__':
     unittest.main()

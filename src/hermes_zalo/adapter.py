@@ -615,6 +615,11 @@ class ZaloAdapter(BasePlatformAdapter):
             chat_type="dm" if message.chat_type == "PRIVATE" else "group",
             user_id=message.user_id,
             message_id=message.message_id,
+            # Logical Hermes thread, never a Zalo destination. A corrected or
+            # reapproved registration cannot reopen the previous identity's
+            # legacy model session when managed conversation storage is off.
+            thread_id=('registration-' + sha256(repr(self._registration_turn_identity(message)).encode()).hexdigest()[:24]
+                       if self._registration_turn_identity(message)[0] else None),
         )
         event = MessageEvent(
             text=message.text,
