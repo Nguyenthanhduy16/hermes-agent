@@ -69,18 +69,29 @@ class RegistrationWorkTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_tickets_bootstrap_retries_source_failure_without_reopening_or_blocking_calendar(self):
         from hermes_zalo.registration import RegistrationError
-        chat = SimpleNamespace(close=Mock())
+        await self.approve('new-user')
+        chat = SimpleNamespace(close=Mock(), handle=Mock(side_effect=AssertionError('Unavailable Tickets must not dispatch')))
         self.service.registration.bootstrap_tickets = AsyncMock(side_effect=[RegistrationError('source unavailable'), {'linked': 3, 'skipped': 0}])
         self.service._tickets_values['TICKETS_CHAT_MODE'] = 'lab_live'
+        self.service._tickets_initialized = False
         with patch('hermes_zalo.tickets.runtime.open_chat', return_value=chat) as opening:
             self.assertIsNone(await self.service._open_tickets())
             self.assertTrue(self.service._tickets_error)
+            menu = await self.send('/menu', user='new-user')
+            self.assertIn('Đổi ca: /doica — tạm chưa sẵn sàng', menu)
+            self.assertIn('chưa sẵn sàng', await self.send('/doica', user='new-user'))
+            chat.handle.assert_not_called()
+            self.directory.lookup.assert_not_awaited()
+            self.sheets._lab_schedules.assert_not_awaited()
             self.assertIsNone(await self.service._open_tickets())
             self.service.registration.bootstrap_tickets.assert_awaited_once_with(chat)
             self.service._tickets_bootstrap_retry_at = 0
             self.assertIs(chat, await self.service._open_tickets())
             self.assertIs(chat, await self.service._open_tickets())
             self.assertFalse(self.service._tickets_error)
+            menu = await self.send('/menu', user='new-user')
+            self.assertIn('Đổi ca: /doica', menu)
+            self.assertNotIn('tạm chưa sẵn sàng', menu)
             self.assertEqual(2, self.service.registration.bootstrap_tickets.await_count)
             opening.assert_called_once()
 
@@ -201,6 +212,70 @@ class RegistrationWorkTests(unittest.IsolatedAsyncioTestCase):
         self.sheets._lab_schedules.assert_not_awaited()
         self.assertNotIn('new-user', self.settings.allowed_users)
         self.assertNotIn('new-user', self.sheets.settings.users)
+
+    async def test_initialization_failure_does_not_remove_enabled_tickets_from_private_menu(self):
+        await self.approve('new-user')
+        self.service._tickets_values['TICKETS_CHAT_MODE'] = 'lab_live'
+        self.service._tickets_initialized = False
+        with patch('hermes_zalo.tickets.runtime.open_chat', side_effect=RuntimeError('synthetic init failure')) as opening:
+            self.assertIn('chưa sẵn sàng', await self.send('/doica', user='new-user'))
+            menu = await self.send('/menu', user='new-user')
+            self.assertIn('Đổi ca: /doica — tạm chưa sẵn sàng', menu)
+            guide = await self.send('/help doica', user='new-user')
+            self.assertIn('số điện thoại hiện tại trên Workload', guide)
+            self.assertNotIn('chỉ lưu tên', guide)
+            opening.assert_called_once()
+        self.directory.lookup.assert_not_awaited()
+        self.sheets._lab_schedules.assert_not_awaited()
+        self.service._tickets_values['TICKETS_CHAT_MODE'] = 'off'
+        self.assertNotIn('/doica', await self.send('/menu', user='new-user'))
+
+    async def test_registered_group_menu_only_links_to_private_tickets_and_keeps_access_checks(self):
+        record = await self.approve('new-user')
+        self.service.settings = replace(self.settings, group_access='members')
+        self.service._tickets_values['TICKETS_CHAT_MODE'] = 'lab_live'
+        self.service._tickets_error = True
+        with patch.object(self.service, '_open_tickets', side_effect=AssertionError('Group hint must not initialize Tickets')):
+            menu = await self.send('/menu', user='new-user', chat='allowed-group', kind='GROUP')
+            self.assertIn('Đổi ca: /doica (nhắn riêng cho bot) — tạm chưa sẵn sàng', menu)
+            self.assertFalse(self.service.member_feature_allowed('new-user', 'allowed-group', 'GROUP'))
+            response = await self.send('/doica', user='new-user', chat='allowed-group', kind='GROUP')
+            self.assertIn('tin nhắn riêng', response)
+            for user, chat, kind in (('new-user', 'unshared-group', 'GROUP'),
+                                     ('new-user', 'wrong-dm', 'PRIVATE'),
+                                     ('unregistered', 'allowed-group', 'GROUP'),
+                                     ('unregistered', 'dm-unregistered', 'PRIVATE')):
+                with self.subTest(user=user, chat=chat, kind=kind):
+                    menu = await self.send('/menu', user=user, chat=chat, kind=kind)
+                    self.assertNotIn('Đổi ca:', menu)
+            self.service.registration.store.revoke('admin', record.member_id)
+            self.assertNotIn('Đổi ca:', await self.send('/menu', user='new-user', chat='allowed-group', kind='GROUP'))
+        self.directory.lookup.assert_not_awaited()
+        self.sheets._lab_schedules.assert_not_awaited()
+
+    async def test_locked_or_reset_member_does_not_receive_swap_menu_from_static_or_dynamic_grants(self):
+        record = await self.approve('member')  # This account also has the legacy static grant.
+        self.service.settings = replace(self.settings, group_access='members')
+        self.service._tickets_values['TICKETS_CHAT_MODE'] = 'lab_live'
+        self.service._tickets_error = True
+        store = self.service.registration.store
+        for state in ('locked', 'reset'):
+            if state == 'locked':
+                with store._transaction() as db:
+                    store._bump_revision(db, record.member_id)
+                    db.execute('UPDATE registration_member_controls SET locked=1 WHERE member_id=?', (record.member_id,))
+            else:
+                with store._transaction() as db:
+                    store._bump_revision(db, record.member_id)
+                    db.execute('UPDATE registration_member_controls SET locked=0 WHERE member_id=?', (record.member_id,))
+                store.reset_registration('web:admin', record, store.reset_snapshot(record), 'Cho thành viên đăng ký lại')
+            with self.subTest(state=state), patch.object(self.service, '_open_tickets', side_effect=AssertionError('Denied menu must not initialize Tickets')):
+                for kind, chat in (('PRIVATE', 'dm-member'), ('GROUP', 'allowed-group')):
+                    message = self.message('/menu', user='member', chat=chat, kind=kind)
+                    self.assertNotIn('Đổi ca:', await self.service.handle(message))
+                    self.assertNotIn('Đổi ca:', self.service.help('', message))
+        self.directory.lookup.assert_not_awaited()
+        self.sheets._lab_schedules.assert_not_awaited()
 
     async def test_approval_survives_restart_without_reapproval_or_allowlist_changes(self):
         record = await self.approve('new-user')

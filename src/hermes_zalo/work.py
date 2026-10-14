@@ -469,6 +469,16 @@ class WorkService:
                                 self.registration.member_allows(message.user_id, message.chat_id, message.chat_type)) else "denied"
         can_write = self.member_feature_allowed(message.user_id, message.chat_id, message.chat_type)
         issue_access = self._issue_scope_allowed(message.user_id, message.chat_id, message.chat_type)
+        # A source outage changes availability, not whether an enabled feature
+        # can be discovered. Group entries only direct registered members to DM;
+        # the action still uses the existing private-chat and identity checks.
+        registered_group_hint = bool(message.chat_type == 'GROUP' and self.registration.identity(message.user_id) and
+            is_allowed(message, self.settings.allowed_users, self.settings.allowed_groups,
+                       group_members=self.settings.group_access == 'members'))
+        tickets_visible = bool((can_write or self.registration.approved(message) or registered_group_hint) and
+            (self._tickets_chat is not None or
+             str(self._tickets_values.get('TICKETS_CHAT_MODE') or 'off').strip().lower()
+             in ('sheets_test', 'lab_live', 'lab_live_test')))
         answer = help_text(topic, sheets_state=state,
                          lab=bool(self.sheets and self.sheets.settings.calendar_format == "lab"),
                          issues=bool(issue_access and (self.managed_issues_ready or
@@ -477,10 +487,9 @@ class WorkService:
                          auto_reminders=bool(self._automatic_schedule.ready),
                          auto_reminders_evening_time=self.schedule_reminder_settings.evening_time,
                          auto_reminders_lead_minutes=self.schedule_reminder_settings.lead_minutes,
-                         tickets=bool(not self._tickets_error and (can_write or self.registration.approved(message)) and
-                                      (self._tickets_chat is not None or
-                                       str(self._tickets_values.get("TICKETS_CHAT_MODE") or "off").strip().lower()
-                                       in ("sheets_test", "lab_live", "lab_live_test"))),
+                         tickets=tickets_visible,
+                         tickets_unavailable=tickets_visible and self._tickets_error,
+                         registration_enabled=self.registration.enabled,
                          private_chat=message.chat_type == "PRIVATE")
         if topic.strip() and message.chat_type == "GROUP" and message.user_id not in self.settings.allowed_users:
             answer += "\nQuyền của bạn tại nhóm: hỏi lịch/tài liệu đã chia sẻ và đăng ký tên. Nhắc việc/tạo issue cần cấp quyền riêng."

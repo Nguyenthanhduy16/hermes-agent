@@ -155,6 +155,7 @@ def help_topic(argument):
 
 def help_text(topic="", *, sheets_state="not_configured", lab=False, issues=False,
               issue_access=False, reminders=False, tickets=False, private_chat=True,
+              tickets_unavailable=False, registration_enabled=False,
               auto_reminders=False, auto_reminders_evening_time="20:00",
               auto_reminders_lead_minutes=30):
     topic = normalized(" ".join(topic.split())).lstrip("/")
@@ -197,7 +198,8 @@ def help_text(topic="", *, sheets_state="not_configured", lab=False, issues=Fals
             lines += ["Yêu cầu đổi ca:",
                       "/choxacnhan — yêu cầu đang chờ bạn đồng ý" +
                       (" (nhắn riêng cho bot)" if not private_chat else ""),
-                      "Bot gửi thông báo riêng khi có yêu cầu mới cho tài khoản đã liên kết.", ""]
+                      ("Đổi ca tạm chưa sẵn sàng; nhờ Admin kiểm tra." if tickets_unavailable else
+                       "Bot gửi thông báo riêng khi có yêu cầu mới cho tài khoản đã liên kết."), ""]
         if not reminders and not tickets and not auto_reminders:
             lines += ["Chưa có mục thông báo được mở cho bạn tại đây.", ""]
         lines.append("/menu — trở về menu")
@@ -241,6 +243,7 @@ def help_text(topic="", *, sheets_state="not_configured", lab=False, issues=Fals
                 "Góp ý được lưu trên máy chạy bot để người quản lý tổng hợp.")
     if topic in TICKETS_TOPICS:
         return ("ĐỔI CA QUA TIN NHẮN RIÊNG\n"
+                + ("Tạm chưa sẵn sàng; nhờ Admin kiểm tra nguồn lịch và liên kết.\n\n" if tickets_unavailable else "") +
                 "1. Người tạo nhắn /doica, chọn hai ca tương lai và kiểm tra nội dung.\n"
                 "2. Gửi lệnh /doica gui kèm mã bot cấp. Chờ thông báo Đã gửi yêu cầu.\n"
                 "3. Bot gửi thông báo riêng cho người đổi cùng đã được liên kết.\n"
@@ -253,7 +256,9 @@ def help_text(topic="", *, sheets_state="not_configured", lab=False, issues=Fals
                 "/yeucau — xem hoặc hủy yêu cầu của tôi\n"
                 "/lichsudoica — lịch sử\n"
                 "/choduyet — dành cho quản lý\n\n"
-                "Cần quản trị liên kết tài khoản trước khi đổi ca; /dangky chỉ lưu tên tra lịch.")
+                + ("Đăng ký thành công bằng số điện thoại hiện tại trên Workload để dùng đổi ca. "
+                   "Nếu chưa nhận đúng tên, nhờ Admin kiểm tra liên kết." if registration_enabled else
+                   "Cần quản trị liên kết tài khoản trước khi đổi ca; /dangky chỉ lưu tên tra lịch."))
     if topic in ("dangky", "hoso", "nhom"):
         return ("DÙNG BOT TRONG NHÓM\n"
                 "Trả lời một tin của bot hoặc gọi @bot, rồi hỏi lịch/quy định.\n"
@@ -272,7 +277,8 @@ def help_text(topic="", *, sheets_state="not_configured", lab=False, issues=Fals
         if lab:
             entries.append("Lịch của tôi: /lichcuatoi homnay")
     if tickets:
-        entries.append("Đổi ca: /doica" + (" (nhắn riêng cho bot)" if not private_chat else ""))
+        entries.append("Đổi ca: /doica" + (" (nhắn riêng cho bot)" if not private_chat else "") +
+                       (" — tạm chưa sẵn sàng" if tickets_unavailable else ""))
     if reminders or tickets or auto_reminders:
         entries.append("Thông báo: /thongbao")
     if issues or issue_access:
@@ -282,7 +288,7 @@ def help_text(topic="", *, sheets_state="not_configured", lab=False, issues=Fals
         lines += ["", "Chưa đăng ký tên? /dangky Họ tên đầy đủ"]
     if sheets_state == "ready":
         lines += ["", "Có thể hỏi: Mai mình có ca nào?" if lab else "Có thể hỏi: Mai có lịch gì?"]
-    if tickets:
+    if tickets and not tickets_unavailable:
         lines += ["Đổi ca tự nhiên: Mình muốn đổi ca"]
     if not entries:
         lines += ["Bạn có thể nhắn trực tiếp để trò chuyện." if private_chat else

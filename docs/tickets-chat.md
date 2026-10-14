@@ -4,6 +4,8 @@ Thành viên tạo và xác nhận đổi ca trong chat riêng với bot. Với 
 
 Chế độ `lab_live` dành cho thành viên đã đăng ký thành công và liên kết đúng lịch. Cờ `TICKETS_REQUIRE_MANAGER=false` vẫn hỗ trợ luồng cũ chỉ cần hai người xác nhận; không dùng cờ này khi cần Admin duyệt.
 
+Trong `/menu`, **Đổi ca: `/doica`** vẫn hiện cho người có quyền khi tính năng đã bật. Nếu có lỗi kết nối hoặc dữ liệu lịch, mục này ghi **“tạm chưa sẵn sàng”**; bot chưa cho tạo/ghi đổi ca cho đến khi kiểm tra nguồn thành công. Quản trị kiểm tra cấu hình và cột Lab Coach: mỗi ô một tên, không có khoảng trắng thừa, công thức hoặc ô gộp. Lỗi đồng bộ nguồn được thử lại sau 60 giây; lỗi khởi tạo cần sửa cấu hình và khởi động lại bot. Trong nhóm đã cấp quyền, thành viên đã đăng ký được hướng dẫn nhắn riêng `/doica`; quyền đổi ca trong nhóm không được mở thêm.
+
 Có ba chế độ dữ liệu, không dùng lẫn cấu hình:
 
 | Chế độ | Phạm vi |

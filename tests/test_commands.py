@@ -96,6 +96,24 @@ class CommandParsingTests(unittest.TestCase):
         self.assertIn("/thongbao", help_text(auto_reminders=True))
         self.assertIn("/nhac huy", help_text("nhac", auto_reminders=True))
 
+    def test_unavailable_tickets_remain_discoverable_without_claiming_readiness(self):
+        for private_chat in (True, False):
+            menu = help_text(tickets=True, tickets_unavailable=True, private_chat=private_chat)
+            self.assertIn("Đổi ca: /doica", menu)
+            self.assertIn("tạm chưa sẵn sàng", menu)
+            self.assertNotIn("Đổi ca tự nhiên", menu)
+            if not private_chat:
+                self.assertIn("nhắn riêng cho bot", menu)
+        self.assertNotIn("/doica", help_text(tickets=False, tickets_unavailable=True))
+        notice = help_text("thongbao", tickets=True, tickets_unavailable=True)
+        self.assertIn("tạm chưa sẵn sàng", notice)
+        self.assertNotIn("Bot gửi thông báo riêng", notice)
+        guide = help_text("tickets", tickets=True, tickets_unavailable=True, registration_enabled=True)
+        self.assertIn("Tạm chưa sẵn sàng", guide)
+        self.assertIn("số điện thoại hiện tại trên Workload", guide)
+        self.assertNotIn("chỉ lưu tên", guide)
+        self.assertIn("chỉ lưu tên", help_text("tickets"))  # Legacy registration remains distinct.
+
 
 class CalendarQueryTests(unittest.TestCase):
     def test_coach_filter_ignores_accents_but_does_not_match_status_or_word_fragment(self):
