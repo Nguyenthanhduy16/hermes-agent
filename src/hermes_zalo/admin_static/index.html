@@ -33,6 +33,7 @@
       <p class="nav-label">KHÔNG GIAN LÀM VIỆC</p>
       <nav aria-label="Điều hướng chính">
         <button class="nav-item" type="button" data-view="issues"><span class="nav-icon" aria-hidden="true">☑</span>Issue</button>
+        <button class="nav-item" type="button" data-view="tickets"><span class="nav-icon" aria-hidden="true">⇄</span>Duyệt đổi ca<span id="tickets-nav-count" class="nav-count" aria-label="Yêu cầu chờ Admin duyệt" hidden></span></button>
         <button class="nav-item active" type="button" data-view="members"><span class="nav-icon" aria-hidden="true">◫</span>Thành viên</button>
         <button class="nav-item" type="button" data-view="conversations"><span class="nav-icon" aria-hidden="true">☷</span>Hội thoại</button>
         <button class="nav-item" type="button" data-view="memories"><span class="nav-icon" aria-hidden="true">◇</span>Ghi nhớ</button>
@@ -61,6 +62,19 @@
           </div>
         </section>
         <section id="issue-view" hidden aria-label="Chi tiết Issue"><button id="issue-back" class="text-button back-button" type="button">← Danh sách Issue</button><div id="issue-content"></div></section>
+
+        <section id="tickets-view" hidden aria-label="Duyệt đổi ca">
+          <div class="summary-grid"><article class="summary-card"><span>Chờ Admin duyệt</span><strong id="ticket-pending-total">—</strong><small>Trong toàn bộ yêu cầu đổi ca</small></article><article class="summary-card summary-explainer"><span class="summary-symbol" aria-hidden="true">⇄</span><div><strong>Kiểm tra hai ca trước khi duyệt</strong><p>Người đổi cùng xác nhận trước. Khi Admin duyệt, hệ thống kiểm tra lại lịch và quyền rồi cập nhật Google Sheets.</p></div></article></div>
+          <div id="tickets-source-notice" class="notice info" role="status" hidden></div>
+          <div class="panel"><div class="panel-heading"><h2>Yêu cầu đổi ca</h2><span id="ticket-total" class="tag subtle">— yêu cầu</span></div>
+            <form id="tickets-filter" class="filters ticket-filters">
+              <label class="search-label">Tìm kiếm<input id="tickets-q" type="search" placeholder="Mã yêu cầu, tên thành viên hoặc môn học…" maxlength="120"></label>
+              <label>Trạng thái<select id="tickets-status"><option value="pending_manager" selected>Chờ Admin duyệt</option><option value="pending_peer">Chờ người đổi cùng</option><option value="applying">Đang cập nhật lịch</option><option value="uncertain">Cần đối soát</option><option value="completed">Đã đổi ca</option><option value="rejected">Đã từ chối</option><option value="cancelled">Đã hủy</option><option value="expired">Đã hết hạn</option><option value="stale">Lịch hoặc quyền đã thay đổi</option><option value="">Tất cả trạng thái</option></select></label>
+              <button class="button secondary" type="submit">Tìm kiếm</button>
+            </form><div id="tickets-content" class="table-scroll"></div><div id="tickets-pagination" class="pagination"></div>
+          </div>
+        </section>
+        <section id="ticket-view" hidden aria-label="Chi tiết đổi ca"><button id="ticket-back" class="text-button back-button" type="button">← Danh sách đổi ca</button><div id="ticket-content"></div></section>
 
         <section id="accounts-view" hidden aria-label="Quản lý Admin">
           <div class="notice info"><strong>Mỗi người sử dụng tài khoản riêng.</strong> Quyền hội thoại và ghi nhớ được cấp riêng. Khóa hoặc đổi quyền sẽ thu hồi phiên đăng nhập cũ.</div>
@@ -97,7 +111,7 @@
   <dialog id="account-dialog" class="modal" aria-labelledby="account-title"><form id="account-form"><div class="modal-heading"><div><p class="eyebrow">ĐỘI NGŨ QUẢN TRỊ</p><h2 id="account-title">Tạo Admin</h2></div><button class="icon-button" type="button" data-close="account-dialog" aria-label="Đóng">×</button></div><div class="modal-body">
     <div class="form-grid"><label>Tên đăng nhập<input id="account-username" required maxlength="48" pattern="[a-z][a-z0-9_.-]{2,47}" title="3–48 ký tự: bắt đầu bằng chữ thường, tiếp theo là chữ thường, số, dấu chấm, gạch ngang hoặc gạch dưới." autocomplete="off" spellcheck="false"></label><label>Tên hiển thị<input id="account-name" required maxlength="100" autocomplete="off"></label></div>
     <p id="account-role" class="notice info"></p><label id="account-password-label">Mật khẩu ban đầu<input id="account-password" type="password" minlength="12" maxlength="1024" autocomplete="new-password"></label>
-    <fieldset class="permission-options"><legend>Quyền được cấp</legend><label class="checkbox-label"><input id="account-issues" type="checkbox">Nhận và xử lý Issue</label><label class="checkbox-label"><input id="account-members" type="checkbox">Quản lý thành viên</label><label class="checkbox-label"><input id="account-conversations" type="checkbox">Xem và quản lý ngữ cảnh hội thoại</label><label class="checkbox-label"><input id="account-memories" type="checkbox">Quản lý ghi nhớ (cần quyền hội thoại)</label></fieldset>
+    <fieldset class="permission-options"><legend>Quyền được cấp</legend><label class="checkbox-label"><input id="account-issues" type="checkbox">Nhận và xử lý Issue</label><label class="checkbox-label"><input id="account-tickets" type="checkbox">Duyệt đổi ca</label><label class="checkbox-label"><input id="account-members" type="checkbox">Quản lý thành viên</label><label class="checkbox-label"><input id="account-conversations" type="checkbox">Xem và quản lý ngữ cảnh hội thoại</label><label class="checkbox-label"><input id="account-memories" type="checkbox">Quản lý ghi nhớ (cần quyền hội thoại)</label></fieldset>
     <label class="checkbox-label"><input id="account-active" type="checkbox" checked>Tài khoản đang hoạt động</label><p class="muted">Mật khẩu chỉ nhập tại đây. Hệ thống không hiển thị lại mật khẩu đã lưu.</p><div id="account-audit" class="context-section" hidden></div><p id="account-error" class="notice error" role="alert" hidden></p>
   </div><div class="modal-actions"><button class="button secondary" type="button" data-close="account-dialog">Hủy</button><button class="button primary" type="submit">Lưu tài khoản</button></div></form></dialog>
   <dialog id="confirmation-dialog" class="modal confirmation-modal" aria-labelledby="confirmation-title" aria-describedby="confirmation-description"><div class="modal-heading"><h2 id="confirmation-title">Xác nhận thao tác</h2><button class="icon-button" type="button" data-close="confirmation-dialog" aria-label="Hủy và đóng">×</button></div><div class="modal-body"><p id="confirmation-description"></p></div><div class="modal-actions"><button id="confirmation-cancel" class="button secondary" type="button" autofocus>Hủy</button><button id="confirmation-accept" class="button primary" type="button">Xác nhận</button></div></dialog>

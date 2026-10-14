@@ -398,6 +398,33 @@ class AdminHttpTests(unittest.TestCase):
         self.assertFalse(context['memories_redacted'])
         self.assertEqual(memory['content'], context['memories'][0]['content'])
 
+    def test_ticket_routes_require_explicit_permission_and_keep_csrf_boundary(self):
+        tickets = SimpleNamespace(list_tickets=AsyncMock(return_value={'enabled': True, 'items': [], 'total': 0}),
+                                  detail=AsyncMock(return_value={'enabled': True, 'ticket': {'id': 'DC-TEST'}}),
+                                  action=AsyncMock(return_value={'enabled': True, 'ticket': {'status': 'completed'}}))
+        self.app.tickets = tickets
+        denied = self.client({'members'}, 'memberadmin')
+        for path in ('/api/tickets', '/api/ticket?id=DC-TEST'):
+            self.assertEqual(403, self.request('GET', path, client=denied)[0])
+        payload = dict(id='DC-TEST', action='approve', expected_version=2, reason='', confirm=True)
+        self.assertEqual(403, self.request('POST', '/api/ticket/action', client=denied, data=payload)[0])
+        tickets.list_tickets.assert_not_awaited()
+        tickets.action.assert_not_awaited()
+        reviewer = self.client({'tickets'}, 'reviewer')
+        self.assertEqual(200, self.request('GET', '/api/tickets?q=alpha&status=pending_manager&page=2', client=reviewer)[0])
+        self.assertEqual(200, self.request('GET', '/api/ticket?id=DC-TEST', client=reviewer)[0])
+        self.assertEqual(403, self.request('GET', '/api/history', client=reviewer)[0])
+        for csrf in (False, 'bad-token'):
+            self.assertEqual(403, self.request('POST', '/api/ticket/action', client=reviewer, data=payload, csrf=csrf)[0])
+        self.assertEqual(403, self.request('POST', '/api/ticket/action', client=reviewer, data=payload, origin='https://other.invalid')[0])
+        tickets.action.assert_not_awaited()
+        self.assertEqual(200, self.request('POST', '/api/ticket/action', client=reviewer, data=payload)[0])
+        tickets.action.assert_awaited_once()
+        for path in ('/api/tickets?member_id=forged', '/api/ticket?id=DC-TEST&actor=forged'):
+            self.assertEqual(400, self.request('GET', path, client=reviewer)[0])
+        self.auth.create_account('reviewer', self.PASSWORD, [], replace=True)
+        self.assertEqual(401, self.request('GET', '/api/tickets', client=reviewer)[0])
+
 
 if __name__ == '__main__':
     unittest.main()

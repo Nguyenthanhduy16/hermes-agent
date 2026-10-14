@@ -1,10 +1,10 @@
-# LabCoach Admin — Thành viên, Hội thoại & Ghi nhớ
+# LabCoach Admin — Thành viên, Đổi ca, Issue & Hội thoại
 
-Trang riêng cho người quản trị; thành viên vẫn dùng Zalo như hiện tại. **Ngày 13/10/2026 đã bật API Admin và lưu hội thoại trên Railway; giao diện Vercel chờ project do người vận hành cung cấp.** Hai cờ trong file mẫu/local vẫn mặc định tắt.
+Trang riêng cho người quản trị; thành viên vẫn dùng Zalo như hiện tại. Giao diện chạy trên [Vercel](https://hermes-zalo-bot-vercel-admin.vercel.app/), API và dữ liệu chạy trên Railway. Cấu hình mẫu/local vẫn mặc định tắt Admin và lưu hội thoại.
 
-Kiểm tra HTTPS thật đã đạt: thiếu khóa proxy trả 403, chưa đăng nhập trả 401, Admin đăng nhập/đọc thành viên/đăng xuất thành công; cookie có Secure, HttpOnly, SameSite=Strict. Model hiện tại `openrouter/free` đã được gọi thử nhưng provider trả **401: API key expired**; cần cập nhật `OPENROUTER_API_KEY` trong Railway. Chưa xác nhận nhận–gửi Zalo của luồng mới, chưa thay ô lịch thật trong lần triển khai này.
+**Duyệt đổi ca:** A gửi → B đồng ý → Admin duyệt trên trang này → cập nhật Sheets. Cấp riêng quyền `tickets` để thấy mục **Duyệt đổi ca**; xem [hướng dẫn thành viên và Admin](duyet-doi-ca.md).
 
-Mã gateway Vercel cũng đã chạy trên máy và gọi API Railway thật: lấy phiên, đăng nhập, đọc danh sách 7 thành viên và đăng xuất đều trả 200, không cache. Đây chưa phải kiểm tra bản đã deploy trên Vercel; vẫn cần project Vercel và thử bằng trình duyệt trên domain chính thức.
+Kết nối Vercel–Railway yêu cầu khóa máy chủ, đăng nhập và đúng quyền. Cookie có Secure, HttpOnly, SameSite=Strict; thao tác thay đổi cần CSRF. Model hiện tại dùng [LiteLLM / DeepSeek Flash](model-litellm.md).
 
 API: `https://hermes-zalo-bot-production.up.railway.app`, Target Port 8787. Mở trực tiếp trên trình duyệt sẽ bị từ chối vì đây là backend có khóa kết nối, không phải địa chỉ giao diện Vercel. Mật khẩu Admin và khóa proxy chỉ lưu trong tệp riêng dưới `.runtime/admin-deploy-20261013/`, không đưa lên Git hoặc chat.
 
@@ -20,7 +20,7 @@ Mở [http://127.0.0.1:8787](http://127.0.0.1:8787). Nếu cổng đang được
 
 | Tài khoản demo | Quyền |
 | --- | --- |
-| `admin` | Quản lý thành viên, hội thoại và ghi nhớ |
+| `admin` | Giảng viên demo, đủ quyền quản trị và duyệt đổi ca |
 | `quanly` | Chỉ quản lý thành viên |
 | `hoithoai` | Hội thoại, ngữ cảnh và ghi nhớ |
 
@@ -48,7 +48,7 @@ Mật khẩu chung của **demo**: `LabCoach-Demo-2026`. Không dùng mật kh�
    .\scripts\run.ps1 AdminCreate
    ```
 
-   Nhập tên đăng nhập, mật khẩu và xác nhận mật khẩu tại terminal. Mật khẩu được nhập ẩn, cần ít nhất 12 ký tự. Không gửi mật khẩu, Bot Token hay API key vào chat. Tài khoản tạo ở bước này có đủ ba quyền; chưa khởi động bot.
+   Nhập tên đăng nhập, mật khẩu và xác nhận mật khẩu tại terminal. Mật khẩu được nhập ẩn, cần ít nhất 12 ký tự. Không gửi mật khẩu, Bot Token hay API key vào chat. Kiểm tra quyền được cấp; chỉ định Giảng viên theo [hướng dẫn phân quyền](ISSUES.md).
 
 3. Khi đã dừng phiên bot cũ tại nơi vận hành, khởi động lại:
 
@@ -67,6 +67,8 @@ Tài khoản web tách khỏi đăng ký Zalo. Thành viên đã đăng ký, qu�
 | Quyền | Được làm |
 | --- | --- |
 | `members` | Xem thành viên, khóa/mở quyền, kiểm tra và sửa liên kết được phép |
+| `tickets` | Xem yêu cầu đổi ca, duyệt/từ chối và đối soát kết quả chưa xác định |
+| `issues` | Xem và xử lý issue trong phạm vi được cấp |
 | `conversations` | Xem hội thoại riêng/nhóm bot đã lưu, xem và thay đổi ngữ cảnh; nội dung ghi nhớ được ẩn nếu thiếu quyền `memories` |
 | `memories` cùng `conversations` | Xem, thêm, sửa, ngừng dùng ghi nhớ và xem nguồn/lịch sử nội dung |
 
@@ -77,7 +79,7 @@ Trên Windows, có thể tạo tài khoản giới hạn quyền bằng môi tr�
 .\.venv\Scripts\python.exe -m hermes_zalo.admin_cli create-account --username hoithoai --permissions conversations,memories
 ```
 
-Đủ quyền dùng `--permissions members,conversations,memories` hoặc bỏ tham số này. Muốn đổi mật khẩu/quyền của tài khoản đã có, chạy lại lệnh tương ứng kèm `--replace`; thao tác yêu cầu nhập mật khẩu mới và thu hồi các phiên đăng nhập cũ. Không đặt mật khẩu vào tham số dòng lệnh. Đăng nhập sai nhiều lần sẽ bị giới hạn tạm thời.
+Chỉ cấp các quyền cần thiết. Để bổ sung quyền mà giữ mật khẩu và quyền cũ, dùng `grant-permissions --username TEN --permissions tickets`. Muốn đổi mật khẩu/quyền của tài khoản đã có, chạy lại lệnh tạo tương ứng kèm `--replace`; thao tác yêu cầu nhập mật khẩu mới và thu hồi các phiên đăng nhập cũ. Không đặt mật khẩu vào tham số dòng lệnh. Đăng nhập sai nhiều lần sẽ bị giới hạn tạm thời.
 
 ## 4. Quản lý Thành viên
 

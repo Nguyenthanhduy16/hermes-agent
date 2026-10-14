@@ -10,7 +10,7 @@ import sqlite3
 import threading
 import time
 
-PERMISSIONS = frozenset(('members', 'conversations', 'memories', 'issues'))
+PERMISSIONS = frozenset(('members', 'conversations', 'memories', 'issues', 'tickets'))
 ROLES = frozenset(('admin', 'faculty'))
 
 
@@ -104,7 +104,7 @@ class AdminAuth:
     @staticmethod
     def _permissions(permissions):
         if not isinstance(permissions, (list, tuple, set, frozenset)) or any(not isinstance(value, str) for value in permissions):
-            raise AdminError('Quyền phải là danh sách members, conversations, memories hoặc issues.')
+            raise AdminError('Quyền phải là danh sách members, conversations, memories, issues hoặc tickets.')
         if len(permissions) != len(set(permissions)) or not set(permissions) <= PERMISSIONS:
             raise AdminError('Quyền không hợp lệ hoặc bị lặp.')
         return sorted(permissions)
@@ -162,6 +162,25 @@ class AdminAuth:
             configured = db.execute('SELECT * FROM admin_accounts WHERE username=?', (username,)).fetchone()
             self._audit(db, 'local-operator', 'account_configured:' + username, username,
                         self._public_account(current) if current else None, self._public_account(configured))
+
+    def grant_permissions(self, username, permissions):
+        """Explicit local grant to one account, preserving passwords and role."""
+        username = self._username(username)
+        permissions = self._permissions(permissions)
+        with self.transaction() as db:
+            current = db.execute('SELECT * FROM admin_accounts WHERE username=?', (username,)).fetchone()
+            before = self._public_account(current)
+            if not current['active']:
+                raise AdminError('Tài khoản đang bị khóa; không cấp thêm quyền cho tài khoản này.', 409)
+            grants = sorted(set(before['permissions']) | set(permissions))
+            if grants == sorted(before['permissions']):
+                return before
+            db.execute('UPDATE admin_accounts SET permissions=?,revision=revision+1,updated=? WHERE username=?',
+                       (json.dumps(grants), self.clock(), username))
+            db.execute('DELETE FROM admin_sessions WHERE username=?', (username,))
+            after = self._public_account(db.execute('SELECT * FROM admin_accounts WHERE username=?', (username,)).fetchone())
+            self._audit(db, 'local-operator', 'permissions_granted', username, before, after)
+            return after
 
     def designate_faculty(self, username):
         """Explicit local promotion, preserving the account's existing grants."""

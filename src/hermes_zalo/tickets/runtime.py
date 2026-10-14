@@ -46,7 +46,8 @@ def open_chat(settings, values):
     source = LabSheetsSettings.from_mapping(values, test_mode=mode == 'lab_live_test') if lab else TicketsSheetsSettings.from_mapping(values)
     if source is None:
         raise TicketError('Chưa cấu hình bảng lịch cho Tickets trong tin nhắn riêng.')
-    flag = str(values.get('TICKETS_REQUIRE_MANAGER') or ('false' if lab else 'true')).strip().lower()
+    flag = str(values.get('TICKETS_REQUIRE_MANAGER') or '').strip().lower()
+    flag = flag or ('false' if mode == 'lab_live_test' else 'true')
     if flag not in ('true', 'false'):
         raise TicketError('TICKETS_REQUIRE_MANAGER cần là true hoặc false.')
     if mode == 'lab_live_test' and flag != 'false':

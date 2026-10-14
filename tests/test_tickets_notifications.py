@@ -10,7 +10,7 @@ from unittest.mock import patch
 from hermes_zalo.events import IncomingMessage
 from hermes_zalo.tickets.bindings import IdentityStore
 from hermes_zalo.tickets.chat import TicketsChat
-from hermes_zalo.tickets.service import DemoAssignments, TicketError, TicketService, TicketStore, digest, packed
+from hermes_zalo.tickets.service import DemoAssignments, TicketError, TicketService, TicketStore, TrustedAdminActor, digest, packed
 
 
 class PeerNotificationTests(unittest.TestCase):
@@ -110,6 +110,41 @@ class PeerNotificationTests(unittest.TestCase):
         self.service.create(user, preview['preview_token'], '', 'existing-request-001')
         self.restart()
         self.assertIsNone(self.claim())
+
+    def test_peer_dm_acceptance_waits_for_admin_and_keeps_original_destination(self):
+        self.service = TicketService(self.store, self.provider, require_manager=True, clock=lambda: self.now)
+        self.chat = TicketsChat(self.service, self.ids, bot_scope=self.scope)
+        before = self.provider.list_assignments()
+        tid = self.create()
+        notice = self.claim()
+        self.assertEqual(('b', 'dm-b'), (notice['user_id'], notice['chat_id']))
+        self.assertIn('Admin duyệt', notice['text'])
+        self.chat.finish_notification(notice['id'], 'sent')
+        self.assertIn('Chờ Admin', self.say('b', '/dongy ' + self.code(notice)))
+        self.assertEqual('pending_manager', self.status(tid))
+        self.assertEqual(before, self.provider.list_assignments())
+        self.assertIsNone(self.claim())
+        actor = TrustedAdminActor('web:operator', 'Admin', lambda: True)
+        waiting = self.service.admin_detail(actor, tid)
+        self.assertEqual('completed', self.service.admin_action(actor, tid, 'approve', waiting['version'])['status'])
+        self.assertEqual(1, self.store.db.execute('SELECT COUNT(*) FROM ticket_peer_notifications').fetchone()[0])
+        self.assertEqual(1, self.notice()['used'])
+
+    def test_new_admin_policy_blocks_old_queued_and_delivered_invitation_codes(self):
+        before = self.provider.list_assignments()
+        first = self.create()
+        delivered = self.claim()
+        self.chat.finish_notification(delivered['id'], 'sent')
+        second = self.create('CA-12', 'CA-22')
+        self.service = TicketService(self.store, self.provider, require_manager=True, clock=lambda: self.now)
+        self.chat = TicketsChat(self.service, self.ids, bot_scope=self.scope)
+        self.assertEqual('stale', self.status(first))
+        self.assertEqual('stale', self.status(second))
+        self.assertIsNone(self.claim())
+        self.assertEqual('blocked', self.notice()['status'])
+        self.say('b', '/dongy ' + self.code(delivered))
+        self.assertEqual('stale', self.status(first))
+        self.assertEqual(before, self.provider.list_assignments())
 
     def test_reject_preserves_schedule_and_existing_recipient_draft(self):
         before = self.provider.list_assignments()

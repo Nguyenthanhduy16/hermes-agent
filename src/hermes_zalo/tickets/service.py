@@ -1,5 +1,7 @@
 """Durable, explicit two-party shift exchange with read-back reconciliation."""
 from contextlib import contextmanager
+from contextvars import copy_context
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 import hashlib
 import hmac
@@ -10,14 +12,15 @@ import secrets
 import sqlite3
 import threading
 import time
+from typing import Callable
 
-from .providers import TicketsSourceError, TicketsWriteUncertain, require_ticket_access
+from .providers import TicketsSourceError, TicketsWriteUncertain, require_ticket_access, ticket_access_scope
 
 VN = timezone(timedelta(hours=7))
 CONFIRM_TTL_SECONDS = 15 * 60
 ACTIVE = ('pending_peer', 'pending_manager', 'applying', 'uncertain')
 PENDING = ('pending_peer', 'pending_manager')
-LABELS = {'pending_peer': 'Chờ người đổi cùng xác nhận', 'pending_manager': 'Chờ quản lý duyệt',
+LABELS = {'pending_peer': 'Chờ người đổi cùng xác nhận', 'pending_manager': 'Chờ Admin duyệt',
           'applying': 'Đang cập nhật lịch', 'uncertain': 'Cần kiểm tra kết quả',
           'completed': 'Đã đổi ca', 'rejected': 'Đã từ chối', 'cancelled': 'Đã hủy',
           'expired': 'Đã hết hạn', 'stale': 'Lịch hoặc quyền đã thay đổi'}
@@ -29,6 +32,36 @@ class TicketError(Exception):
     def __init__(self, message, status=400):
         super().__init__(message)
         self.status = status
+
+
+@dataclass(frozen=True)
+class TrustedAdminActor:
+    """Backend authority, never deserialized from request identity fields.
+
+    The bridge supplies a stable authenticated subject and a live authorization
+    check. Optional participant IDs must come from an authoritative account
+    link; a display-name match is not an identity link.
+    """
+    actor_id: str
+    name: str
+    authorize: Callable[[], bool] = field(repr=False, compare=False)
+    member_id: str = ''
+    account_id: str = ''
+
+    def allowed(self):
+        try:
+            return (isinstance(self.actor_id, str) and 0 < len(self.actor_id) <= 200
+                    and not any(ord(char) < 32 for char in self.actor_id)
+                    and isinstance(self.name, str) and bool(self.name.strip())
+                    and callable(self.authorize) and self.authorize() is True)
+        except Exception:
+            return False
+
+    def __getitem__(self, key):
+        # The explicit type retains its trust boundary when common domain
+        # methods call each other. Ordinary user dictionaries cannot spoof it.
+        return {'id': 'admin:' + self.actor_id, 'name': 'admin:' + self.actor_id,
+                'role': 'admin', 'member_id': self.member_id}[key]
 
 
 def stamp(ts):
@@ -195,12 +228,32 @@ class TicketService:
             for row in rows:
                 db.execute("UPDATE exchange_tickets SET status='uncertain',version=version+1 WHERE id=?", (row['id'],))
                 self._event(db, row['id'], 'Hệ thống', 'Dịch vụ khởi động lại; cần đối soát trước khi kết luận.')
+            if self.require_manager:
+                # Existing confirmations were issued under a different effect
+                # (peer acceptance could write). Preserve that history but
+                # require a new proposal whose preview explicitly names Admin
+                # approval. Never release claims for possibly written requests.
+                legacy = db.execute("SELECT id FROM exchange_tickets WHERE require_manager=0 "
+                                    "AND status IN ('pending_peer','pending_manager')").fetchall()
+                for row in legacy:
+                    self._transition(db, row['id'], 'stale', 'Hệ thống',
+                                     'Chính sách đổi ca đã đổi: cần người đổi cùng xác nhận rồi Admin duyệt. '
+                                     'Yêu cầu cũ dừng, lịch không thay đổi; gửi /doica để tạo lại.')
+                for preview in db.execute('SELECT hash,body FROM ticket_previews').fetchall():
+                    if not json.loads(preview['body']).get('require_manager'):
+                        db.execute('DELETE FROM ticket_previews WHERE hash=?', (preview['hash'],))
 
     def _event(self, db, ticket, actor, text):
         db.execute('INSERT INTO exchange_events(ticket,at,actor,text) VALUES (?,?,?,?)',
                    (ticket, self.clock(), actor, text))
 
     def _user(self, user):
+        if isinstance(user, TrustedAdminActor):
+            if not user.allowed():
+                raise TicketError('Quyền Admin đã thay đổi; vui lòng đăng nhập và kiểm tra lại.', 403)
+            if self.mode == 'lab_live_test':
+                raise TicketError('Chế độ thử hai thành viên không hỗ trợ duyệt Admin.', 409)
+            return user
         current = self.store.account(user['id']) if isinstance(user, dict) and 'id' in user else None
         if not current:
             raise TicketError('Vui lòng đăng nhập lại.', 401)
@@ -304,38 +357,100 @@ class TicketService:
 
     def _row(self, user, ticket):
         row = self.store.db.execute('SELECT * FROM exchange_tickets WHERE id=?', (ticket,)).fetchone()
-        if not row or not (user['role'] == 'manager' or row['creator'] == user['id'] or row['recipient'] == user['member_id']):
+        if not row or not (user['role'] in ('manager', 'admin') or row['creator'] == user['id'] or row['recipient'] == user['member_id']):
             raise TicketError('Không tìm thấy yêu cầu trong phạm vi được phép.', 404)
         return row
+
+    @staticmethod
+    def _admin_involved(actor, row, body):
+        accounts = {row['creator']} | {account['id'] for members in body.get('bindings', {}).values()
+                                      for account in members}
+        return (bool(actor.account_id) and actor.account_id in accounts
+                or bool(actor.member_id) and actor.member_id in (body['a']['member_id'], body['b']['member_id']))
+
+    def admin_list(self, actor, status=None):
+        """List durable requests without reading Google Sheets or opening a service."""
+        with self.lock:
+            self._admin(actor)
+            if status is not None and status not in LABELS:
+                raise TicketError('Trạng thái yêu cầu chưa hợp lệ.')
+            self._expire()
+            rows = self.store.db.execute(
+                'SELECT * FROM exchange_tickets WHERE (? IS NULL OR status=?) ORDER BY created DESC,id',
+                (status, status)).fetchall()
+            # The Admin adapter filters/paginates this compact snapshot. Expire
+            # once, and defer event histories to the single-request detail API.
+            result = [self._detail_row(actor, row, include_events=False) for row in rows]
+            self._admin(actor)
+            return result
+
+    def _admin(self, actor):
+        if not isinstance(actor, TrustedAdminActor):
+            raise TicketError('Cần phiên Admin được máy chủ xác thực.', 403)
+        return self._user(actor)
+
+    def admin_detail(self, actor, ticket):
+        self._admin(actor)
+        return self.detail(actor, ticket)
+
+    def admin_action(self, actor, ticket, action, version, reason=''):
+        """Use the same serialized write path with live backend revocation checks."""
+        self._admin(actor)
+        if action not in ('approve', 'reject', 'reconcile'):
+            raise TicketError('Thao tác Admin chưa hợp lệ.')
+        if not isinstance(reason, str) or len(reason) > 600:
+            raise TicketError('Lý do tối đa 600 ký tự.')
+        if action == 'reject' and not reason.strip():
+            raise TicketError('Admin cần nhập lý do từ chối.')
+        # Preserve any runtime participant/roster guard already attached by the
+        # caller. Providers call this combined guard again immediately before
+        # POST, including after credential refresh or a fresh source read.
+        parent_context = copy_context()
+
+        def allowed():
+            parent_context.run(require_ticket_access)
+            return actor.allowed()
+
+        with ticket_access_scope(allowed):
+            require_ticket_access()
+            return self._action(actor, ticket, action, version, reason=reason.strip())
 
     def detail(self, user, ticket):
         with self.lock:
             user = self._user(user)
             self._expire()
             row = self._row(user, ticket)
-            body = json.loads(row['body'])
-            actions = []
-            if row['status'] in PENDING:
-                if row['creator'] == user['id']:
-                    actions.append('cancel')
-                if row['recipient'] == user['member_id']:
+            return self._detail_row(user, row)
+
+    def _detail_row(self, user, row, *, include_events=True):
+        """Serialize an authorized row while the caller holds the store lock."""
+        body = json.loads(row['body'])
+        actions = []
+        if row['status'] in PENDING and not isinstance(user, TrustedAdminActor):
+            if row['creator'] == user['id']:
+                actions.append('cancel')
+            if row['recipient'] == user['member_id']:
+                actions.append('reject')
+                if row['status'] == 'pending_peer':
+                    actions.insert(0, 'accept')
+            if user['role'] == 'manager':
+                if 'reject' not in actions:
                     actions.append('reject')
-                    if row['status'] == 'pending_peer':
-                        actions.insert(0, 'accept')
-                if user['role'] == 'manager':
-                    if 'reject' not in actions:
-                        actions.append('reject')
-                    if row['status'] == 'pending_manager' and user['id'] != row['creator'] and user['member_id'] != row['recipient']:
-                        actions.insert(0, 'approve')
-            involved = row['creator'] == user['id'] or row['recipient'] == user['member_id']
-            if row['status'] == 'uncertain' and (user['role'] == 'manager' or not row['require_manager'] and involved):
-                actions.append('reconcile')
-            events = [dict(at=stamp(e['at']), actor=e['actor'], text=e['text']) for e in
-                      self.store.db.execute('SELECT * FROM exchange_events WHERE ticket=? ORDER BY seq', (ticket,))]
-            return dict(id=row['id'], version=row['version'], status=row['status'], status_label=LABELS[row['status']],
-                        created_at=stamp(row['created']), expires_at=stamp(row['expires']), requester_id=row['creator'],
-                        recipient_member_id=row['recipient'], a=body['a'], b=body['b'], reason=row['reason'],
-                        actions=actions, events=events, message=events[-1]['text'] if events else '')
+                if row['status'] == 'pending_manager' and user['id'] != row['creator'] and user['member_id'] != row['recipient']:
+                    actions.insert(0, 'approve')
+        if (isinstance(user, TrustedAdminActor) and row['status'] == 'pending_manager'
+                and not self._admin_involved(user, row, body)):
+            actions.extend(('approve', 'reject'))
+        involved = row['creator'] == user['id'] or row['recipient'] == user['member_id']
+        if row['status'] == 'uncertain' and (user['role'] in ('manager', 'admin') or not row['require_manager'] and involved):
+            actions.append('reconcile')
+        events = ([dict(at=stamp(e['at']), actor=e['actor'], text=e['text']) for e in
+                   self.store.db.execute('SELECT * FROM exchange_events WHERE ticket=? ORDER BY seq', (row['id'],))]
+                  if include_events else [])
+        return dict(id=row['id'], version=row['version'], status=row['status'], status_label=LABELS[row['status']],
+                    created_at=stamp(row['created']), expires_at=stamp(row['expires']), requester_id=row['creator'],
+                    recipient_member_id=row['recipient'], a=body['a'], b=body['b'], reason=row['reason'],
+                    actions=actions, events=events, message=events[-1]['text'] if events else '')
 
     def bootstrap(self, user):
         with self.lock:
@@ -432,7 +547,12 @@ class TicketService:
         self._validate_pair(creator, body['a'], body['b'], rows)
         return body
 
-    def action(self, user, ticket, action, version):
+    def action(self, user, ticket, action, version, *, reason=''):
+        if isinstance(user, TrustedAdminActor):
+            return self.admin_action(user, ticket, action, version, reason=reason)
+        return self._action(user, ticket, action, version, reason=reason)
+
+    def _action(self, user, ticket, action, version, *, reason=''):
         with self.lock:
             user = self._user(user)
             detail = self.detail(user, ticket)
@@ -444,9 +564,14 @@ class TicketService:
             if action == 'reconcile':
                 return self._reconcile(user, row)
             if action in ('cancel', 'reject'):
+                if isinstance(user, TrustedAdminActor) and (not isinstance(reason, str) or not reason.strip() or len(reason) > 600):
+                    raise TicketError('Admin cần nhập lý do từ chối, tối đa 600 ký tự.')
+                require_ticket_access()
                 with self.store.transaction() as db:
                     self._transition(db, ticket, 'cancelled' if action == 'cancel' else 'rejected', user['name'],
-                                     'Đã hủy yêu cầu; lịch không thay đổi.' if action == 'cancel' else 'Đã từ chối; lịch không thay đổi.')
+                                     'Đã hủy yêu cầu; lịch không thay đổi.' if action == 'cancel' else
+                                     'Admin đã từ chối; lịch không thay đổi. Lý do: ' + reason.strip()
+                                     if isinstance(user, TrustedAdminActor) else 'Đã từ chối; lịch không thay đổi.')
                 return self.detail(user, ticket)
             try:
                 body = self._still_valid(row)
@@ -459,7 +584,7 @@ class TicketService:
                 return self.detail(user, ticket)
             if action == 'accept' and row['require_manager']:
                 with self.store.transaction() as db:
-                    self._transition(db, ticket, 'pending_manager', user['name'], 'Đã đồng ý nội dung đổi ca; chờ quản lý duyệt.')
+                    self._transition(db, ticket, 'pending_manager', user['name'], 'Đã đồng ý nội dung đổi ca; chờ Admin duyệt. Lịch chưa thay đổi.')
                 return self.detail(user, ticket)
             # Commit the intent BEFORE crossing the external write boundary.
             with self.store.transaction() as db:
@@ -507,8 +632,16 @@ class TicketService:
                         validate_result(a, b)
             except (TicketError, TicketsSourceError):
                 matched = False
+        manual_admin_check = isinstance(user, TrustedAdminActor) and row['status'] == 'uncertain'
+        if manual_admin_check:
+            # Explicit read-only reconciliation is still an Admin decision.
+            # Final bookkeeping immediately after our own write must continue
+            # even if access is revoked after the POST has already succeeded.
+            require_ticket_access()
+            self._user(user)
         with self.store.transaction() as db:
-            self._transition(db, row['id'], 'completed' if matched else 'uncertain', 'Hệ thống',
+            self._transition(db, row['id'], 'completed' if matched else 'uncertain',
+                             user['name'] if manual_admin_check else 'Hệ thống',
                              {'demo': 'Đã đọc lại và xác nhận đổi đúng hai ca trên dữ liệu mô phỏng.',
                               'sheets_test': 'Đã đọc lại và xác nhận đổi đúng hai ca trên Google Sheets thử nghiệm.',
                               'lab_live': 'Đã đọc lại và xác nhận đổi đúng hai Lab Coach trên lịch hiện có.',

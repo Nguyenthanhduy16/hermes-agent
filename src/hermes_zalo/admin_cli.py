@@ -83,6 +83,8 @@ async def demo(root, port):
     history.complete_turn(group)
     from .issue_demo import seed_issues
     seed_issues(work, members)
+    from .admin_ticket_demo import seed_tickets
+    seed_tickets(work, members, root)
     config = AdminConfig(enabled=True, conversations=True, port=port)
     runtime = AdminRuntime(work, history, prefix.with_suffix('.admin.sqlite3'), config, mode='demo')
     runtime.auth.create_account('admin', 'LabCoach-Demo-2026', PERMISSIONS, role='faculty', display_name='Giảng viên mẫu')
@@ -115,6 +117,9 @@ def main(argv=None):
     create.add_argument('--display-name')
     faculty = commands.add_parser('designate-faculty', help='Chỉ định rõ một tài khoản hiện có làm Giảng viên; giữ nguyên quyền riêng.')
     faculty.add_argument('--username', required=True)
+    grant = commands.add_parser('grant-permissions', help='Cấp thêm quyền rõ ràng cho một tài khoản; giữ mật khẩu và vai trò.')
+    grant.add_argument('--username', required=True)
+    grant.add_argument('--permissions', required=True, help='Các quyền cần thêm, ngăn cách bằng dấu phẩy; ví dụ tickets.')
     args = parser.parse_args(argv)
     try:
         if args.action == 'demo':
@@ -124,6 +129,14 @@ def main(argv=None):
         load_env(Path('.env'))
         import os
         settings = provisioning_settings(os.environ, Path.cwd(), windows=os.name == 'nt')
+        if args.action == 'grant-permissions':
+            auth = AdminAuth(state_prefix(settings).with_suffix('.admin.sqlite3'))
+            try:
+                auth.grant_permissions(args.username, [item.strip() for item in args.permissions.split(',') if item.strip()])
+            finally:
+                auth.close()
+            print('Đã cấp thêm quyền trên máy/volume này; đăng nhập lại nếu phiên cũ bị thu hồi.')
+            return 0
         if args.action == 'designate-faculty':
             auth = AdminAuth(state_prefix(settings).with_suffix('.admin.sqlite3'))
             try:

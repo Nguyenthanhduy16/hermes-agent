@@ -147,11 +147,11 @@ class LabWiringTests(unittest.TestCase):
             self.assertEqual(2, self.invoke('import-zalo-users')[0])
         self.assertFalse((self.root / 'lab_live.sqlite3').exists())
 
-    def test_live_runtime_has_separate_database_no_manager_and_write_disabled(self):
+    def test_live_runtime_has_separate_database_requires_admin_and_write_disabled(self):
         settings = Settings('synthetic-secret-token', frozenset({'synthetic-user-a'}))
         chat = open_chat(settings, self.values | {'TICKETS_CHAT_MODE': 'lab_live'})
         try:
-            self.assertFalse(chat.service.require_manager)
+            self.assertTrue(chat.service.require_manager)
             self.assertFalse(chat.service.provider.settings.write_enabled)
             self.assertFalse(chat.service.provider.settings.exclusive_writer)
             self.assertEqual({}, chat.service.provider.settings.periods)
@@ -165,6 +165,34 @@ class LabWiringTests(unittest.TestCase):
             chat.close()
         with process_lock(self.root / 'lab_live.lock'):
             pass
+
+    def test_live_approval_defaults_for_missing_blank_flag_and_explicit_legacy_opt_out(self):
+        settings = Settings('synthetic-secret-token', frozenset({'synthetic-user-a'}))
+        for flag, expected in ((None, True), ('', True), ('  ', True), ('false', False)):
+            with self.subTest(flag=flag):
+                values = self.values | {'TICKETS_CHAT_MODE': 'lab_live'}
+                if flag is not None:
+                    values['TICKETS_REQUIRE_MANAGER'] = flag
+                chat = open_chat(settings, values)
+                try:
+                    self.assertIs(chat.service.require_manager, expected)
+                finally:
+                    chat.close()
+
+    def test_legacy_two_member_test_mode_keeps_no_admin_default_for_missing_or_blank_flag(self):
+        settings = Settings('synthetic-secret-token', frozenset({'synthetic-user-a'}))
+        for flag in (None, '', '  '):
+            with self.subTest(flag=flag):
+                values = self.values | {'TICKETS_CHAT_MODE': 'lab_live_test',
+                    'TICKETS_LAB_TEST_MEMBERS_JSON': json.dumps([p['member_name'] for p in PEOPLE])}
+                if flag is not None:
+                    values['TICKETS_REQUIRE_MANAGER'] = flag
+                chat = open_chat(settings, values)
+                try:
+                    self.assertFalse(chat.service.require_manager)
+                    self.assertTrue(chat.service.provider.settings.test_mode)
+                finally:
+                    chat.close()
 
     def test_live_admin_modes_are_available_but_live_web_is_rejected(self):
         for command in ('add-user', 'revoke-user', 'bind-zalo', 'unbind-zalo'):

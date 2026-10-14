@@ -216,6 +216,30 @@ class AdminRoleTests(unittest.TestCase):
         self.assertEqual('account_configured:teacher', self.auth.account_detail(teacher, 'teacher')['audit'][0]['action'])
         self.assertEqual(2, self.auth.list_accounts(teacher)['total'])
 
+    def test_explicit_ticket_grant_preserves_identity_password_and_existing_permissions(self):
+        account = self.create_admin(permissions=('members',))
+        old_session = self.login('helper')
+        password_before = self.auth.db.execute("SELECT password FROM admin_accounts WHERE username='helper'").fetchone()[0]
+        result = self.auth.grant_permissions('helper', ['tickets'])
+        self.assertEqual(['members', 'tickets'], result['permissions'])
+        self.assertEqual(account['role'], result['role'])
+        self.assertEqual(account['display_name'], result['display_name'])
+        self.assertEqual(account['version'] + 1, result['version'])
+        self.assert_error(401, lambda: self.auth.user(old_session))
+        self.assertEqual('helper', self.auth.user(self.login('helper'), 'tickets')['username'])
+        self.assertEqual(password_before, self.auth.db.execute("SELECT password FROM admin_accounts WHERE username='helper'").fetchone()[0])
+        self.assertEqual(result, self.auth.grant_permissions('helper', ['tickets']))
+        self.assertEqual([], self.auth.user(self.teacher)['permissions'])
+        self.assert_error(403, lambda: self.auth.user(self.teacher, 'tickets'))
+        self.assertEqual('permissions_granted', self.auth.account_detail(self.teacher, 'helper')['audit'][0]['action'])
+
+    def test_faculty_assigns_ticket_permission_explicitly_without_conversation_access(self):
+        self.create_admin(permissions=('tickets',))
+        helper = self.login('helper')
+        self.assertEqual(['tickets'], self.auth.user(helper)['permissions'])
+        for permission in ('conversations', 'memories', 'issues', 'members'):
+            self.assert_error(403, lambda: self.auth.user(helper, permission))
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -192,7 +192,7 @@ class TicketsChat:
         self.notifications.finish(notification_id, status)
 
     def _notification_display(self, ticket, code, expires):
-        effect = ('Đồng ý xong sẽ chờ quản lý duyệt.' if self.service.require_manager else
+        effect = ('Đồng ý xong sẽ chờ Admin duyệt; lịch chưa thay đổi.' if self.service.require_manager else
                   'Đồng ý sẽ cập nhật lịch Lab thật.' if self.service.mode in ('lab_live', 'lab_live_test') else
                   'Đồng ý sẽ cập nhật bảng thử.' if self.service.mode == 'sheets_test' else
                   'Đồng ý sẽ cập nhật dữ liệu mô phỏng.')
@@ -599,7 +599,7 @@ class TicketsChat:
                     (LIVE_TEST_NOTICE + '\n\n' if self.live_test else '') +
                     comparison(body['a'], body['b'], self.live_test) +
                     f"\n\nLý do: {body['reason'] or 'Không ghi'}\n" +
-                    ('Cần người đổi cùng đồng ý, sau đó quản lý duyệt.' if body['requires_manager'] else
+                    ('Cần người đổi cùng đồng ý, sau đó Admin duyệt mới cập nhật lịch.' if body['requires_manager'] else
                      'Người đổi cùng đồng ý thì cập nhật lịch Lab thật.' if self.service.mode in ('lab_live', 'lab_live_test') else
                      'Người đổi cùng đồng ý thì cập nhật dữ liệu mô phỏng.' if self.service.mode == 'demo' else
                      'Người đổi cùng đồng ý thì cập nhật bảng thử.') +
@@ -666,6 +666,8 @@ class TicketsChat:
                    (LIVE_TEST_NOTICE + '\n\n' if self.live_test else '') +
                    comparison(ticket['a'], ticket['b'], self.live_test) +
                    f"\n\nLý do: {ticket['reason'] or 'Không ghi'}" +
+                   ('\nNgười đổi cùng đã đồng ý; chờ Admin duyệt. Lịch chưa thay đổi.'
+                    if ticket['status'] == 'pending_manager' else '') +
                    (f"\nHạn phản hồi yêu cầu: {when(ticket['expires_at'])}" if ticket['status'] in ACTIVE else '') +
                    (f"\nKết quả: {latest}" if ticket['status'] not in ('pending_peer', 'pending_manager') else '') +
                    f"\n\nLịch sử: /lichsudoica {ticket['id']}\nDanh sách: /yeucau")

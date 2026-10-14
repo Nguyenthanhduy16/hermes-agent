@@ -5,9 +5,13 @@ from datetime import datetime
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
-from hermes_zalo.tickets.providers import TicketsSourceError, TicketsWriteUncertain
-from hermes_zalo.tickets.service import DemoAssignments, TicketError, TicketService, TicketStore
+from hermes_zalo.tickets.providers import (
+    TicketsAccessDenied, TicketsSourceError, TicketsWriteUncertain,
+    require_ticket_access, ticket_access_scope,
+)
+from hermes_zalo.tickets.service import DemoAssignments, TicketError, TicketService, TicketStore, TrustedAdminActor
 
 
 class FakeAssignments:
@@ -290,10 +294,202 @@ class TicketsServiceTests(unittest.TestCase):
     def test_enabling_manager_policy_cannot_leave_old_ticket_auto_approved(self):
         old_service = self.new_service(require_manager=False)
         ticket = self.create(service=old_service)
+        preview = old_service.preview(self.a, 'CA-12', 'CA-22')
         tightened = self.new_service(require_manager=True)
-        result = self.act(self.b, ticket, "accept", service=tightened)
-        self.assertIn(result["status"], ("stale", "pending_manager"))
+        result = tightened.detail(self.b, ticket['id'])
+        self.assertEqual('stale', result['status'])
+        self.assertIn('Admin', result['message'])
+        self.assertEqual(ticket['version'] + 1, result['version'])
+        self.assertEqual([], result['actions'])
+        self.assertEqual(0, self.claims())
+        with self.assertRaises(TicketError):
+            self.act(self.b, ticket, "accept", service=tightened)
+        with self.assertRaises(TicketError):
+            tightened.create(self.a, preview['preview_token'], '', 'migrated-preview-000001')
         self.assertEqual([], self.provider.calls)
+
+    def test_admin_waits_for_peer_and_does_not_create_ticket_accounts(self):
+        actor = TrustedAdminActor('web:operator', 'Admin hiển thị', lambda: True)
+        accounts = self.store.db.execute('SELECT count(*) FROM ticket_accounts').fetchone()[0]
+        ticket = self.create()
+        self.provider.read_error = True
+        listing = self.service.admin_list(actor)
+        self.assertEqual(ticket['id'], listing[0]['id'])
+        self.assertEqual([], listing[0]['actions'])
+        with self.assertRaises(TicketError):
+            self.service.admin_action(actor, ticket['id'], 'approve', ticket['version'])
+        self.provider.read_error = False
+        waiting = self.act(self.b, ticket, 'accept')
+        self.assertIn('Admin', waiting['status_label'])
+        self.assertEqual([], self.provider.calls)
+        completed = self.service.admin_action(actor, ticket['id'], 'approve', waiting['version'])
+        self.assertEqual('completed', completed['status'])
+        self.assertEqual([ticket['id']], self.provider.calls)
+        self.assertIn('admin:web:operator', [event['actor'] for event in completed['events']])
+        self.assertEqual(accounts, self.store.db.execute('SELECT count(*) FROM ticket_accounts').fetchone()[0])
+
+    def test_admin_identity_cannot_be_supplied_as_ordinary_user_fields(self):
+        ticket = self.create()
+        forged = dict(self.c, role='admin', actor_id='web:operator', authorize=lambda: True)
+        with self.assertRaises(TicketError):
+            self.service.admin_list(forged)
+        with self.assertRaises(TicketError):
+            self.service.detail(forged, ticket['id'])
+        for guard in (None, lambda: False, lambda: 1):
+            with self.subTest(guard=guard), self.assertRaises(TicketError):
+                self.service.admin_list(TrustedAdminActor('web:operator', 'Admin', guard))
+        self.assertEqual([], self.provider.calls)
+
+    def test_admin_listing_expires_once_and_defers_event_history_to_detail(self):
+        actor = TrustedAdminActor('web:operator', 'Admin', lambda: True)
+        ticket = self.create()
+        self.create(a='CA-12', b='CA-22')
+        statements = []
+        self.store.db.set_trace_callback(statements.append)
+        try:
+            with patch.object(self.service, '_expire', wraps=self.service._expire) as expire:
+                listing = self.service.admin_list(actor)
+                self.assertEqual(1, expire.call_count)
+        finally:
+            self.store.db.set_trace_callback(None)
+        self.assertEqual(2, len(listing))
+        self.assertTrue(all(item['events'] == [] for item in listing))
+        self.assertFalse(any('FROM exchange_events' in sql for sql in statements))
+        self.assertTrue(self.service.admin_detail(actor, ticket['id'])['events'])
+
+    def test_linked_admin_cannot_approve_their_own_exchange(self):
+        ticket = self.create()
+        waiting = self.act(self.b, ticket, 'accept')
+        for identity in ({'account_id': self.a['id']}, {'account_id': self.b['id']}, {'member_id': self.a['member_id']},
+                         {'member_id': self.b['member_id']}):
+            actor = TrustedAdminActor('web:participant', 'Admin', lambda: True, **identity)
+            self.assertNotIn('approve', self.service.admin_detail(actor, ticket['id'])['actions'])
+            with self.assertRaises(TicketError):
+                self.service.admin_action(actor, ticket['id'], 'approve', waiting['version'])
+        self.assertEqual([], self.provider.calls)
+
+    def test_admin_reject_requires_and_audits_reason_without_writes(self):
+        actor = TrustedAdminActor('web:operator', 'Admin', lambda: True)
+        ticket = self.create()
+        waiting = self.act(self.b, ticket, 'accept')
+        before = deepcopy(self.provider.rows)
+        for reason in ('', '  ', None, 'x' * 601):
+            with self.subTest(reason=reason), self.assertRaises(TicketError):
+                self.service.admin_action(actor, ticket['id'], 'reject', waiting['version'], reason)
+        rejected = self.service.admin_action(actor, ticket['id'], 'reject', waiting['version'], 'Thiếu người trực')
+        self.assertEqual('rejected', rejected['status'])
+        self.assertIn('Thiếu người trực', rejected['message'])
+        self.assertEqual('admin:web:operator', rejected['events'][-1]['actor'])
+        self.assertEqual(before, self.provider.rows)
+        self.assertEqual([], self.provider.calls)
+        self.assertEqual(0, self.claims())
+
+    def test_two_admin_approvals_serialize_to_exactly_one_write(self):
+        actor = TrustedAdminActor('web:operator', 'Admin', lambda: True)
+        ticket = self.create()
+        waiting = self.act(self.b, ticket, 'accept')
+        with self.assertRaises(TicketError):
+            self.service.admin_action(actor, ticket['id'], 'approve', ticket['version'])
+
+        def approve(_):
+            try:
+                return self.service.admin_action(actor, ticket['id'], 'approve', waiting['version'])['status']
+            except TicketError:
+                return 'conflict'
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            results = list(executor.map(approve, range(2)))
+        self.assertEqual(['completed', 'conflict'], sorted(results))
+        self.assertEqual([ticket['id']], self.provider.calls)
+
+    def test_admin_approval_revalidates_pair_after_peer_consent(self):
+        actor = TrustedAdminActor('web:operator', 'Admin', lambda: True)
+        ticket = self.create()
+        waiting = self.act(self.b, ticket, 'accept')
+        self.provider.rows['CA-11']['room'] = 'Changed after consent'
+        stale = self.service.admin_action(actor, ticket['id'], 'approve', waiting['version'])
+        self.assertEqual('stale', stale['status'])
+        self.assertEqual([], self.provider.calls)
+
+    def test_admin_guard_preserves_runtime_guard_and_resets_after_call(self):
+        actor = TrustedAdminActor('web:operator', 'Admin', lambda: True)
+        ticket = self.create()
+        waiting = self.act(self.b, ticket, 'accept')
+        with ticket_access_scope(lambda: False), self.assertRaises(TicketsAccessDenied):
+            self.service.admin_action(actor, ticket['id'], 'approve', waiting['version'])
+        self.assertEqual('pending_manager', self.service.detail(self.b, ticket['id'])['status'])
+        self.assertEqual([], self.provider.calls)
+        require_ticket_access()
+
+    def test_admin_revocation_at_provider_boundary_prevents_external_write(self):
+        active = True
+        actor = TrustedAdminActor('web:operator', 'Admin', lambda: active)
+        ticket = self.create()
+        waiting = self.act(self.b, ticket, 'accept')
+        swap = self.provider.swap
+
+        def guarded_swap(a, b, ticket_id):
+            nonlocal active
+            active = False  # For example, revocation during credential refresh.
+            require_ticket_access()
+            swap(a, b, ticket_id)
+
+        self.provider.swap = guarded_swap
+        with self.assertRaises(TicketError):
+            self.service.admin_action(actor, ticket['id'], 'approve', waiting['version'])
+        self.assertEqual([], self.provider.calls)
+        self.assertEqual('stale', self.service.detail(self.b, ticket['id'])['status'])
+        require_ticket_access()
+
+    def test_admin_uncertain_write_reconciles_without_reposting(self):
+        actor = TrustedAdminActor('web:operator', 'Admin', lambda: True)
+        ticket = self.create()
+        waiting = self.act(self.b, ticket, 'accept')
+        self.provider.behavior = 'timeout_after'
+        uncertain = self.service.admin_action(actor, ticket['id'], 'approve', waiting['version'])
+        self.assertEqual('uncertain', uncertain['status'])
+        done = self.service.admin_action(actor, ticket['id'], 'reconcile', uncertain['version'])
+        self.assertEqual('completed', done['status'])
+        self.assertEqual('admin:web:operator', done['events'][-1]['actor'])
+        self.assertEqual([ticket['id']], self.provider.calls)
+
+    def test_admin_revocation_during_manual_reconciliation_preserves_uncertainty(self):
+        active = True
+        actor = TrustedAdminActor('web:operator', 'Admin', lambda: active)
+        ticket = self.create()
+        waiting = self.act(self.b, ticket, 'accept')
+        self.provider.behavior = 'timeout_after'
+        uncertain = self.service.admin_action(actor, ticket['id'], 'approve', waiting['version'])
+        read = self.provider.list_assignments
+
+        def revoke_and_read():
+            nonlocal active
+            active = False
+            return read()
+
+        self.provider.list_assignments = revoke_and_read
+        with self.assertRaises(TicketsAccessDenied):
+            self.service.admin_action(actor, ticket['id'], 'reconcile', uncertain['version'])
+        detail = self.service.detail(self.b, ticket['id'])
+        self.assertEqual('uncertain', detail['status'])
+        self.assertEqual(uncertain['version'], detail['version'])
+        self.assertEqual([ticket['id']], self.provider.calls)
+
+    def test_policy_migration_preserves_uncertain_ticket_and_claims(self):
+        legacy = self.new_service(require_manager=False)
+        ticket = self.create(service=legacy)
+        self.provider.behavior = 'timeout_after'
+        uncertain = self.act(self.b, ticket, 'accept', service=legacy)
+        self.assertEqual('uncertain', uncertain['status'])
+        tightened = self.new_service(require_manager=True)
+        actor = TrustedAdminActor('web:operator', 'Admin', lambda: True)
+        preserved = tightened.admin_detail(actor, ticket['id'])
+        self.assertEqual('uncertain', preserved['status'])
+        self.assertEqual(uncertain['version'], preserved['version'])
+        self.assertEqual(2, self.claims())
+        done = tightened.admin_action(actor, ticket['id'], 'reconcile', preserved['version'])
+        self.assertEqual('completed', done['status'])
+        self.assertEqual([ticket['id']], self.provider.calls)
 
     def test_source_read_failure_preserves_pending_ticket_for_retry(self):
         ticket = self.create()

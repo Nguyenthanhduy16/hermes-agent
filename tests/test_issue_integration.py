@@ -5,7 +5,7 @@ import re
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 import unittest
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 from hermes_zalo.admin_auth import AdminAuth, AdminError
 from hermes_zalo.admin_web import AdminApplication
@@ -186,6 +186,28 @@ class IssueIntegrationTests(unittest.IsolatedAsyncioTestCase):
         await self.assert_api_error(403, 'GET', '/api/issues', user='newhelper')
         operators = await self.request('GET', '/api/issue/operators', user='teacher')
         self.assertNotIn('newhelper', [item['username'] for item in operators['items']])
+
+    async def test_tickets_only_faculty_manages_accounts_with_nonempty_issue_store(self):
+        self.auth.grant_permissions('teacher', ['tickets'])
+        self.sessions['teacher'] = self.login('teacher')
+        self.assertEqual(['tickets'], self.auth.user(self.sessions['teacher'])['permissions'])
+        identity = await self.create_issue()
+        await self.action(identity, 'claim')
+        authenticate = self.auth.user
+        def faculty_account_access(session, permission=None):
+            self.assertNotEqual('issues', permission, 'Account management must not request an issues grant')
+            return authenticate(session, permission)
+        with patch.object(self.auth, 'user', side_effect=faculty_account_access):
+            listed = await self.request('GET', '/api/admin/accounts', user='teacher')
+            detail = await self.request('GET', '/api/admin/account', user='teacher', query={'username': 'helper'})
+        self.assertEqual(1, next(row for row in listed['items'] if row['username'] == 'helper')['open_issues'])
+        self.assertEqual(1, detail['open_issues'])
+        edit = {key: detail[key] for key in ('username', 'display_name', 'active', 'version')}
+        updated = await self.request('POST', '/api/admin/account/save', user='teacher',
+            data=dict(edit, operation='update', permissions=['issues', 'tickets'], confirm=True))
+        self.assertEqual(['issues', 'tickets'], updated['permissions'])
+        await self.assert_api_error(403, 'GET', '/api/history', user='teacher')
+        await self.assert_api_error(403, 'GET', '/api/admin/accounts', user='memberadmin')
 
     async def test_only_faculty_can_assign_to_current_active_issue_operator(self):
         identity = await self.create_issue()

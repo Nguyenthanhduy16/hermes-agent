@@ -1,6 +1,8 @@
 # Đổi ca bằng tin nhắn riêng trên Zalo
 
-Mọi bước đổi ca thực hiện trong chat riêng với bot, không cần website hoặc Mini App. Chế độ `lab_live` dành cho **mọi thành viên đã được quản trị duyệt và liên kết đúng lịch**. Với `TICKETS_REQUIRE_MANAGER=false`, mỗi yêu cầu do hai người tham gia xác nhận, **không có bước quản lý duyệt**: A chọn hai ca và gửi yêu cầu → B xem trước, đồng ý → bot đổi người phụ trách ở hai ô cột D và đọc lại để kiểm tra.
+Thành viên tạo và xác nhận đổi ca trong chat riêng với bot. Với `lab_live` và `TICKETS_REQUIRE_MANAGER=true`, luồng là **A gửi → B đồng ý → Admin duyệt trên trang quản trị → cập nhật Sheets**. B đồng ý chưa thay đổi lịch. Xem [hướng dẫn duyệt đổi ca](duyet-doi-ca.md).
+
+Chế độ `lab_live` dành cho thành viên đã đăng ký thành công và liên kết đúng lịch. Cờ `TICKETS_REQUIRE_MANAGER=false` vẫn hỗ trợ luồng cũ chỉ cần hai người xác nhận; không dùng cờ này khi cần Admin duyệt.
 
 Có ba chế độ dữ liệu, không dùng lẫn cấu hình:
 
@@ -17,7 +19,7 @@ Có ba chế độ dữ liệu, không dùng lẫn cấu hình:
 Với `lab_live` hoặc `lab_live_test`, ưu tiên [đăng ký Workload](dang-ky.md):
 
 1. Mỗi người nhắn **riêng** bot `/dangky SỐ_ĐIỆN_THOẠI` đã có trong Workload. Bot tự lưu ID người gửi và chat riêng.
-2. Quản trị nhắn riêng `/dangkychoduyet`, xác minh người đăng ký rồi dùng lệnh `/duyetdangky DK-…` bot cung cấp.
+2. Khi bật `REGISTRATION_AUTO_APPROVE=true`, số khớp duy nhất Workload được duyệt ngay. Nếu dùng duyệt thủ công, quản trị nhắn riêng `/dangkychoduyet`, xác minh rồi dùng `/duyetdangky DK-…`. Số có trong Workload không tự xác minh quyền sở hữu số.
 3. Duyệt xong tự có các quyền thành viên trong chat riêng, gồm lịch và đổi ca theo chế độ đã bật. **Không thêm từng người vào `.env`, không tạo CSV, không chạy `Discover` hoặc import cho họ.** Người đã duyệt từ bản trước cũng được áp dụng sau một lần cập nhật/khởi động lại bot.
 4. Khi Tickets lịch Lab đã bật, bot tự tạo liên kết Tickets sau khi quản trị duyệt; A dùng `/doica`, B nhận thông báo hoặc xem `/choxacnhan`. Nếu tra nguồn hoặc liên kết chưa thành công, quản trị nhận hướng xử lý; danh tính đã duyệt vẫn được giữ. Sau khi khắc phục, thành viên mở `/tickets` để thử liên kết lại.
 

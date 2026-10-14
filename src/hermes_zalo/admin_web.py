@@ -16,9 +16,12 @@ from urllib.parse import parse_qs, urlsplit
 
 from .admin_auth import AdminAuth, AdminError
 from .admin_members import AdminMemberError, MemberAdmin
+from .admin_tickets import TicketAdmin
 from .conversations import ConversationConflict, ConversationError
 from .issue_management import IssueError
 from .reminders import VIETNAM_TZ
+from .tickets.service import TicketError
+from .tickets.providers import TicketsAccessDenied, TicketsSourceError
 
 COOKIE = 'labcoach_admin'
 
@@ -49,6 +52,7 @@ class AdminApplication:
     def __init__(self, work, conversations, auth, *, mode='local'):
         self.work, self.conversations, self.auth, self.mode = work, conversations, auth, mode
         self.members = MemberAdmin(work)
+        self.tickets = TicketAdmin(work, auth)
 
     def _context_view(self, result, session):
         if 'memories' in self.auth.user(session)['permissions']:
@@ -70,22 +74,46 @@ class AdminApplication:
                 result['member_name'] = row['name']
         return result
 
+    def _account_issue_counts(self, session):
+        current = self.auth.user(session)
+        if current['role'] != 'faculty':
+            raise AdminError('Chỉ Giảng viên được quản lý tài khoản Admin.', 403)
+        store = getattr(self.work, '_managed_issue_store', None)
+        # IssueStore already authorizes faculty by role. Account management
+        # does not require an additional, explicitly granted issues capability.
+        return store.counts_by_assignee(current) if store else {}
+
     async def route(self, method, path, query, data, session):
         actor = 'web:' + self.auth.user(session)['username']
         if path in ('/api/admin/accounts', '/api/admin/account', '/api/admin/account/save'):
             # Authentication module checks faculty again inside account transactions.
             if method == 'GET' and path == '/api/admin/accounts':
                 result = self.auth.list_accounts(session, query=query.get('q', ''), page=number(query.get('page')))
-                counts = self.work._managed_issue_store.counts_by_assignee(self.auth.user(session, 'issues'))
+                counts = self._account_issue_counts(session)
                 for row in result['items']:
                     row['open_issues'] = counts.get(row['username'], 0)
                 return result
             if method == 'GET' and path == '/api/admin/account':
                 result = self.auth.account_detail(session, query.get('username', ''))
-                counts = self.work._managed_issue_store.counts_by_assignee(self.auth.user(session, 'issues'))
+                counts = self._account_issue_counts(session)
                 return dict(result, open_issues=counts.get(result['username'], 0))
             if method == 'POST' and path == '/api/admin/account/save':
                 return self.auth.manage_account(session, data)
+        if path in ('/api/tickets', '/api/ticket', '/api/ticket/action'):
+            self.auth.user(session, 'tickets')
+            if method == 'GET' and path == '/api/tickets':
+                if set(query) - {'q', 'status', 'page'}:
+                    raise AdminError('Bộ lọc yêu cầu đổi ca chưa hợp lệ.')
+                return await self.tickets.list_tickets(session, query=query.get('q', ''),
+                    status=query.get('status', ''), page=number(query.get('page')))
+            if method == 'GET' and path == '/api/ticket':
+                if set(query) != {'id'}:
+                    raise AdminError('Cần mã yêu cầu đổi ca.')
+                return await self.tickets.detail(session, query.get('id'))
+            if method == 'POST' and path == '/api/ticket/action':
+                if query:
+                    raise AdminError('Tham số duyệt đổi ca chưa hợp lệ.')
+                return await self.tickets.action(session, data)
         if path in ('/api/issues', '/api/issue', '/api/issue/operators', '/api/issue/action', '/api/issue/notification/retry'):
             current = self.auth.user(session, 'issues')
             if not self.work.managed_issues_ready:
@@ -385,6 +413,12 @@ class Handler(BaseHTTPRequestHandler):
             self.reply(error.status, {'error': str(error)})
         except IssueError as error:
             self.reply(error.status, {'error': str(error)})
+        except TicketError as error:
+            self.reply(error.status, {'error': str(error)})
+        except TicketsAccessDenied as error:
+            self.reply(403, {'error': str(error)})
+        except TicketsSourceError as error:
+            self.reply(503, {'error': str(error)})
         except ConversationConflict as error:
             self.reply(409, {'error': str(error)})
         except (AdminMemberError, ConversationError) as error:

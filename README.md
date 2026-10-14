@@ -18,7 +18,7 @@ Người dùng đã xác nhận nhắn riêng nhận được câu trả lời v
 
 **Hiểu câu linh hoạt bằng AI (tùy chọn):** bật `ZALO_NLU_ENABLED=true` sau khi kiểm tra model. Lệnh và mẫu câu cũ vẫn chạy trực tiếp; câu chưa hiểu mới nhờ model đang cấu hình nhận diện ý định, sau đó gọi chức năng đã bật và kiểm tra quyền như cũ. Xem [cách bật, câu thử và giới hạn](docs/ngon-ngu-tu-nhien.md). Không cần đổi model hoặc cấp quyền công cụ cho Hermes.
 
-**Đổi ca bằng tin nhắn riêng:** gửi `/doica` để chọn ca của A → người đổi cùng B → ca của B → lý do → xem trước và xác nhận; `/tickets` vẫn dùng để xem menu hoặc tiếp tục bước đang nhập. Chỉ chọn **ca chưa bắt đầu**. Danh sách dài có lệnh chuyển trang, ví dụ `/doica trang 2`; `tiếp`/`trước` vẫn dùng được. Khi A gửi thành công, bot xếp thông báo để gửi riêng cho B đã được liên kết, kèm hai ca và lệnh đồng ý/từ chối. Chế độ `lab_live` dùng cho mọi thành viên đã duyệt và liên kết đúng lịch; `lab_live_test` vẫn chỉ dành cho hai người thử. Với `TICKETS_REQUIRE_MANAGER=false`, B là người xác nhận cuối. Không cần website hoặc Mini App. Xem [hướng dẫn đổi ca trong Zalo](docs/tickets-chat.md).
+**Đổi ca:** thành viên nhắn riêng `/doica` để chọn hai ca, lý do và gửi yêu cầu; B dùng mã bot gửi để đồng ý/từ chối. Chỉ chọn ca chưa bắt đầu, có chuyển trang khi danh sách dài. Với `lab_live` và `TICKETS_REQUIRE_MANAGER=true`, **B đồng ý → chờ Admin duyệt → mới cập nhật Sheets**. Admin mở **Duyệt đổi ca** để tìm kiếm, xem hai ca, duyệt hoặc từ chối có lý do; quyền `tickets` được cấp riêng. Xem [cách dùng cho thành viên và Admin](docs/duyet-doi-ca.md), [cấu hình và lệnh Zalo](docs/tickets-chat.md). Chế độ thử hai người `lab_live_test` vẫn giữ luồng cũ.
 
 Bot hiển thị yêu cầu gọn và lệnh xác nhận bốn chữ số, ví dụ `/dongy 1234` hoặc `/tuchoi 1234` — dùng đúng mã bot gửi. Bước nhập, bản xem trước và mã xác nhận có tối đa 15 phút; yêu cầu đã gửi chờ tối đa 48 giờ và hết hạn sớm hơn khi ca bắt đầu. Không nhận được tin hoặc mã đã hết hạn: B gửi `/choxacnhan` để xem yêu cầu và lấy mã mới.
 
@@ -38,9 +38,9 @@ Ngày 06/10/2026: đã kiểm tra đọc thật 3 tab Lịch lab và lệnh `/li
 
 Repo có Dockerfile, cấu hình Railway và mẫu biến môi trường. Xem [hướng dẫn deploy và chuyển dữ liệu Windows](docs/deploy-railway.md): dùng **một bot long polling + Volume `/data`**. Ngày 13/10/2026 đã build, chuyển dữ liệu và chạy trên Railway; người dùng xác nhận bot trả lời, nhận đúng thành viên đã đăng ký. Giữ bot Windows tắt khi Railway đang chạy. Chi phí Railway và AI phụ thuộc mức dùng. Bản triển khai hiện tại được tải từ mã cục bộ qua CLI; các thay đổi Docker/Railway chưa được commit/push lên GitHub.
 
-## Trang Admin — Thành viên, Hội thoại & Ghi nhớ
+## Trang Admin — Thành viên, Đổi ca, Issue & Hội thoại
 
-Đã bổ sung quản trị thành viên, hội thoại, ngữ cảnh và ghi nhớ có nguồn. API Admin và lưu hội thoại đã bật trên Railway; giao diện Vercel chờ project để kết nối. API yêu cầu khóa máy chủ, đăng nhập và đúng quyền. Xem [hướng dẫn Admin](docs/admin.md) và [cấu hình Vercel](deploy/vercel-admin/README.md). `run.ps1 AdminDemo` vẫn mở dữ liệu giả trên máy, không gọi Zalo/Sheets/model; file mẫu mặc định tắt các tính năng mới. Quản trị thành viên không tự có quyền đọc chat riêng.
+Trang [Admin trên Vercel](https://hermes-zalo-bot-vercel-admin.vercel.app/) kết nối API Railway, có quản lý thành viên, duyệt đổi ca, issue, hội thoại, ngữ cảnh và ghi nhớ theo quyền riêng. API yêu cầu khóa máy chủ, đăng nhập và đúng quyền. Xem [hướng dẫn Admin](docs/admin.md) và [cấu hình Vercel](deploy/vercel-admin/README.md). `run.ps1 AdminDemo` mở dữ liệu giả trên máy, không gọi Zalo/Sheets/model; có sẵn yêu cầu đổi ca để thử duyệt. Quản trị thành viên không tự có quyền đọc chat riêng.
 
 ## 1. Chuẩn bị
 
