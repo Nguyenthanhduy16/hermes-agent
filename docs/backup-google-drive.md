@@ -6,20 +6,24 @@ Chỉ bật sau khi thư mục đích đã đặt **Quyền truy cập chung →
 
 ## Cài một lần
 
-1. Dùng tài khoản Google sở hữu [thư mục sao lưu](https://drive.google.com/drive/folders/1S7ImiSJoDNg4amxm1L_53lbFeKrmhGCB). Xác nhận thư mục là **Restricted** và tài khoản còn dung lượng Drive.
+Dự án đang cấu hình: [LabCoach Backup trên Apps Script](https://script.google.com/home/projects/1HQftl21r_9i_3zt5jK6V8SVywl93PH69kcpfNWIF12tRxvBCXTkXQPre/edit). Người vận hành mở bằng tài khoản Google sở hữu thư mục; dùng dự án này để kiểm tra **Triggers** và **Executions**, không tạo thêm lịch trùng. Có trigger chưa đồng nghĩa bản sao lưu đã được kiểm chứng.
+
+1. Dùng tài khoản Google sở hữu [thư mục sao lưu](https://drive.google.com/drive/folders/1441O18AnkWStFHsetN_vevUc6OLZI56Q). Xác nhận thư mục là **Restricted** và tài khoản còn dung lượng Drive.
 2. Mở [Apps Script](https://script.google.com/), chọn **Dự án mới**, đặt tên `LabCoach Backup`. Chép toàn bộ [scripts/google-drive-backup.gs](../scripts/google-drive-backup.gs) vào `Code.gs`, rồi lưu. Không chia sẻ quyền chỉnh sửa dự án cho người không quản lý hệ thống.
 3. Vào **Cài đặt dự án → Thuộc tính tập lệnh / Script Properties**, thêm ba dòng:
 
 | Thuộc tính | Giá trị |
 | --- | --- |
 | `LABCOACH_BACKUP_URL` | `https://hermes-zalo-bot-production.up.railway.app/api/backup` |
-| `LABCOACH_BACKUP_FOLDER_ID` | `1S7ImiSJoDNg4amxm1L_53lbFeKrmhGCB` |
+| `LABCOACH_BACKUP_FOLDER_ID` | `1441O18AnkWStFHsetN_vevUc6OLZI56Q` |
 | `LABCOACH_BACKUP_ACCESS_TOKEN` | Khóa truy cập sao lưu riêng do người vận hành cấp; nhập trực tiếp, không dán vào chat/Git |
 
 4. Người vận hành cấu hình `LABCOACH_BACKUP_ACCESS_TOKEN` cùng giá trị bước 3, khóa mã hóa riêng và `LABCOACH_BACKUP_ENABLED=true` trên Railway; mặc định endpoint tắt. **Khóa mã hóa `LABCOACH_BACKUP_KEY` giữ ở server và nơi lưu khóa riêng; không đưa vào Apps Script hoặc thư mục sao lưu.** Khóa truy cập chỉ cho phép tải bản đã mã hóa, không dùng thay Bot Token hoặc mật khẩu Admin.
 5. Chọn hàm **`setupLabCoachBackup` → Chạy / Run**, cấp quyền Drive, kết nối ngoài và tạo lịch chạy cho dự án mình vừa tạo. Hàm này kiểm tra cấu hình, thư mục rồi tạo lịch; chưa tải bản sao lưu ngay. Không cần bấm **Deploy**, không xuất bản web app.
 6. Khi đã sẵn sàng sao lưu thật, chạy **`backupLabCoachDaily`** một lần. Kiểm tra trong thư mục có `LabCoach-backup-YYYY-MM-DD.lcbak` và mục **Executions / Lần thực thi** báo hoàn thành. Chạy lại cùng ngày không tạo thêm bản đã thành công.
 7. Vào **Triggers / Trình kích hoạt**, kiểm tra một lịch `backupLabCoachDaily` và giữ thông báo khi lỗi. Chỉ **một người, một dự án Apps Script** cài lịch này.
+
+**Khi chuyển sang tài khoản Google mới:** dùng dự án Apps Script thuộc tài khoản sở hữu thư mục mới. Nếu đã bật lịch ở tài khoản cũ, đăng nhập tài khoản đó và chạy `stopLabCoachBackup` trước khi bật lịch mới; giữ các bản sao cũ nếu còn cần khôi phục. Không chuyển khóa mã hóa vào Drive.
 
 Đọc màn hình cấp quyền: dịch vụ `DriveApp` xin quyền Drive rộng; **phạm vi OAuth không chỉ giới hạn một thư mục**. Mã script kiểm tra và chỉ ghi/dọn trong thư mục đã cấu hình. Dùng đúng tài khoản sở hữu thư mục, xem lại mã trước khi cấp quyền và giữ dự án Apps Script riêng tư.
 
