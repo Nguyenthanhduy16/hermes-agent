@@ -18,6 +18,7 @@ except ImportError:
     Fernet = None
 
 from hermes_zalo import backup
+from hermes_zalo.ai_usage import AIUsageLimit, AIUsageStore
 
 
 @unittest.skipUnless(Fernet, "optional backup dependency is not installed")
@@ -58,7 +59,7 @@ class BackupTests(unittest.TestCase):
         self.output.write_bytes(backup.MAGIC + Fernet(self.key).encrypt(stream.getvalue()))
 
     def test_round_trip_includes_all_current_databases_and_excludes_secrets_and_archives(self):
-        for suffix in ("admin", "conversations", "profiles", "reminders", "issues", "pilot", "schedule-notices"):
+        for suffix in ("admin", "conversations", "profiles", "reminders", "issues", "pilot", "schedule-notices", "ai-usage"):
             self.database(backup.STATE_ROOT + f"/work-0123456789abcdef.{suffix}.sqlite3")
         self.database(backup.STATE_ROOT + "/zalo-0123456789abcdef.sqlite3")
         self.database("tickets/lab_live.sqlite3")
@@ -70,20 +71,39 @@ class BackupTests(unittest.TestCase):
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text("excluded", encoding="utf-8")
         result = backup.create_backup(self.data, self.output, self.key)
-        self.assertEqual(10, result["files"])
+        self.assertEqual(11, result["files"])
         self.assertFalse(result["cross_database_atomic"])
         self.assertNotIn(b"synthetic internal value", self.output.read_bytes())
         self.assertNotIn(self.state_name.encode(), self.output.read_bytes())
-        self.assertEqual(10, backup.verify_backup(self.output, self.key)["files"])
+        self.assertEqual(11, backup.verify_backup(self.output, self.key)["files"])
         stage = self.root / "empty-stage"
         stage.mkdir()
         restored = backup.restore_backup(self.output, stage, self.key)
-        self.assertEqual(10, restored["files"])
-        self.assertEqual(10, len(list(stage.rglob("*.sqlite3"))))
+        self.assertEqual(11, restored["files"])
+        self.assertEqual(11, len(list(stage.rglob("*.sqlite3"))))
         self.assertFalse((stage / ".env").exists())
         db = sqlite3.connect(stage / self.state_name)
         self.assertEqual("synthetic internal value", db.execute("SELECT value FROM records").fetchone()[0])
         db.close()
+
+    def test_live_ai_usage_backup_restores_quota_and_duplicate_protection(self):
+        name = backup.STATE_ROOT + "/work-0123456789abcdef.ai-usage.sqlite3"
+        clock = lambda: 1791972000
+        source = AIUsageStore(self.data / name, user_daily_limit=1, clock=clock)
+        self.addCleanup(source.close)
+        source.reserve("synthetic-user", "synthetic-message")
+        result = backup.create_backup(self.data, self.output, self.key)
+        self.assertEqual(2, result["files"])
+        stage = self.root / "restored-usage"
+        backup.restore_backup(self.output, stage, self.key)
+        restored = AIUsageStore(stage / name, user_daily_limit=1, clock=clock)
+        self.addCleanup(restored.close)
+        self.assertEqual(source.snapshot("synthetic-user"), restored.snapshot("synthetic-user"))
+        for event, reason in (("synthetic-message", "duplicate"), ("new-message", "user_daily")):
+            with self.subTest(event=event), self.assertRaises(AIUsageLimit) as raised:
+                restored.reserve("synthetic-user", event)
+            self.assertEqual(reason, raised.exception.reason)
+        self.assertEqual(1, source.snapshot().total_count)
 
     def test_live_wal_committed_data_is_snapshotted_without_checkpointing_source(self):
         path = self.data / self.state_name

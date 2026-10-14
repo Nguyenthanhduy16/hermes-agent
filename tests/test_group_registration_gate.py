@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, patch
 from hermes_zalo.conversations import ConversationStore
 from hermes_zalo.events import IncomingMessage, parse_update
 from hermes_zalo.registration_flow import GROUP_GUIDE, UNAVAILABLE
+from hermes_zalo.nlu import OUT_OF_SCOPE
 import test_registration_adapter as registration_contract
 import test_adapter as contract
 
@@ -119,7 +120,7 @@ class GroupRegistrationGateTests(unittest.IsolatedAsyncioTestCase):
         self.adapter.client.send_text_chunk.assert_not_awaited()
         self.assert_no_private_work()
 
-    async def test_approved_member_keeps_group_menu_calendar_and_normal_chat(self):
+    async def test_approved_member_keeps_group_work_but_not_general_chat(self):
         record = self.register()
         for text in ('/menu', '/lich homnay', 'Giải thích Python là gì?'):
             event = self.group_event(text)
@@ -128,9 +129,9 @@ class GroupRegistrationGateTests(unittest.IsolatedAsyncioTestCase):
         replies = [call.args[1] for call in self.adapter.client.send_text_chunk.await_args_list]
         self.assertTrue(any('MENU BOT' in text for text in replies))
         self.assertIn('Synthetic approved calendar', replies)
-        self.assertIn('Synthetic group answer', replies)
+        self.assertIn(OUT_OF_SCOPE, replies)
         self.sheets.lab_calendar.assert_awaited_once()
-        self.adapter.managed_chat.reply.assert_awaited_once()
+        self.adapter.managed_chat.reply.assert_not_awaited()
         self.assertNotIn('new-user', self.adapter.settings.allowed_users)
         self.assertEqual('dm-new-user', record.chat_id)
         self.assertTrue(all(call.args[0] == 'g1' for call in self.adapter.client.send_text_chunk.await_args_list))
@@ -182,32 +183,32 @@ class GroupRegistrationGateTests(unittest.IsolatedAsyncioTestCase):
         self.adapter.client.send_text_chunk.assert_awaited_once_with('g1', UNAVAILABLE)
         self.assert_no_private_work()
 
-    async def test_revoke_during_group_generation_blocks_answer(self):
+    async def test_revoke_during_group_work_blocks_answer(self):
         record = self.register()
-        event = self.group_event('Giải thích Python là gì?')
+        event = self.group_event('/lich homnay')
         self.archive.mark_notice(parse_update(event))
 
         async def revoke_then_answer(*args):
             self.adapter.work.registration.store.revoke('u1', record.member_id)
             return 'Must not leave server after revoke'
 
-        self.adapter.managed_chat.reply.side_effect = revoke_then_answer
-        await self.adapter._dispatch(event)
+        with patch.object(self.adapter.work, 'handle', new=AsyncMock(side_effect=revoke_then_answer)):
+            await self.adapter._dispatch(event)
         self.adapter.client.send_text_chunk.assert_not_awaited()
         self.assertEqual([], self.archive.context(parse_update(event).session_key)['messages'])
 
     async def test_revoke_between_chunks_blocks_remaining_answer(self):
         record = self.register()
-        event = self.group_event('Giải thích Python là gì?')
+        event = self.group_event('/lich homnay')
         self.archive.mark_notice(parse_update(event))
-        self.adapter.managed_chat.reply.return_value = 'x' * 4500
 
         async def send_then_revoke(*args):
             self.adapter.work.registration.store.revoke('u1', record.member_id)
             return {'message_id': 'one-synthetic-chunk'}
 
         self.adapter.client.send_text_chunk.side_effect = send_then_revoke
-        await self.adapter._dispatch(event)
+        with patch.object(self.adapter.work, 'handle', new=AsyncMock(return_value='x' * 4500)):
+            await self.adapter._dispatch(event)
         self.assertEqual(1, self.adapter.client.send_text_chunk.await_count)
         self.assertEqual([], self.archive.context(parse_update(event).session_key)['messages'])
 

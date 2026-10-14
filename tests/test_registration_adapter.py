@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, patch
 
 from hermes_zalo.sheets import SheetsSettings
 from hermes_zalo.work import WorkService
+from hermes_zalo.nlu import OUT_OF_SCOPE
 from hermes_zalo.workload import WorkloadSettings
 from test_registration_flow import FakeDirectory
 import test_adapter as contract
@@ -73,8 +74,8 @@ class RegistrationAdapterTests(unittest.IsolatedAsyncioTestCase):
         await self.send('/lich homnay')
         self.assertEqual('Synthetic approved calendar', self.replies()[-1])
         await self.send('Giải thích Python là gì?')
-        self.handler.assert_awaited_once()
-        self.assertNotIn(self.directory.person.phone, self.handler.await_args.args[0].text)
+        self.handler.assert_not_awaited()
+        self.assertEqual(OUT_OF_SCOPE, self.replies()[-1])
         await self.send('/dangkychoduyet')
         self.assertIn('chưa được cấp quyền quản trị', self.replies()[-1])
         self.assertNotIn('new-user', self.adapter.settings.allowed_users)
@@ -103,23 +104,20 @@ class RegistrationAdapterTests(unittest.IsolatedAsyncioTestCase):
         await self.approve()
         self.handler.assert_not_awaited()
         await self.send('Giải thích Python là gì?')
-        self.handler.assert_awaited_once()
-        event = self.handler.await_args.args[0]
-        self.assertEqual(('new-user', 'dm-new-user'), (event.source.user_id, event.source.chat_id))
-        self.assertFalse(event.allow_gateway_control)
-        self.assertEqual([], self.adapter.toolsets_for_source(event.source))
-        self.assertNotIn(self.directory.person.phone, event.text)
+        self.handler.assert_not_awaited()
+        self.assertEqual(OUT_OF_SCOPE, self.replies()[-1])
+        self.assertEqual('dm-new-user', self.adapter.client.send_text_chunk.await_args.args[0])
         before = self.adapter.client.send_text_chunk.await_count
         for chat, kind in (('wrong-dm', 'PRIVATE'), ('g1', 'GROUP'), ('other-group', 'GROUP')):
             await self.send('Giải thích Python là gì?', chat=chat, kind=kind)
         self.assertEqual(before, self.adapter.client.send_text_chunk.await_count)
-        self.handler.assert_awaited_once()
+        self.handler.assert_not_awaited()
         await self.send('/lich homnay')
         self.assertEqual('Synthetic approved calendar', self.replies()[-1])
         self.sheets.lab_calendar.assert_awaited_once()
         for text in ('/nhac sau 1 phut | thử', '/issue tao Tiêu đề | Mô tả'):
             await self.send(text)
-        self.handler.assert_awaited_once()
+        self.handler.assert_not_awaited()
         self.assertEqual(allowed, self.adapter.settings.allowed_users)
         self.assertEqual(sheets_users, self.sheets.settings.users)
         self.assertFalse(self.sheets.settings.issues_enabled)

@@ -10,6 +10,7 @@ from hermes_zalo.config import Settings
 from hermes_zalo.events import IncomingMessage
 from hermes_zalo.knowledge import NO_SOURCES
 from hermes_zalo.natural import interpret, is_work_question
+from hermes_zalo.nlu import OUT_OF_SCOPE
 from hermes_zalo.work import WorkService
 
 
@@ -64,10 +65,12 @@ class NaturalConversationServiceTests(unittest.IsolatedAsyncioTestCase):
     async def say(self, text, user="member"):
         return await self.work.handle(IncomingMessage("g1", user, text, "GROUP", text))
 
-    async def test_general_chat_falls_through_but_internal_missing_data_never_does(self):
+    async def test_general_chat_returns_scope_guide_and_internal_questions_stay_grounded(self):
         with patch.object(self.work.knowledge, "answer", return_value=NO_SOURCES) as knowledge:
             for text in ("Xin chào", "Giải thích Python là gì?", "Viết giúp mình lời chúc sinh nhật"):
-                self.assertIsNone(await self.say(text))
+                reply = await self.say(text)
+                self.assertEqual(OUT_OF_SCOPE, reply)
+                self.assertFalse(reply.context_eligible)
             knowledge.assert_not_called()
             for text in ("Ai phụ trách phòng lab?", "Nhóm mình nghỉ Tết khi nào?", "Quy định xin nghỉ phép?"):
                 self.assertIn(NO_SOURCES, await self.say(text))

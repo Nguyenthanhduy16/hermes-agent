@@ -1,8 +1,8 @@
 # hermes-zalo-bot
 
-Bot hỗ trợ công việc trên **Zalo Bot Platform chính thức**, dùng Hermes Agent để xử lý hội thoại: **tin Zalo → Hermes → trả lời đúng cuộc trò chuyện**.
+Bot hỗ trợ công việc trên **Zalo Bot Platform chính thức**: **tin Zalo → kiểm tra quyền → lệnh/mẫu câu hoặc AI nhận diện ý định → chức năng đã bật → trả lời đúng cuộc trò chuyện**. Dùng model/provider cấu hình trong Hermes; không mở trò chuyện kiến thức chung.
 
-Người dùng đã xác nhận nhắn riêng nhận được câu trả lời và bot nhớ tên trong cùng hội thoại. Đã bổ sung lệnh tra tài liệu có nguồn, nhắc việc, đọc lịch và tạo issue qua Google Sheets có xác nhận, cùng báo cáo dùng thử. Phần đọc lịch hỗ trợ bảng mẫu và các tab **Lịch lab có ô gộp**; xem [cấu hình lịch hiện có](docs/huong-dan-tinh-nang.md#đọc-bảng-lịch-lab-hiện-có). Luồng lịch qua Zalo, nhắc việc và ghi issue vẫn cần người dùng thử thực tế. Chưa triển khai máy chủ.
+Bot đã triển khai trên Railway, giao diện Admin trên Vercel; người dùng đã xác nhận nhận/gửi Zalo và tra lịch. Có đăng ký Workload, tài liệu có nguồn, lịch, đổi ca có duyệt, nhắc lịch và Issue theo quyền. Phần đọc lịch hỗ trợ bảng mẫu và các tab **Lịch lab có ô gộp**; xem [cấu hình lịch hiện có](docs/huong-dan-tinh-nang.md#đọc-bảng-lịch-lab-hiện-có). Mỗi bản cập nhật vẫn cần phân biệt kiểm thử mô phỏng với thử nhận/gửi thật.
 
 **Bot đã chạy được?** Xem [hướng dẫn tính năng mới theo từng bước](docs/huong-dan-tinh-nang.md). Bản tài liệu hiện tìm trích đoạn `.md`/`.txt` theo từ khóa, chưa có PDF/Word hoặc hỏi đáp ngữ nghĩa.
 
@@ -12,9 +12,9 @@ Người dùng đã xác nhận nhắn riêng nhận được câu trả lời v
 
 **Nhắc lịch tự động:** khi bật, bot nhắn riêng **20:00 tối hôm trước** để tổng hợp lịch ngày mai và **30 phút trước mỗi ca** để chuẩn bị check-in. Chỉ gửi cho thành viên đã đăng ký thành công, khớp đúng người trong cột Lab Coach; không có ca thì không gửi. Tin nhắc không ghi nhận điểm danh. Xem [cách bật, giờ nhắc và giới hạn](docs/nhac-lich-tu-dong.md).
 
-**Thành viên nhóm:** khi bật `ZALO_GROUP_ACCESS=members`, mọi thành viên trong nhóm được cho phép có thể **@bot hoặc trả lời tin bot** để hỏi lịch/quy định được chia sẻ và trò chuyện bình thường, như `Giải thích Python là gì?` hoặc `Viết giúp mình lời chúc sinh nhật`. Trò chuyện dùng Hermes, tách phiên theo người và cuộc trò chuyện; không mở công cụ cho model tự sửa lịch/tạo issue. Xem [hướng dẫn nhóm](docs/dung-trong-nhom.md).
+**Thành viên nhóm:** khi bật `ZALO_GROUP_ACCESS=members`, thành viên đăng ký hợp lệ trong nhóm được cho phép có thể **@bot hoặc trả lời tin bot** để hỏi công việc Lab và tài liệu được chia sẻ. Câu ngoài phạm vi nhận hướng dẫn `/menu`, không chuyển sang model trả lời kiến thức chung. Lệnh trực tiếp không tốn lượt AI; phân loại câu chưa hiểu có hạn mức mặc định **10 lượt/người/ngày, 300 lượt/toàn bot/ngày** theo giờ Việt Nam. Xem [hướng dẫn nhóm](docs/dung-trong-nhom.md) và [cấu hình AI](docs/ngon-ngu-tu-nhien.md).
 
-**Đăng ký thành viên:** nhắn **riêng** `/dangky SỐ_ĐIỆN_THOẠI` đúng trong tab `Workload - Lab coach`. Khi bật `REGISTRATION_AUTO_APPROVE=true`, số khớp duy nhất được duyệt ngay; bot báo **“✅ Đăng ký thành công!”**, tên và lệnh `/menu`. Bot tự lưu `user_id`, chat riêng và mã thành viên; không thêm từng người vào `.env`. Người đang chờ gửi lại lệnh; đăng ký lặp không tạo bản ghi trùng. Số trùng hoặc đã liên kết tài khoản khác bị chặn; từng bị từ chối/thu hồi vẫn cần quản trị duyệt lại. Số có trong bảng không xác minh người gửi sở hữu số đó. Đăng ký thành công mở trò chuyện, lịch, đổi ca, nhắc việc và góp ý trong chat riêng; issue/tài liệu vẫn theo cấu hình riêng. Quản trị dùng `/thanhvien` để xem và thu hồi. Không tự cấp quản trị hoặc quyền nhóm; tên trùng vẫn cần ánh xạ để hỏi lịch cá nhân/đổi ca. Đặt `REGISTRATION_AUTO_APPROVE=false` để dùng duyệt thủ công. Xem [cấu hình và cách dùng](docs/dang-ky.md).
+**Đăng ký thành viên:** nhắn **riêng** `/dangky SỐ_ĐIỆN_THOẠI` đúng trong tab `Workload - Lab coach`. Khi bật `REGISTRATION_AUTO_APPROVE=true`, số khớp duy nhất được duyệt ngay; bot báo **“✅ Đăng ký thành công!”**, tên và lệnh `/menu`. Bot tự lưu `user_id`, chat riêng và mã thành viên; không thêm từng người vào `.env`. Người đang chờ gửi lại lệnh; đăng ký lặp không tạo bản ghi trùng. Số trùng hoặc đã liên kết tài khoản khác bị chặn; từng bị từ chối/thu hồi vẫn cần quản trị duyệt lại. Số có trong bảng không xác minh người gửi sở hữu số đó. Đăng ký thành công mở lịch, đổi ca, nhắc việc và góp ý trong chat riêng; issue/tài liệu vẫn theo cấu hình riêng. Quản trị dùng `/thanhvien` để xem và thu hồi. Không tự cấp quản trị hoặc quyền nhóm; tên trùng vẫn cần ánh xạ để hỏi lịch cá nhân/đổi ca. Đặt `REGISTRATION_AUTO_APPROVE=false` để dùng duyệt thủ công. Xem [cấu hình và cách dùng](docs/dang-ky.md).
 
 **Có thể hỏi tự nhiên:** `Mình muốn đổi ca`, `Ai đang chờ mình xác nhận?`, `Xem thông báo` hoặc `Bot làm được gì?`. Bot mở đúng phần hướng dẫn hoặc danh sách khi nhận được mẫu câu đã hỗ trợ; lịch/quy định vẫn tra dữ liệu được cấp quyền. Đổi ca và tạo issue vẫn cần các bước xác nhận, không thực hiện bằng câu “đồng ý” tự do. Xem [ví dụ câu hỏi](docs/lenh-zalo.md#hỏi-tự-nhiên-và-trò-chuyện).
 
@@ -122,7 +122,7 @@ Trong khoảng 60 giây chờ, mở Zalo và gửi một tin riêng cho bot. Ter
 
 Sửa `.env`: sao chép `user_id` vào `ZALO_ALLOWED_USERS`. Nhiều ID ngăn cách bằng dấu phẩy, không dùng `*`.
 
-Đây là bước cấp quyền ban đầu cho quản trị. Nếu bật [đăng ký qua Workload](docs/dang-ky.md), thành viên mới tự nhắn riêng đăng ký; danh sách chờ duyệt có ID bot đã thu nhận. Không cần chạy `Discover` hoặc thu ID thủ công cho từng thành viên. Duyệt xong tự có quyền thành viên trong chat riêng: lịch, đổi ca, nhắc việc, góp ý và trò chuyện; issue cần bật toàn hệ thống và tài liệu cần được chia sẻ. Không thêm từng thành viên vào `.env` hoặc khởi động lại sau mỗi lần duyệt. Người đã duyệt từ bản trước được áp dụng sau một lần cập nhật/khởi động lại.
+Đây là bước cấp quyền ban đầu cho quản trị. Nếu bật [đăng ký qua Workload](docs/dang-ky.md), thành viên mới tự nhắn riêng đăng ký; danh sách chờ duyệt có ID bot đã thu nhận. Không cần chạy `Discover` hoặc thu ID thủ công cho từng thành viên. Duyệt xong tự có quyền thành viên trong chat riêng: lịch, đổi ca, nhắc việc, góp ý; issue cần bật toàn hệ thống và tài liệu cần được chia sẻ. Không thêm từng thành viên vào `.env` hoặc khởi động lại sau mỗi lần duyệt. Người đã duyệt từ bản trước được áp dụng sau một lần cập nhật/khởi động lại.
 
 ```dotenv
 ZALO_ALLOWED_USERS=id_nguoi_1,id_nguoi_2
@@ -151,7 +151,7 @@ Sau đó:
 .\scripts\run.ps1 Start
 ```
 
-Mở Zalo, dùng người đã cấp quyền gửi một tin mới cho bot, ví dụ: “Hãy chào mình bằng tiếng Việt”. Bot phải trả lời trong chính cuộc trò chuyện đó.
+Mở Zalo, dùng người đã cấp quyền gửi `/menu`, rồi hỏi lịch. Thử câu ngoài phạm vi như “Viết lời chúc sinh nhật”: bot phải trả hướng dẫn phạm vi, không viết lời chúc.
 
 **Dừng:** bấm `Ctrl+C` trong cửa sổ đang chạy. **Bật lại:** chạy `Start`. Sau khi sửa `.env`, dừng rồi bật lại.
 
@@ -161,7 +161,7 @@ Biến môi trường đã đặt trong cửa sổ PowerShell được ưu tiên
 Remove-Item Env:ZALO_BOT_TOKEN, Env:ZALO_ALLOWED_USERS, Env:ZALO_ALLOWED_GROUPS -ErrorAction SilentlyContinue
 ```
 
-Hermes chỉ xử lý hội thoại; công cụ thao tác máy, duyệt web và các lệnh điều khiển Hermes qua Zalo bị vô hiệu hóa. Lệnh công việc do adapter xử lý trực tiếp. Phiên được tách theo loại chat, ID cuộc trò chuyện và ID người gửi.
+AI chỉ phân loại yêu cầu công việc theo schema; không có đường gọi model để trò chuyện tự do. Công cụ thao tác máy, duyệt web và các lệnh điều khiển Hermes qua Zalo bị vô hiệu hóa. Lệnh công việc do adapter xử lý trực tiếp. Phiên được tách theo loại chat, ID cuộc trò chuyện và ID người gửi.
 
 ## Các tính năng công việc
 
@@ -199,7 +199,7 @@ Giới hạn hiện tại: tối đa **5 lượt tra đăng ký/người/giờ v
 
 Bot nhận tin nhóm khi được nhắc tên hoặc có người trả lời tin của bot; không nhận toàn bộ hội thoại nhóm. ID dùng gửi về nhóm là `chat.id`. [Quy tắc tương tác nhóm](https://docs.zaloplatforms.com/docs/BOT/best-practices/build-bot-interaction-with-group)
 
-Nhóm luôn cần được cấp quyền. Với `members`, thành viên có thể hỏi dữ liệu đã chia sẻ và trò chuyện. Khi bật đăng ký Workload, người chưa đăng ký thành công chỉ nhận hướng dẫn nhắn riêng `/dangky SỐ_ĐIỆN_THOẠI`, dùng **số điện thoại hiện tại trên Workload**; đăng ký xong mới dùng bot trong nhóm. Nhắn riêng cần allowlist hoặc đăng ký đã duyệt đúng chat. Duyệt tự cấp quyền thành viên trong chat riêng: lịch, đổi ca, nhắc việc, góp ý, trò chuyện và issue khi đã bật. Tài liệu dùng chung cần được chia sẻ rõ trong manifest; các quyền nhóm và tài liệu riêng giữ nguyên. Với `allowlist`, cả nhóm và người gửi đều phải có trong danh sách. **Không gửi số điện thoại đăng ký trong nhóm.** Dù ngữ cảnh model được tách theo người, **câu trả lời gửi trong nhóm vẫn hiển thị cho các thành viên của nhóm**.
+Nhóm luôn cần được cấp quyền. Với `members`, thành viên có thể hỏi dữ liệu đã chia sẻ và hỏi công việc Lab. Khi bật đăng ký Workload, người chưa đăng ký thành công chỉ nhận hướng dẫn nhắn riêng `/dangky SỐ_ĐIỆN_THOẠI`, dùng **số điện thoại hiện tại trên Workload**; đăng ký xong mới dùng bot trong nhóm. Nhắn riêng cần allowlist hoặc đăng ký đã duyệt đúng chat. Duyệt tự cấp quyền thành viên trong chat riêng: lịch, đổi ca, nhắc việc, góp ý và issue khi đã bật. Tài liệu dùng chung cần được chia sẻ rõ trong manifest; các quyền nhóm và tài liệu riêng giữ nguyên. Với `allowlist`, cả nhóm và người gửi đều phải có trong danh sách. **Không gửi số điện thoại đăng ký trong nhóm.** Dù ngữ cảnh model được tách theo người, **câu trả lời gửi trong nhóm vẫn hiển thị cho các thành viên của nhóm**.
 
 ## 6. Bài thử trước khi cho nhóm dùng
 
@@ -211,7 +211,7 @@ Nhóm luôn cần được cấp quyền. Với `members`, thành viên có th�
 | Nhóm và người đều được cấp quyền @bot | Bot trả lời đúng nhóm |
 | Nhóm chưa được cấp quyền @bot | Không xử lý câu hỏi |
 | Người chưa có trong danh sách user @bot trong nhóm, chế độ `allowlist` | Không xử lý câu hỏi |
-| Thành viên @bot trong nhóm được phép, chế độ `members` | Nếu bật đăng ký: chưa đăng ký chỉ nhận hướng dẫn nhắn riêng; đăng ký thành công mới tra dữ liệu đã chia sẻ hoặc trò chuyện; tác vụ ghi vẫn cần quyền riêng |
+| Thành viên @bot trong nhóm được phép, chế độ `members` | Nếu bật đăng ký: chưa đăng ký chỉ nhận hướng dẫn nhắn riêng; đăng ký thành công mới tra dữ liệu đã chia sẻ hoặc hỏi công việc Lab; tác vụ ghi vẫn cần quyền riêng |
 | Câu trả lời dài | Chia thành nhiều tin phù hợp giới hạn Zalo |
 | Mất mạng rồi có lại | Tiến trình nhận tin có cơ chế thử lại; kiểm tra bằng tin mới |
 

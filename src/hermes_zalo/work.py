@@ -21,6 +21,7 @@ from .registration_flow import RegistrationFlow, SUCCESS_PREFIX, UNAVAILABLE as 
 from .registration import RegistrationError
 from .workload import WorkloadError
 from . import nlu
+from .ai_usage import AIUsageStore, AIUsageError, AIUsageLimit, options as ai_usage_options
 
 
 logger = logging.getLogger(__name__)
@@ -49,6 +50,13 @@ class WorkService:
             nlu.IntentRouter(timeout=nlu_timeout, **nlu.transport_options(values))
             if nlu_enabled and not self._nlu_error else None)
         prefix = state_prefix(settings)
+        self.ai_usage = None
+        self._ai_usage_error = False
+        try:
+            self.ai_usage = AIUsageStore(prefix.with_suffix('.ai-usage.sqlite3'), **ai_usage_options(values))
+        except (ValueError, AIUsageError):
+            self._ai_usage_error = True
+            logger.warning('AI usage limits unavailable; explicit commands remain available')
         self.settings = settings
         self._tickets_values = dict(values)
         self._tickets_chat = None if tickets_chat is _LAZY_TICKETS else tickets_chat
@@ -260,6 +268,8 @@ class WorkService:
         self.pilot.close()
         self.profiles.close()
         self.registration.close()
+        if self.ai_usage is not None:
+            self.ai_usage.close()
 
     async def _open_tickets(self):
         chat = await self._get_tickets()
@@ -508,8 +518,10 @@ class WorkService:
         return answer
 
     def _natural_intents(self, message):
-        allowed = {'menu', 'chat', 'documents', 'clarify'}
+        allowed = {'menu', 'out_of_scope', 'clarify'}
         scope = (message.user_id, message.chat_id, message.chat_type)
+        if self.knowledge.list_sources(*scope, approved_member=bool(self.registration.approved(message))) not in (NO_SOURCES, UNAVAILABLE):
+            allowed.add('documents')
         if self._calendar_scope_allowed(*scope):
             allowed.add('calendar')
         if self.member_feature_allowed(*scope):
@@ -525,15 +537,21 @@ class WorkService:
         if not (is_allowed(message, self.settings.allowed_users, self.settings.allowed_groups,
                            group_members=self.settings.group_access == 'members') or self.registration.approved(message)):
             return 'Bạn hoặc cuộc trò chuyện này chưa được cấp quyền dùng bot.'
-        if self._nlu_error:
+        if nlu.private_input(message.text):
+            return self.registration.guide
+        if self._nlu_error or self._ai_usage_error or self.ai_usage is None:
             return nlu.UNAVAILABLE
         started = time.monotonic()
         outcome = 'ok'
         grant = self.registration.identity(message.user_id)
         try:
             allowed = self._natural_intents(message)
+            # Zalo identity keeps one quota across chats and registration resets
+            # or corrections. The store persists only hashes of these keys.
+            user_key = 'zalo:' + message.user_id
+            self.ai_usage.reserve(user_key, message.key)
             data = await self.intent_router.classify(message.text, allowed=allowed,
-                                                     user_key=sha256(message.user_id.encode()).hexdigest())
+                                                     user_key=sha256(user_key.encode()).hexdigest())
             # Revalidate even injected classifiers; none may bypass the closed schema.
             data = nlu.validate(data, message.text, allowed)
             if self.registration.identity(message.user_id) != grant or self.registration.blocked(message):
@@ -541,9 +559,12 @@ class WorkService:
                 return 'Quyền đăng ký đã thay đổi. Gửi /dangky trangthai trong chat riêng rồi thử lại.'
             action = nlu.to_action(data, message.text)
             if action.reply:
+                if not getattr(action.reply, 'context_eligible', True):
+                    outcome = 'unsupported'
                 return action.reply
             if not action.command:
-                return None  # Hermes general chat, still no tools or internal context.
+                outcome = 'unsupported'
+                return nlu.OUT_OF_SCOPE
             argument = action.argument
             if action.person:
                 if not self._calendar_scope_allowed(message.user_id, message.chat_id, message.chat_type):
@@ -562,6 +583,13 @@ class WorkService:
             if action.prefix and response and 'Bước 1/4' in response:
                 return action.prefix + response
             return response
+        except AIUsageLimit as error:
+            outcome = 'rate_limited'
+            return nlu.QUOTA_REPLIES.get(error.reason, nlu.UNAVAILABLE)
+        except AIUsageError:
+            outcome = 'error'
+            logger.warning('AI usage reservation unavailable; no message or identifiers logged')
+            return nlu.UNAVAILABLE
         except nlu.IntentError as error:
             outcome = 'timeout' if str(error) == 'timeout' else 'rate_limited' if str(error) == 'rate_limited' else 'error'
             logger.warning('Natural-language routing unavailable (%s); no message or provider details logged', outcome)
@@ -818,22 +846,23 @@ class WorkService:
                 identity = self.pilot.feedback(argument.strip())
                 return f"Đã ghi nhận góp ý {identity} để tổng hợp đợt dùng thử."
             if command.startswith("/"):
-                outcome = "error"
+                outcome = "unsupported"
                 kind = "command"
-                return "Mình chưa nhận ra lệnh này.\nGửi /menu để xem các mục đang dùng."
+                return nlu.OUT_OF_SCOPE
             if message.chat_type == "GROUP":
-                # General chat may use Hermes after normal group admission.
-                # Unrecognized internal-work questions remain grounded; missing
-                # documents never become permission to invent an internal answer.
+                # Existing internal-work questions stay grounded in approved
+                # documents. No input falls through to general model generation.
                 if not is_work_question(message.text):
-                    return None
+                    outcome = 'unsupported'
+                    return nlu.OUT_OF_SCOPE
                 kind = "documents"
                 response = self.knowledge.answer(message.text, message.user_id, message.chat_id, message.chat_type)
                 if response in (NO_MATCH, NO_SOURCES, UNAVAILABLE):
                     outcome = "not_found" if response != UNAVAILABLE else "error"
                     response += "\nBạn cũng có thể hỏi: Lịch hôm nay? hoặc Quy định xin nghỉ phép thế nào?\n/menu — các tính năng"
                 return response
-            return None
+            outcome = 'unsupported'
+            return nlu.OUT_OF_SCOPE
         except (ValueError, SheetsError, WorkloadError) as error:
             # Only our own bounded validation messages, never raw upstream bodies.
             kind = kind if kind != "chat" else "command"

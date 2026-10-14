@@ -8,7 +8,7 @@ Tài liệu/quy định và góp ý vẫn ẩn khỏi menu chính; các lệnh c
 
 ## Hỏi tự nhiên và trò chuyện
 
-Trong nhóm được cho phép, **@bot hoặc trả lời tin bot** rồi hỏi. Với chế độ `members`, thành viên cũng có thể trò chuyện thông thường, như `Giải thích Python là gì?` hoặc `Viết giúp mình lời chúc sinh nhật`. Hermes trả lời phần trò chuyện; lịch, quy định và thao tác công việc vẫn đi qua dữ liệu và quyền đã cấu hình. Phiên tách theo người và chat; model không được tự chạy công cụ hoặc thay dữ liệu.
+Trong nhóm được cho phép, **@bot hoặc trả lời tin bot** rồi hỏi về công việc Lab và tài liệu đã chia sẻ. Câu ngoài phạm vi nhận hướng dẫn `/menu`; bot không trả lời kiến thức chung hay viết nội dung tùy ý. AI chỉ phân loại câu chưa hiểu, còn code gọi chức năng theo quyền. Tài liệu được trích nguồn, thiếu nguồn thì báo rõ. Xem [hạn mức AI theo người và toàn bot](ngon-ngu-tu-nhien.md).
 
 | Câu bạn có thể nhắn | Bot xử lý |
 | --- | --- |
@@ -184,4 +184,4 @@ Bot trả bản nháp ghi rõ nội dung và nơi nhận. Chính người tạo 
 
 `hỏi tài liệu Giờ làm việc của nhóm là khi nào?` cũng dùng được. Tài liệu là file `.md`/`.txt` đã cấp quyền: quản trị đặt `approved_members: true` trong manifest cho tài liệu dùng chung để mọi thành viên đã duyệt tra qua chat riêng. Mặc định `false`, không tự mở file riêng hoặc quyền nhóm. Lịch Google Sheets dùng `/lich`. Thành viên đã duyệt gửi góp ý bằng `/phanhoi`; `/gopy` là tên khác của lệnh này.
 
-Các lệnh và mẫu câu được liệt kê ở đây được xử lý trực tiếp. Trò chuyện thông thường qua Hermes trong chat riêng đã cấp quyền hoặc nhóm được phép khi @bot/trả lời tin bot. Không phải mọi câu tiếng Việt đều được nhận thành lệnh; không dùng lời tự do để thay bước xác nhận đổi ca hoặc issue.
+Các lệnh và mẫu câu được liệt kê ở đây được xử lý trực tiếp, không tiêu lượt phân loại AI. Câu chưa hiểu có thể được AI phân loại trong hạn mức; không mở trò chuyện tự do. Không dùng lời tự do để thay bước xác nhận đổi ca hoặc Issue.

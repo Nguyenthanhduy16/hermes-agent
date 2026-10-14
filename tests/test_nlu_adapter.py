@@ -34,11 +34,12 @@ class NluAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.router.classify.assert_not_awaited()
         self.handler.assert_not_awaited()
 
-    async def test_chat_continues_to_hermes_and_errors_leave_commands_usable(self):
-        from hermes_zalo.nlu import IntentError
+    async def test_retired_chat_returns_scope_guide_and_errors_leave_commands_usable(self):
+        from hermes_zalo.nlu import IntentError, OUT_OF_SCOPE
         self.router.classify.return_value = intent('chat')
         await self.adapter._dispatch(contract.update('chat', text='Kể một chuyện vui đi'))
-        self.handler.assert_awaited_once()
+        self.handler.assert_not_awaited()
+        self.assertEqual(OUT_OF_SCOPE, self.adapter.client.send_text_chunk.await_args.args[1])
         self.router.classify.side_effect = IntentError('invalid')
         await self.adapter._dispatch(contract.update('failure', text='Bạn giúp được việc j'))
         await self.adapter._dispatch(contract.update('menu', text='/menu'))

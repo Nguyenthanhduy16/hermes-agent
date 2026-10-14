@@ -1,7 +1,8 @@
 """Opt-in smoke tests using installed, unmodified Hermes classes and loader.
 
 Set HERMES_INTEGRATION_TESTS=1 and put the Hermes source/runtime and this
-project's src on PYTHONPATH. Only the model handler and Zalo network are mocked.
+project's src on PYTHONPATH. Work/model responses and Zalo network are simulated.
+These checks never send messages or call a real model/Sheets endpoint.
 """
 
 import asyncio
@@ -82,6 +83,16 @@ class RealHermesTests(unittest.IsolatedAsyncioTestCase):
         self.adapter._groups_supported = True
         self.handler = AsyncMock(return_value="Xin chào từ Hermes")
         self.adapter.set_message_handler(self.handler)
+        self.sources = []
+        original_build_source = self.adapter.build_source
+        def capture_source(**values):
+            source = original_build_source(**values)
+            self.sources.append(source)
+            return source
+        self.adapter.build_source = capture_source
+        self.work_handler = AsyncMock(return_value='Kết quả công việc')
+        self.adapter.work = SimpleNamespace(handle=self.work_handler,
+            pilot=SimpleNamespace(record=lambda *args: None), close=AsyncMock())
 
     async def asyncTearDown(self):
         await self.adapter.disconnect()
@@ -159,15 +170,14 @@ class RealHermesTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('MENU BOT', self.adapter.client.send_text_chunk.await_args.args[1])
         self.module.assert_chat_only()
 
-    async def test_actual_base_routes_completes_and_deduplicates(self):
+    async def test_actual_plugin_routes_work_completes_and_deduplicates_without_gateway(self):
         await self.adapter._dispatch(self.update("m1", text="/update"))
         await self.adapter._dispatch(self.update("m1", text="/update"))
-        self.handler.assert_awaited_once()
-        event = self.handler.await_args.args[0]
-        self.assertFalse(event.is_command())
-        self.assertFalse(event.allow_gateway_control)
-        self.assertEqual(event.source.user_id, "u1")
-        self.adapter.client.send_text_chunk.assert_awaited_once_with("g1", "Xin chào từ Hermes")
+        self.work_handler.assert_awaited_once()
+        self.handler.assert_not_awaited()
+        message = self.work_handler.await_args.args[0]
+        self.assertEqual((message.user_id, message.chat_id), ('u1', 'g1'))
+        self.adapter.client.send_text_chunk.assert_awaited_once_with("g1", "Kết quả công việc")
         self.assertFalse(self.adapter._session_tasks)
         status = self.adapter.store.connection.execute("SELECT status FROM messages").fetchone()[0]
         self.assertEqual(status, "completed")
@@ -178,10 +188,10 @@ class RealHermesTests(unittest.IsolatedAsyncioTestCase):
         await self.adapter._dispatch(self.update("m1", user="u1"))
         await self.adapter._dispatch(self.update("m2", user="u2"))
         await self.adapter._dispatch(self.update("m3", user="u1", chat="dm1", kind="PRIVATE"))
-        events = [call.args[0] for call in self.handler.await_args_list]
-        keys = [build_session_key(event.source, group_sessions_per_user=True) for event in events]
+        keys = [build_session_key(source, group_sessions_per_user=True) for source in self.sources]
         self.assertEqual(len(set(keys)), 3)
         self.assertFalse(self.adapter._session_tasks)
+        self.handler.assert_not_awaited()
 
     async def test_registered_hermes_session_rotates_after_identity_correction(self):
         from gateway.session import build_session_key
@@ -191,10 +201,10 @@ class RealHermesTests(unittest.IsolatedAsyncioTestCase):
         await self.adapter._dispatch(self.update('before-correction', chat='dm1', kind='PRIVATE'))
         identity = SimpleNamespace(member_id='member-new', id='DK-00000002')
         await self.adapter._dispatch(self.update('after-correction', chat='dm1', kind='PRIVATE'))
-        events = [call.args[0] for call in self.handler.await_args_list]
-        self.assertEqual(len(events), 2)
-        self.assertNotEqual(build_session_key(events[0].source), build_session_key(events[1].source))
-        self.assertEqual(events[0].source.chat_id, events[1].source.chat_id)
+        self.assertEqual(len(self.sources), 2)
+        self.assertNotEqual(build_session_key(self.sources[0]), build_session_key(self.sources[1]))
+        self.assertEqual(self.sources[0].chat_id, self.sources[1].chat_id)
+        self.handler.assert_not_awaited()
 
     async def test_old_task_has_no_send_permission_during_new_same_chat_turn(self):
         release = asyncio.Event()
@@ -204,8 +214,8 @@ class RealHermesTests(unittest.IsolatedAsyncioTestCase):
             await release.wait()
             return await self.adapter.send("g1", "old background reply", reply_to="m2")
 
-        async def handler(event):
-            if event.message_id == "m1":
+        async def handler(message):
+            if message.message_id == "m1":
                 stale_tasks.append(asyncio.create_task(stale_send()))
             else:
                 release.set()
@@ -213,12 +223,13 @@ class RealHermesTests(unittest.IsolatedAsyncioTestCase):
                 self.assertFalse(result.success)
             return "Current reply"
 
-        self.adapter.set_message_handler(handler)
+        self.work_handler.side_effect = handler
         await self.adapter._dispatch(self.update("m1"))
         await self.adapter._dispatch(self.update("m2"))
         self.assertEqual(self.adapter.client.send_text_chunk.await_count, 2)
         self.assertTrue(all(call.args == ("g1", "Current reply")
                             for call in self.adapter.client.send_text_chunk.await_args_list))
+        self.handler.assert_not_awaited()
 
     async def test_native_plugin_work_command_does_not_invoke_model(self):
         import importlib
@@ -251,7 +262,7 @@ class RealHermesTests(unittest.IsolatedAsyncioTestCase):
         await self.adapter._dispatch(self.update("group-3", user="new-member", chat="not-approved", text="/menu"))
         self.assertEqual(2, self.adapter.client.send_text_chunk.await_count)
 
-    async def test_native_group_conversation_for_members_keeps_scopes_and_tools(self):
+    async def test_native_group_out_of_scope_refuses_without_model_and_keeps_permissions(self):
         import importlib
         from dataclasses import replace
         from gateway.session import build_session_key
@@ -264,18 +275,17 @@ class RealHermesTests(unittest.IsolatedAsyncioTestCase):
             event = self.update(f"conversation-{index}", user=user, text="@Bot LabCoach Giải thích Python là gì?")
             await self.adapter._dispatch(event)
             await self.adapter._dispatch(event)
-        self.assertEqual(2, self.handler.await_count)
-        events = [call.args[0] for call in self.handler.await_args_list]
-        self.assertEqual({"new-a", "new-b"}, {e.source.user_id for e in events})
-        self.assertTrue(all(e.source.chat_id == "g1" and not e.allow_gateway_control for e in events))
-        self.assertEqual(2, len({build_session_key(e.source, group_sessions_per_user=True) for e in events}))
-        for event in events:
-            self.assertEqual([], self.adapter.toolsets_for_source(event.source))
-        self.assertTrue(all(call.args[0] == "g1" for call in self.adapter.client.send_text_chunk.await_args_list))
+        self.handler.assert_not_awaited()
+        self.assertEqual({"new-a", "new-b"}, {s.user_id for s in self.sources})
+        self.assertEqual(2, len({build_session_key(s, group_sessions_per_user=True) for s in self.sources}))
+        for source in self.sources:
+            self.assertEqual([], self.adapter.toolsets_for_source(source))
+        self.assertTrue(all(call.args == ("g1", self.module.OUT_OF_SCOPE)
+                            for call in self.adapter.client.send_text_chunk.await_args_list))
         for index, (chat, kind) in enumerate((("not-approved", "GROUP"), ("dm-new-a", "PRIVATE"))):
             await self.adapter._dispatch(self.update(f"denied-chat-{index}", user="new-a", chat=chat, kind=kind,
                                                      text="Giải thích Python là gì?"))
-        self.assertEqual(2, self.handler.await_count)
+        self.handler.assert_not_awaited()
         self.assertEqual(2, self.adapter.client.send_text_chunk.await_count)
 
     async def test_native_registration_bootstrap_approval_and_revocation_keep_private_scope(self):
@@ -323,12 +333,11 @@ class RealHermesTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual('approved', self.adapter.work.registration.store.user_state(user).status)
         await self.adapter._dispatch(self.update('reg-chat', user=user, chat=chat, kind='PRIVATE',
                                                  text='Giải thích Python là gì?'))
-        self.handler.assert_awaited_once()
-        event = self.handler.await_args.args[0]
-        self.assertEqual((user, chat), (event.source.user_id, event.source.chat_id))
-        self.assertFalse(event.allow_gateway_control)
-        self.assertEqual([], self.adapter.toolsets_for_source(event.source))
-        self.assertNotIn(person.phone, event.text)
+        self.handler.assert_not_awaited()
+        source = self.sources[-1]
+        self.assertEqual((user, chat), (source.user_id, source.chat_id))
+        self.assertEqual([], self.adapter.toolsets_for_source(source))
+        self.assertEqual(self.module.OUT_OF_SCOPE, self.adapter.client.send_text_chunk.await_args.args[1])
         self.assertEqual(settings_users, self.adapter.settings.allowed_users)
         sent = self.adapter.client.send_text_chunk.await_count
         for index, (destination, kind) in enumerate((('wrong-dm', 'PRIVATE'), ('g1', 'GROUP'), ('wrong-group', 'GROUP'))):
@@ -341,7 +350,7 @@ class RealHermesTests(unittest.IsolatedAsyncioTestCase):
         await self.adapter._dispatch(self.update('reg-after-revoke', user=user, chat=chat, kind='PRIVATE',
                                                  text='Giải thích Python là gì?'))
         self.assertEqual(sent, self.adapter.client.send_text_chunk.await_count)
-        self.handler.assert_awaited_once()
+        self.handler.assert_not_awaited()
         await self.adapter._dispatch(self.update('reg-status', user=user, chat=chat, kind='PRIVATE', text='/trangthaidangky'))
         self.assertEqual(sent + 1, self.adapter.client.send_text_chunk.await_count)
         self.assertNotIn(person.phone, self.adapter.client.send_text_chunk.await_args.args[1])
@@ -349,46 +358,28 @@ class RealHermesTests(unittest.IsolatedAsyncioTestCase):
         sheets._request.assert_not_awaited()
 
 
-    async def test_managed_chat_real_hermes_engine_without_tools_or_session_database(self):
-        """Real AIAgent executes its loop; only provider output is synthetic."""
-        import importlib
-        from openai.types.chat import ChatCompletion
-        managed = importlib.import_module(self.adapter.__class__.__module__.rsplit('.', 1)[0] + '.managed_chat')
-        IncomingMessage = importlib.import_module(
-            self.adapter.__class__.__module__.rsplit('.', 1)[0] + '.events').IncomingMessage
-        response = ChatCompletion(id='synthetic-response', object='chat.completion', created=0,
-            model='synthetic/model', choices=[dict(index=0, finish_reason='stop',
-                message=dict(role='assistant', content='Đã nhận ngữ cảnh mô phỏng.'))],
-            usage=dict(prompt_tokens=10, completion_tokens=10, total_tokens=20))
-        instances = []
-        def factory():
-            agent = managed.configured_agent()
-            self.assertEqual([], agent.tools)
-            self.assertIsNone(agent._session_db)
-            from unittest.mock import Mock
-            agent._interruptible_api_call = Mock(return_value=response)
-            agent._interruptible_streaming_api_call = Mock(return_value=response)
-            instances.append(agent)
-            return agent
-        runtime = dict(provider='openrouter', api_mode='chat_completions',
-                       base_url='https://model.invalid/api/v1', api_key='synthetic-not-a-key')
+    async def test_native_gateway_and_legacy_chat_cannot_reopen_general_generation(self):
+        """Neither a direct gateway event nor an unhandled work turn calls AI."""
         import socket
-        original_connect = socket.socket.connect
-        def only_loopback(sock, address):
-            if isinstance(address, tuple) and address[0] in ('127.0.0.1', '::1'):
-                return original_connect(sock, address)
-            raise AssertionError('External network forbidden')
-        with patch('hermes_cli.config_effective.load_user_config_effective', return_value={
-                'model': {'provider': 'openrouter', 'default': 'synthetic/model'}}), \
-             patch('hermes_cli.runtime_provider.resolve_runtime_provider', return_value=runtime), \
-             patch('socket.socket.connect', only_loopback):
-            chat = managed.ManagedChat(factory, timeout=30)
-            result = await chat.reply(IncomingMessage('demo-private', 'demo-member', 'fake-1', 'PRIVATE',
-                'Trả lời ngắn nhé.'), {'payload': {'summary': '', 'messages': [],
-                'memories': [{'content': 'Thích câu trả lời ngắn.'}]}})
-        self.assertEqual('Đã nhận ngữ cảnh mô phỏng.', result)
-        self.assertEqual(1, len(instances))
-        self.assertIsNone(instances[0]._session_db)
+        legacy = SimpleNamespace(reply=AsyncMock(side_effect=AssertionError('Legacy model forbidden')))
+        self.adapter.managed_chat = legacy
+        async def attempt_gateway(message):
+            event = self.adapter._current_event
+            self.assertFalse(event.allow_gateway_control)
+            event._gateway_accepted = True
+            await self.adapter.handle_message(event)
+            self.assertFalse(event._gateway_accepted)
+            return None
+        self.work_handler.side_effect = attempt_gateway
+        with patch.object(socket.socket, 'connect', side_effect=AssertionError('External network forbidden')):
+            await self.adapter._dispatch(self.update('closed-fallback', text='Viết truyện vui đi'))
+            resumed = SimpleNamespace(internal=True, _gateway_accepted=True)
+            await self.adapter.handle_message(resumed)
+        self.assertFalse(resumed._gateway_accepted)
+        self.assertEqual(self.module.OUT_OF_SCOPE, self.adapter.client.send_text_chunk.await_args.args[1])
+        self.assertFalse(self.adapter._session_tasks)
+        legacy.reply.assert_not_awaited()
+        self.handler.assert_not_awaited()
 
 
 if __name__ == "__main__":

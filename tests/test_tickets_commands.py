@@ -17,6 +17,7 @@ from hermes_zalo.config import Settings
 from hermes_zalo.events import IncomingMessage
 from hermes_zalo.natural import interpret
 from hermes_zalo.work import WorkService
+from hermes_zalo.nlu import OUT_OF_SCOPE
 
 
 class TicketLinkTests(unittest.TestCase):
@@ -211,7 +212,7 @@ class TicketCommandTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(message.key, messages[-1].key)
         self.assertTrue(all(thread != main_thread for thread in threads))
         self.assertIn("MENU BOT", await service.handle(IncomingMessage("dm", "admin", "menu", "PRIVATE", "/menu")))
-        self.assertIsNone(await service.handle(IncomingMessage("dm", "admin", "chat", "PRIVATE", "Xin chào")))
+        self.assertEqual(OUT_OF_SCOPE, await service.handle(IncomingMessage("dm", "admin", "chat", "PRIVATE", "Xin chào")))
 
     async def test_bindings_never_override_bot_allowlist(self):
         chat = SimpleNamespace(handle=Mock(return_value="should not appear"), close=Mock())
@@ -284,7 +285,7 @@ class TicketCommandTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("MENU BOT", await service.handle(IncomingMessage("dm", "admin", "2", "PRIVATE", "/menu")))
             response = await service.handle(IncomingMessage("dm", "admin", "3", "PRIVATE", "/nhac sau 10 phut | Báo cáo"))
             self.assertIn("Đã đặt nhắc", response)
-            self.assertIsNone(await service.handle(IncomingMessage("dm", "admin", "4", "PRIVATE", "Xin chào")))
+            self.assertEqual(OUT_OF_SCOPE, await service.handle(IncomingMessage("dm", "admin", "4", "PRIVATE", "Xin chào")))
             open_chat.assert_called_once()
 
     async def test_cancelled_lazy_open_releases_resources_without_handling_message(self):

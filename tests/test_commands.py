@@ -17,6 +17,7 @@ from hermes_zalo.lab_calendar import parse_sheet, format_query
 from hermes_zalo.reminders import parse_reminder_command
 from hermes_zalo.sheets import SheetsClient
 from hermes_zalo.work import WorkService
+from hermes_zalo.nlu import OUT_OF_SCOPE
 from test_lab_calendar import grid, config
 
 
@@ -194,7 +195,7 @@ class CommandServiceTests(unittest.IsolatedAsyncioTestCase):
     async def test_menu_empty_commands_and_unknown_command_never_contact_google(self):
         for text, expected in (("/menu", "MENU"), ("/nhac", "NHẮC VIỆC"), ("/hoi", "HỎI TÀI LIỆU"),
                                ("/thongbao", "THÔNG BÁO"), ("/issue", "chưa bật"),
-                               ("/phanhoi", "GỬI GÓP Ý"), ("/lichh", "chưa nhận ra")):
+                               ("/phanhoi", "GỬI GÓP Ý"), ("/lichh", "Mình chỉ hỗ trợ")):
             self.assertIn(expected, await self.send(text))
         self.assertFalse(self.calls)
         menu = await self.send("/menu")
@@ -207,7 +208,7 @@ class CommandServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("/lich", await self.send("/menu", user="u2"))
         self.assertFalse(self.calls)
         self.assertEqual([], self.service.reminders.list_for("u1", "dm", "PRIVATE"))
-        self.assertIsNone(await self.send("Xin chào"))
+        self.assertEqual(OUT_OF_SCOPE, await self.send("Xin chào"))
 
     async def test_menu_and_notifications_do_not_open_tickets_or_create_work(self):
         self.service._tickets_values["TICKETS_CHAT_MODE"] = "lab_live_test"

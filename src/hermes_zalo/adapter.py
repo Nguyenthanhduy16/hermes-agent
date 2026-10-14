@@ -1,7 +1,7 @@
 """Official Zalo transport for the Hermes platform-plugin interface.
 
-Hermes owns general conversation. Explicit work commands are handled locally;
-the model has no general-purpose tools or gateway administration access.
+Work commands and source-backed answers are handled locally. AI only classifies
+work requests; no inbound message may fall through to general conversation.
 """
 
 import asyncio
@@ -24,6 +24,7 @@ from hermes_constants import get_hermes_home
 from .api import AuthenticationError, DeliveryBlocked, DeliveryUncertain, WebhookInspectionUnavailable, ZaloAPIError, ZaloClient
 from .config import ConfigError, Settings
 from .commands import route
+from .nlu import OUT_OF_SCOPE
 from .events import is_allowed, parse_update, split_text
 from .mentions import strip_bot_mention
 from .logging_utils import protect_logs
@@ -31,7 +32,6 @@ from .state import StateStore
 from .work import WorkService, state_prefix
 from .admin_config import AdminConfig
 from .conversations import ConversationStore
-from .managed_chat import ManagedChat, ManagedChatError
 from .reminders import VIETNAM_TZ
 
 
@@ -145,7 +145,6 @@ class ZaloAdapter(BasePlatformAdapter):
             if admin_config.conversations:
                 self.conversations = ConversationStore(state_prefix(self.settings).with_suffix('.conversations.sqlite3'),
                     retention_days=admin_config.retention_days)
-                self.managed_chat = ManagedChat()
                 self._archive_task = asyncio.create_task(self._archive_maintenance(), name='zalo-history-retention')
             if admin_config.enabled:
                 from .admin_web import AdminRuntime
@@ -675,48 +674,20 @@ class ZaloAdapter(BasePlatformAdapter):
                         self.store.finish(message.key, 'failed_uncertain')
                         return
                     self.conversations.mark_notice(message)
-            if self.work:
-                response = await self.work.handle(message)
-                if response is not None:
-                    delivered = await self.send(message.chat_id, response, reply_to=message.message_id)
-                    self.store.finish(message.key, "completed" if delivered.success else "failed_uncertain")
-                    self.work.pilot.record("command", "ok" if delivered.success else "uncertain",
-                                           (time.monotonic() - started) * 1000)
-                    return
-            if (message.chat_type == "GROUP" and message.user_id not in self.settings.allowed_users
-                    and self.work is None):
-                # WorkService must distinguish ordinary conversation from
-                # scoped work reads before a group member reaches Hermes.
-                # If that boundary is unavailable, remain closed.
-                self.store.finish(message.key, "not_admitted")
-                return
+            response = await asyncio.wait_for(self.work.handle(message), timeout=TURN_TIMEOUT_SECONDS) if self.work else None
+            # Fail closed even if a future work route accidentally returns None.
+            # Never use managed chat or the Hermes gateway as a fallback; the
+            # classifier only receives this turn, without histories or memories.
+            if response is None:
+                response = OUT_OF_SCOPE
+            delivered = await self.send(message.chat_id, response, reply_to=message.message_id)
             if self.conversations:
-                context = self.conversations.prepare_context(message, self._archive_member(message))
-                try:
-                    response = await self.managed_chat.reply(message, context)
-                    is_chat = True
-                except ManagedChatError as error:
-                    response = error.user_message
-                    is_chat = False
-                delivered = await self.send(message.chat_id, response, reply_to=message.message_id)
-                self.conversations.complete_turn(message, is_chat=is_chat and delivered.success)
-                self.store.finish(message.key, 'completed' if delivered.success else 'failed_uncertain')
-                if self.work:
-                    self.work.pilot.record('chat', 'ok' if delivered.success and is_chat else 'uncertain',
-                                           (time.monotonic() - started) * 1000)
-                return
-            await self.handle_message(event)
-            # handle_message returns before generation. Await the task owned by
-            # the base adapter, including its guard cleanup, so a rapid follow-up
-            # is never merged/interrupted and only one turn is in memory.
-            task = self._session_tasks.get(self._event_session_key(event))
-            if task is None or not event._gateway_accepted:
-                self.store.finish(message.key, "not_admitted")
-                return
-            await asyncio.wait_for(asyncio.shield(task), timeout=TURN_TIMEOUT_SECONDS)
-            self.store.finish(message.key, self._current_outcome or "unconfirmed")
+                # Keep the consented Admin audit history, but do not make work
+                # results, refusals, or errors reusable conversational context.
+                self.conversations.complete_turn(message, is_chat=False)
+            self.store.finish(message.key, 'completed' if delivered.success else 'failed_uncertain')
             if self.work:
-                self.work.pilot.record("chat", "ok" if self._current_outcome == "completed" else "uncertain",
+                self.work.pilot.record("command", "ok" if delivered.success else "uncertain",
                                        (time.monotonic() - started) * 1000)
         except asyncio.CancelledError:
             self.store.finish(message.key, "cancelled_uncertain")
@@ -741,12 +712,9 @@ class ZaloAdapter(BasePlatformAdapter):
             self._current_outcome = "completed" if outcome == ProcessingOutcome.SUCCESS and not self._delivery_failed else "failed_uncertain"
 
     async def handle_message(self, event: MessageEvent) -> None:
-        # Admission is exclusively through _dispatch. Background notifications
-        # and crash-resume events must not bypass its auth/dedup boundaries.
-        if event is not self._current_event or event.internal:
-            event._gateway_accepted = False
-            return
-        await super().handle_message(event)
+        # All Zalo input belongs to _dispatch/WorkService. Background resume or
+        # direct gateway delivery cannot reopen unrestricted model generation.
+        event._gateway_accepted = False
 
     async def _record_delivery_obligation(self, *args, **kwargs):
         # Hermes can otherwise replay a failed/ambiguous final after restart or
@@ -863,8 +831,8 @@ def register(ctx) -> None:
         trusted_inbound=False,
         display_tier="minimal",
         max_message_length=2000,
-        platform_hint=("Reply in Vietnamese unless asked otherwise. Plain text only. Ordinary conversation, writing help and "
-                       "general knowledge questions are welcome in private chats and authorized groups. You have no tools. "
+        platform_hint=("LabCoach only supports enabled Lab work features and authorized source-backed document lookup. "
+                       "Do not answer general knowledge, writing, coding or unrelated conversation. Plain Vietnamese text only. You have no tools. "
                        "Do not infer company-specific facts, a user's roster identity, internal rules or document contents. "
                        "Never claim to read internal documents/calendar, schedule reminders, exchange shifts, send notifications "
                        "or create issues yourself, and never claim a command completed. The application handles work commands "

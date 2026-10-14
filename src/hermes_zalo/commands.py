@@ -291,10 +291,10 @@ def help_text(topic="", *, sheets_state="not_configured", lab=False, issues=Fals
     if tickets and not tickets_unavailable:
         lines += ["Đổi ca tự nhiên: Mình muốn đổi ca"]
     if not entries:
-        lines += ["Bạn có thể nhắn trực tiếp để trò chuyện." if private_chat else
+        lines += ["Bot chỉ hỗ trợ công việc Lab và tài liệu được cấp quyền." if private_chat else
                   "Chưa có mục nào được mở tại nhóm này. Nhờ quản trị kiểm tra quyền."]
     if not private_chat:
-        lines += ["", "Trong nhóm: @bot hoặc trả lời tin của bot để hỏi hay trò chuyện."]
+        lines += ["", "Trong nhóm: @bot hoặc trả lời tin của bot để hỏi công việc Lab."]
     return "\n".join(lines)
 
 

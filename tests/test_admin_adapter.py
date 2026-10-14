@@ -2,7 +2,7 @@
 from pathlib import Path
 from types import SimpleNamespace
 import unittest
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import test_adapter as contract
 from hermes_zalo.api import AuthenticationError, DeliveryUncertain
@@ -42,25 +42,29 @@ class AdminAdapterTests(unittest.IsolatedAsyncioTestCase):
     def acknowledge_notice(self, event):
         self.archive.mark_notice(parse_update(event))
 
-    async def test_identity_changed_while_model_waited_cannot_send_old_context(self):
+    async def test_identity_changed_while_work_waited_cannot_send_old_result(self):
         event = contract.update('identity-corrected-during-chat')
         self.acknowledge_notice(event)
-        async def corrected_reply(message, context):
+        async def corrected_reply(message):
             self.archive.detach_registration_context('u1', 'member-a', 'web:operator')
             self.identities['u1'] = SimpleNamespace(member_id='member-c', chat_id='dm1')
             return 'Nội dung thuộc danh tính cũ không được gửi.'
-        self.ai.reply.side_effect = corrected_reply
+        self.adapter.work.handle.side_effect = corrected_reply
         await self.adapter._dispatch(event)
         self.adapter.client.send_text_chunk.assert_not_awaited()
-        self.ai.reply.side_effect = None
+        self.adapter.work.handle.side_effect = None
+        self.adapter.work.handle.return_value = 'Kết quả thuộc danh tính mới.'
         await self.adapter._dispatch(contract.update('after-identity-corrected'))
         self.adapter.client.send_text_chunk.assert_awaited_once()
-        self.assertEqual([], self.ai.reply.await_args.args[1]['payload']['messages'])
+        self.assertEqual([], self.archive.context(parse_update(event).session_key)['messages'])
+        self.ai.reply.assert_not_awaited()
+        self.handler.assert_not_awaited()
 
     async def test_identity_change_stops_remaining_reply_chunks(self):
         event = contract.update('identity-corrected-mid-reply')
         self.acknowledge_notice(event)
-        self.ai.reply.return_value = 'a' * 4500
+        self.adapter.work.handle.side_effect = None
+        self.adapter.work.handle.return_value = 'a' * 4500
         async def first_chunk(*args):
             self.identities['u1'] = SimpleNamespace(member_id='member-c', chat_id='dm1')
             return {'message_id': 'first'}
@@ -68,7 +72,7 @@ class AdminAdapterTests(unittest.IsolatedAsyncioTestCase):
         await self.adapter._dispatch(event)
         self.assertEqual(1, self.adapter.client.send_text_chunk.await_count)
 
-    async def test_commands_and_ai_are_archived_deduplicated_and_never_legacy_history(self):
+    async def test_commands_and_refusals_are_archived_but_never_model_context(self):
         command = contract.update('menu', text='/menu')
         await self.adapter._dispatch(command)
         await self.adapter._dispatch(command)
@@ -76,16 +80,20 @@ class AdminAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(3, self.archive.history()['total'])  # received, notice, command response
         sends = self.adapter.client.send_text_chunk.await_count
         await self.adapter._dispatch(contract.update('chat', text='Kể một chuyện vui đi'))
-        self.ai.reply.assert_awaited_once()
+        self.ai.reply.assert_not_awaited()
         self.handler.assert_not_awaited()
-        context = self.ai.reply.await_args.args[1]
-        self.assertEqual([], context['payload']['messages'])  # /menu and its notice are not chat context
+        self.assertEqual(contract.adapter_module.OUT_OF_SCOPE, self.adapter.client.send_text_chunk.await_args.args[1])
         self.assertEqual(sends + 1, self.adapter.client.send_text_chunk.await_count)
         self.assertEqual(5, self.archive.history()['total'])
         await self.adapter._dispatch(contract.update('followup', text='Rồi sao nữa?'))
-        prior = self.ai.reply.await_args.args[1]['payload']['messages']
-        self.assertEqual(['Kể một chuyện vui đi', 'Câu trả lời AI ngắn gọn.'], [x['content'] for x in prior])
-        self.assertNotIn('/menu', str(prior))
+        context = self.archive.context(parse_update(command).session_key)
+        self.assertEqual([], context['messages'])
+        self.assertEqual('', context['summary'])
+        self.assertEqual([], context['memories'])
+        self.assertIsNone(context['last_prepared'])
+        self.assertIn('Kể một chuyện vui đi', str(self.archive.history()))
+        self.assertTrue(all(row['eligible'] == 0 for row in self.archive.history()['items']))
+        self.ai.reply.assert_not_awaited()
 
     async def test_unauthorized_users_groups_and_locked_members_leave_no_archive(self):
         await self.adapter._dispatch(contract.update('stranger', user='stranger'))
@@ -108,7 +116,8 @@ class AdminAdapterTests(unittest.IsolatedAsyncioTestCase):
     async def test_partial_ambiguous_delivery_records_each_attempt_once(self):
         event = contract.update('chunks')
         self.acknowledge_notice(event)
-        self.ai.reply.return_value = 'a' * 4500
+        self.adapter.work.handle.side_effect = None
+        self.adapter.work.handle.return_value = 'a' * 4500
         self.adapter.client.send_text_chunk.side_effect = [{'message_id': 'one'}, DeliveryUncertain()]
         await self.adapter._dispatch(event)
         await self.adapter._dispatch(event)
@@ -134,42 +143,53 @@ class AdminAdapterTests(unittest.IsolatedAsyncioTestCase):
         for event in (dm, group_a, group_b):
             self.acknowledge_notice(event)
             await self.adapter._dispatch(event)
-        contexts = [call.args[1] for call in self.ai.reply.await_args_list]
-        self.assertTrue(all(not context['payload']['messages'] for context in contexts))
+        keys = [parse_update(event).session_key for event in (dm, group_a, group_b)]
+        self.assertEqual(3, len(set(keys)))
+        self.assertTrue(all(not self.archive.context(key)['messages'] for key in keys))
         self.archive.save_memory({'content': 'Ghi nhớ riêng A.', 'scope': 'personal', 'member_id': 'member-a'}, 'admin')
         await self.adapter._dispatch(contract.update('group-next', text='Tiếp tục nhé', kind='GROUP', chat='g1'))
-        group_context = self.ai.reply.await_args.args[1]['payload']
-        self.assertIn('Chủ đề nhóm của A.', str(group_context))
+        group_context = self.archive.context(keys[1])
+        group_history = str(self.archive.history(session_key=keys[1]))
+        self.assertIn('Chủ đề nhóm của A.', group_history)
+        self.assertNotIn('Chủ đề nhóm của B.', group_history)
+        self.assertNotIn('Sở thích riêng A.', group_history)
         self.assertNotIn('Chủ đề nhóm của B.', str(group_context))
         self.assertNotIn('Sở thích riêng A.', str(group_context))
         self.assertNotIn('Ghi nhớ riêng A.', str(group_context))
         await self.adapter._dispatch(contract.update('dm-next', text='Tiếp tục nhé'))
-        self.assertIn('Ghi nhớ riêng A.', str(self.ai.reply.await_args.args[1]['payload']))
+        self.assertIn('Ghi nhớ riêng A.', str(self.archive.context(keys[0])))
+        self.ai.reply.assert_not_awaited()
+        self.handler.assert_not_awaited()
 
-    async def test_context_reset_and_stopped_memory_change_next_ai_input(self):
+    async def test_existing_memory_is_manageable_but_never_sent_to_model(self):
         event = contract.update('first', text='Chuyện cũ cần bỏ.')
         self.acknowledge_notice(event)
         await self.adapter._dispatch(event)
         memory = self.archive.save_memory({'content': 'Thông tin từng ghi nhớ.', 'scope': 'personal', 'member_id': 'member-a'}, 'admin')
-        await self.adapter._dispatch(contract.update('second', text='Tiếp tục'))
-        self.assertIn('Thông tin từng ghi nhớ.', str(self.ai.reply.await_args.args[1]['payload']))
         key = parse_update(event).session_key
+        self.assertIn('Thông tin từng ghi nhớ.', str(self.archive.context(key)))
+        with patch.object(self.archive, 'prepare_context', side_effect=AssertionError('No model context allowed')):
+            await self.adapter._dispatch(contract.update('second', text='Tiếp tục'))
         self.archive.reset_context(key, 'admin', self.archive.context(key)['revision'])
         self.archive.stop_memory(memory['id'], 'admin', memory['revision'])
         await self.adapter._dispatch(contract.update('afterreset', text='Bắt đầu lại'))
-        new_context = self.ai.reply.await_args.args[1]['payload']
-        self.assertEqual({'summary': '', 'messages': [], 'memories': []}, new_context)
+        new_context = self.archive.context(key)
+        self.assertEqual('', new_context['summary'])
+        self.assertEqual([], new_context['messages'])
+        self.assertEqual([], new_context['memories'])
+        self.assertIsNone(new_context['last_prepared'])
+        self.ai.reply.assert_not_awaited()
         self.assertGreater(self.archive.history()['total'], 0)
 
-    async def test_lock_during_generation_suppresses_answer_and_context_completion(self):
+    async def test_lock_during_work_suppresses_answer_and_context_completion(self):
         event = contract.update('generation')
         self.acknowledge_notice(event)
 
-        async def lock_then_reply(message, context):
+        async def lock_then_reply(message):
             self.locked.add(message.user_id)
             return 'Thông tin không được gửi sau khi khóa.'
 
-        self.ai.reply.side_effect = lock_then_reply
+        self.adapter.work.handle.side_effect = lock_then_reply
         await self.adapter._dispatch(event)
         self.adapter.client.send_text_chunk.assert_not_awaited()
         self.assertEqual(1, self.archive.history()['total'])
@@ -178,7 +198,8 @@ class AdminAdapterTests(unittest.IsolatedAsyncioTestCase):
     async def test_lock_between_chunks_suppresses_remaining_chunks(self):
         event = contract.update('mid-send')
         self.acknowledge_notice(event)
-        self.ai.reply.return_value = 'x' * 4500
+        self.adapter.work.handle.side_effect = None
+        self.adapter.work.handle.return_value = 'x' * 4500
 
         async def send_then_lock(chat, chunk):
             self.locked.add('u1')
@@ -188,26 +209,31 @@ class AdminAdapterTests(unittest.IsolatedAsyncioTestCase):
         await self.adapter._dispatch(event)
         self.assertEqual(1, self.adapter.client.send_text_chunk.await_count)
 
-    async def test_model_failure_does_not_block_commands_or_enter_context(self):
+    async def test_unused_legacy_model_failure_cannot_block_commands_or_enter_context(self):
         event = contract.update('modelerror')
         self.acknowledge_notice(event)
-        self.ai.reply.side_effect = contract.adapter_module.ManagedChatError('synthetic failure')
+        self.ai.reply.side_effect = RuntimeError('Legacy generation must never be called')
         await self.adapter._dispatch(event)
-        self.assertIn('các lệnh công việc', self.adapter.client.send_text_chunk.await_args.args[1])
+        self.assertEqual(contract.adapter_module.OUT_OF_SCOPE, self.adapter.client.send_text_chunk.await_args.args[1])
         self.assertEqual([], self.archive.context(parse_update(event).session_key)['messages'])
         await self.adapter._dispatch(contract.update('menu-aftererror', text='/menu'))
         self.assertIn('MENU BOT', self.adapter.client.send_text_chunk.await_args.args[1])
+        self.ai.reply.assert_not_awaited()
+        self.handler.assert_not_awaited()
 
-    async def test_model_rate_limit_shows_safe_guidance_without_archiving_as_chat(self):
+    async def test_work_rate_limit_response_is_preserved_without_archiving_as_chat(self):
         event = contract.update('rate-limit')
         self.acknowledge_notice(event)
-        self.ai.reply.side_effect = contract.adapter_module.ManagedChatError(
-            'private-provider-body', category='rate_limit')
+        from hermes_zalo.nlu import QUOTA_REPLIES
+        self.adapter.work.handle.side_effect = None
+        self.adapter.work.handle.return_value = QUOTA_REPLIES['user_daily']
         await self.adapter._dispatch(event)
         reply = self.adapter.client.send_text_chunk.await_args.args[1]
-        self.assertIn('giới hạn tốc độ', reply)
+        self.assertEqual(QUOTA_REPLIES['user_daily'], reply)
         self.assertNotIn('private-provider-body', reply)
         self.assertEqual([], self.archive.context(parse_update(event).session_key)['messages'])
+        self.ai.reply.assert_not_awaited()
+        self.handler.assert_not_awaited()
 
 
 if __name__ == '__main__':

@@ -4,7 +4,7 @@
 
 Trong nhóm được quản trị cho phép, gõ `@`, **chọn Bot LabCoach trong danh sách**, rồi nhập `/menu`: `@Bot LabCoach /menu`. Hoặc **trả lời một tin của bot** rồi nhập `/menu`. Khi đăng ký Workload đang bật, người chưa đăng ký nhận hướng dẫn nhắn riêng `/dangky SỐ_ĐIỆN_THOẠI`; dùng số hiện tại trên Workload, không gửi số trong nhóm. Đăng ký thành công và đúng tên thì quay lại nhóm hỏi bot. Bot chỉ nhận những tin được Zalo chuyển tới qua mention/reply, không đọc mọi tin trong nhóm. [Hướng dẫn Zalo](https://docs.zaloplatforms.com/docs/BOT/best-practices/build-bot-interaction-with-group)
 
-Bạn có thể dùng lệnh, hỏi tự nhiên hoặc trò chuyện bình thường: `Giải thích Python là gì?`, `Viết giúp mình lời chúc sinh nhật`. Phần trò chuyện do Hermes trả lời. Lịch và quy định vẫn được tra từ nguồn đã cấp quyền; các bước đổi ca, nhắc việc và issue vẫn theo quy trình riêng.
+Bạn có thể dùng lệnh hoặc hỏi tự nhiên về **công việc Lab và tài liệu được chia sẻ**. Câu ngoài phạm vi như `Giải thích Python là gì?`, `Viết giúp mình lời chúc sinh nhật` nhận hướng dẫn `/menu`; bot không mở trò chuyện tự do. Lịch và quy định phải có nguồn được cấp quyền; đổi ca, nhắc việc và Issue vẫn theo quy trình riêng.
 
 Adapter nhận tên hiển thị (`display_name`) và tên tài khoản (`account_name`) từ Zalo, chỉ bỏ phần gọi tên bot ở đầu tin nhắn. Nếu đổi tên bot, cần khởi động lại nơi đang vận hành để đọc tên mới. Khi dùng Railway, cập nhật/khởi động lại service trên Railway và giữ bot Windows tắt.
 
@@ -46,9 +46,9 @@ Với Issue, nhắn riêng `Mình muốn báo lỗi bot` hoặc `Mình muốn đ
 
 ## Quyền của thành viên
 
-Với `ZALO_GROUP_ACCESS=members` và đăng ký Workload đang bật, thành viên đăng ký thành công không cần thêm vào danh sách user để hỏi tại **nhóm được cho phép**. Họ đọc lịch/tài liệu được chia sẻ với nhóm và trò chuyện với Hermes khi @bot hoặc trả lời tin bot. Người chưa đăng ký nhận hướng dẫn đăng ký riêng, chưa được dùng dữ liệu nội bộ hoặc AI. Đổi ca cần danh tính/ánh xạ rõ và tính năng đã bật; đổi ca, đăng ký và Issue thực hiện qua tin nhắn riêng. Việc duyệt không mở rộng quyền ghi trong nhóm. Bộ lọc tên tự khai chỉ còn dùng khi đăng ký Workload đang tắt.
+Với `ZALO_GROUP_ACCESS=members` và đăng ký Workload đang bật, thành viên đăng ký thành công không cần thêm vào danh sách user để hỏi tại **nhóm được cho phép**. Họ đọc lịch/tài liệu được chia sẻ với nhóm khi @bot hoặc trả lời tin bot. Người chưa đăng ký nhận hướng dẫn đăng ký riêng, chưa được dùng dữ liệu nội bộ hoặc AI. Đổi ca cần danh tính/ánh xạ rõ và tính năng đã bật; đổi ca, đăng ký và Issue thực hiện qua tin nhắn riêng. Việc duyệt không mở rộng quyền ghi trong nhóm. Bộ lọc tên tự khai chỉ còn dùng khi đăng ký Workload đang tắt.
 
-Phiên Hermes tách theo **người gửi và cuộc trò chuyện**, không dùng chung lịch sử giữa hai thành viên hoặc giữa các nhóm. Model không được mở công cụ để tự đọc dữ liệu riêng, sửa lịch, gửi tin thay bạn hoặc tạo issue. Tin trả lời trong nhóm vẫn hiện với mọi người trong nhóm.
+Danh tính và trạng thái xử lý tách theo **người gửi và cuộc trò chuyện**. AI phân loại chỉ nhận câu hiện tại, không nhận lịch sử/ghi nhớ, toàn bộ lịch hoặc danh bạ. Model không được mở công cụ để tự đọc dữ liệu riêng, sửa lịch, gửi tin thay bạn hoặc tạo issue. Tin trả lời trong nhóm vẫn hiện với mọi người trong nhóm.
 
 Nhóm chưa được quản trị cho phép không được xử lý. Quyền nhóm và liên kết đăng ký riêng là hai phần độc lập; khi thành viên không còn được phép dùng bot, quản trị cần thu hồi liên kết và các quyền đã cấp riêng. Thành viên mới chỉ đọc tài liệu có quyền nhóm phù hợp; quyền cá nhân trên từng tài liệu vẫn được giữ nguyên.
 
@@ -88,7 +88,7 @@ Nhiều ID cách nhau dấu phẩy. Không dùng `*` hoặc ID chat riêng làm 
 
 `users: []` và `groups` có ID nghĩa là chia sẻ nội dung cho thành viên nhóm đó; chưa cho đọc trong chat riêng. Nếu tài liệu này cũng dành cho mọi thành viên đã duyệt qua chat riêng, thêm `"approved_members": true` vào đúng mục tài liệu. Cờ này mặc định `false`; không tự mở tài liệu riêng hoặc thay quyền nhóm. Nếu `users` có ID, chỉ những người đó trong nhóm được hỏi tài liệu. Chỉ chia sẻ tài liệu phù hợp cho cả nhóm vì mọi người có thể nhìn thấy câu trả lời.
 
-Bot trích đoạn từ tài liệu được cấp quyền và nêu nguồn. Chưa có tài liệu/không tìm thấy thông tin thì báo rõ. **Lịch Sheets không tự chứa quy định**, và sổ tay mẫu không thay thế quy định thật. Câu hỏi quy định hoặc công việc nội bộ được nhận diện sẽ tra dữ liệu được cấp quyền; câu chưa khớp lệnh nhưng vẫn có từ ngữ công việc nội bộ tiếp tục tra tài liệu. Không để model tự suy diễn chính sách. Hermes xử lý trò chuyện thông thường trong cả nhóm được phép và chat riêng đã cấp quyền.
+Bot trích đoạn từ tài liệu được cấp quyền và nêu nguồn. Chưa có tài liệu/không tìm thấy thông tin thì báo rõ. **Lịch Sheets không tự chứa quy định**, và sổ tay mẫu không thay thế quy định thật. Câu hỏi quy định hoặc công việc nội bộ được nhận diện sẽ tra dữ liệu được cấp quyền. Không chuyển câu thiếu nguồn sang model trả lời chung.
 
 ## Các bài thử cần đạt
 
@@ -98,8 +98,8 @@ Bot trích đoạn từ tài liệu được cấp quyền và nêu nguồn. Ch�
 - Hỏi quy định có trong file được chia sẻ → có trích đoạn và nguồn; hỏi quy định không có hoặc tài liệu riêng → không bịa và không lộ dữ liệu.
 - Khi dùng bộ lọc tên cũ: đổi/xóa hồ sơ nhóm A không đổi nhóm B. Khi dùng danh tính đã duyệt: hồ sơ tự khai không thay được liên kết đó.
 - Thành viên hỏi đổi ca hoặc Issue trong nhóm → bot hướng dẫn nhắn riêng. Khi Issue `managed` đã bật, thử yêu cầu có nội dung “Thử nghiệm” trong DM → xác nhận → Admin nhận việc/phản hồi → người gửi xem kết quả. Không cần sửa lịch thật để thử Issue.
-- Thành viên trong nhóm được phép @bot hỏi kiến thức chung hoặc lời chúc → Hermes trả lời; hỏi quy định nội bộ → vẫn tra tài liệu và nêu nguồn.
-- Hai thành viên trò chuyện riêng với bot trong cùng nhóm → không dùng lẫn lịch sử phiên; lời yêu cầu sửa lịch không được model tự thực hiện.
+- Thành viên trong nhóm được phép @bot hỏi kiến thức chung hoặc lời chúc → hướng dẫn phạm vi và `/menu`, không gọi model tạo câu trả lời; hỏi quy định nội bộ → tra tài liệu và nêu nguồn.
+- Hạn mức AI dùng chung theo người giữa DM và nhóm; mặc định 10 lượt/người/ngày và 300 lượt/toàn bot/ngày, đặt lại lúc 00:00 giờ Việt Nam. Lệnh trực tiếp vẫn dùng khi hết hạn mức. Câu bị từ chối không được thêm vào ngữ cảnh AI; lịch sử Admin vẫn lưu theo thông báo đồng ý hiện có.
 
 Bot xử lý **lệnh → mẫu câu đã biết → AI phân loại câu chưa hiểu khi `ZALO_NLU_ENABLED=true` → kiểm tra quyền/dữ liệu → chức năng có sẵn**. “Hôm nay”, “ngày mai”, “tuần sau” được tính theo giờ Việt Nam; “mình/tôi” dùng danh tính đăng ký, không đoán tên từ AI. Câu thiếu hoặc có nhiều yêu cầu sẽ được hỏi lại/hướng dẫn gửi đầy đủ. Khi AI lỗi, dùng `/menu`, `/lich`, `/lichcuatoi`, `/doica` hoặc `/issue`; các lệnh vẫn chạy riêng. AI không tự duyệt đăng ký, đổi lịch hoặc bỏ qua xác nhận Issue. Xem [giới hạn và cấu hình AI](ngon-ngu-tu-nhien.md).
 

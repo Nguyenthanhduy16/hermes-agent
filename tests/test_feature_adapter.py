@@ -10,6 +10,7 @@ import test_adapter as contract
 from hermes_zalo.api import DeliveryUncertain
 from hermes_zalo.api import AuthenticationError
 from hermes_zalo.work import WorkService
+from hermes_zalo.nlu import OUT_OF_SCOPE
 
 
 class FeatureAdapterTests(unittest.IsolatedAsyncioTestCase):
@@ -80,7 +81,7 @@ class FeatureAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.adapter.client.send_text_chunk.assert_not_awaited()
         self.assertEqual(store.list_for("u1", "g2", "GROUP")[0].status, "blocked")
 
-    async def test_ambiguous_timer_delivery_not_retried_and_does_not_break_chat(self):
+    async def test_ambiguous_timer_delivery_not_retried_and_does_not_break_bot_replies(self):
         self.adapter.work.reminders.create("u1", "dm1", "PRIVATE", "test", 1010, now=1000, request_key="timeout")
         self.adapter.client.send_text_chunk.side_effect = DeliveryUncertain()
         await self.adapter._deliver_due_reminders(now=1010)
@@ -89,7 +90,8 @@ class FeatureAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.adapter.work.reminders.list_for("u1", "dm1", "PRIVATE")[0].status, "uncertain")
         self.adapter.client.send_text_chunk.side_effect = None
         await self.adapter._dispatch(contract.update(text="Xin chào"))
-        self.handler.assert_awaited_once()
+        self.handler.assert_not_awaited()
+        self.assertEqual(OUT_OF_SCOPE, self.adapter.client.send_text_chunk.await_args.args[1])
 
     async def test_empty_sheets_config_is_safe_and_does_not_call_model(self):
         await self.adapter._dispatch(contract.update(text="/lich homnay"))

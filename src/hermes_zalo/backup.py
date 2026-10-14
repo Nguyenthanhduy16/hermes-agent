@@ -34,7 +34,7 @@ SQLITE_TIMEOUT = 30
 BACKUP_TIMEOUT = 60
 STATE_ROOT = "hermes-home/data/zalo"
 STATE_NAME = re.compile(r"(?:zalo-[0-9a-f]{16}|work-[0-9a-f]{16}\."
-                        r"(?:profiles|reminders|issues|pilot|registration|admin|conversations|schedule-notices))\.sqlite3")
+                        r"(?:profiles|reminders|issues|pilot|registration|admin|conversations|schedule-notices|ai-usage))\.sqlite3")
 TICKET_NAME = re.compile(r"(?:lab_live|lab_live_test|sheets_test|demo)\.sqlite3")
 ISSUE_MIGRATION_SNAPSHOT = re.compile(r"work-[0-9a-f]{16}\.issues\.pre-managed-"
                                       r"([0-9]{8}-[0-9]{6}-[0-9]{6})\.sqlite3")

@@ -104,11 +104,13 @@ Hồ sơ đã thu hồi/từ chối, tài khoản bị khóa, số hoặc tên k
 
 ## 5. Hội thoại & Ghi nhớ
 
+**Chính sách hiện tại:** bot chỉ dùng AI để phân loại câu hỏi công việc. Luồng này không gửi lịch sử, tóm tắt hoặc ghi nhớ cho model; các dữ liệu cũ vẫn được giữ để Admin kiểm tra/quản lý. Tin mới ngoài phạm vi vẫn có thể xuất hiện trong lịch sử theo thông báo lưu tin, nhưng không được dùng để xây ngữ cảnh hoặc tự tạo ghi nhớ. Các mục ngữ cảnh/ghi nhớ dưới đây không đồng nghĩa nội dung đang được gửi tới AI.
+
 | Mục | Dùng để làm gì? | Giới hạn cần biết |
 | --- | --- | --- |
 | **Lịch sử hội thoại** | Tìm theo thành viên, nhóm, ngày; xem tin nhận và phản hồi, thời gian, trạng thái gửi | Chỉ tin bot thực nhận và được phép xử lý từ lúc bật tính năng; không lấy toàn bộ lịch sử Zalo |
 | **Ngữ cảnh cuộc trao đổi** | Xem dữ liệu chuẩn bị cho lượt AI tiếp theo; làm mới hoặc xóa khi bot hiểu nhầm | Tách theo người và cuộc trò chuyện; các lệnh không tự trở thành lịch sử chat AI |
-| **Thông tin ghi nhớ** | Thêm thủ công hoặc **Tạo ghi nhớ từ tin này**, sửa, ngừng dùng, mở nguồn và phiên bản cũ | Chỉ nội dung đang bật, chưa hết hạn và đúng phạm vi mới được đưa vào AI |
+| **Thông tin ghi nhớ** | Thêm thủ công hoặc **Tạo ghi nhớ từ tin này**, sửa, ngừng dùng, mở nguồn và phiên bản cũ | Giữ để quản lý; luồng AI phân loại hiện tại không sử dụng kho này |
 
 **Làm mới ngữ cảnh** tạo lại bản tóm tắt bằng cách trích các tin trò chuyện gần đây được phép sử dụng. Đây là trích đoạn có giới hạn, chưa phải tóm tắt ngữ nghĩa bằng AI và không gọi thêm model. **Xóa ngữ cảnh** bỏ các lượt cũ khỏi phiên kế tiếp; giữ lịch sử và ghi nhớ riêng. Làm mới sau khi xóa không khôi phục những lượt đã loại. Thông tin “lần chuẩn bị gần nhất” chỉ cho biết dữ liệu đã chuẩn bị, không chứng minh nhà cung cấp AI đã trả lời thành công.
 

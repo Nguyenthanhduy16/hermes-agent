@@ -134,6 +134,9 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         self.adapter._groups_supported = True
         self.handler = AsyncMock(return_value="Xin chào bạn")
         self.adapter._message_handler = self.handler
+        self.work_handler = AsyncMock(return_value="Kết quả công việc")
+        self.adapter.work = SimpleNamespace(handle=self.work_handler,
+            pilot=SimpleNamespace(record=lambda *args: None), close=AsyncMock())
 
     async def asyncTearDown(self):
         self.guard.stop()
@@ -144,31 +147,46 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         await self.adapter._dispatch(update(user="stranger"))
         await self.adapter._dispatch(update(chat="g2", kind="GROUP"))
         self.handler.assert_not_awaited()
+        self.work_handler.assert_not_awaited()
         self.adapter.client.send_text_chunk.assert_not_awaited()
 
     async def test_routes_and_disables_commands_and_deduplicates(self):
         await self.adapter._dispatch(update(text="/update"))
         await self.adapter._dispatch(update(text="/update"))
-        self.handler.assert_awaited_once()
-        event = self.handler.await_args.args[0]
-        self.assertFalse(event.allow_gateway_control)
-        self.assertEqual((event.source.chat_id, event.source.user_id), ("dm1", "u1"))
-        self.adapter.client.send_text_chunk.assert_awaited_once_with("dm1", "Xin chào bạn")
+        self.work_handler.assert_awaited_once()
+        message = self.work_handler.await_args.args[0]
+        self.assertEqual((message.chat_id, message.user_id), ("dm1", "u1"))
+        self.handler.assert_not_awaited()
+        self.adapter.client.send_text_chunk.assert_awaited_once_with("dm1", "Kết quả công việc")
+
+    async def test_missing_work_or_unhandled_request_never_falls_back_to_models(self):
+        legacy_chat = SimpleNamespace(reply=AsyncMock(side_effect=AssertionError("Unrestricted model forbidden")))
+        self.adapter.managed_chat = legacy_chat
+        self.work_handler.return_value = None
+        await self.adapter._dispatch(update("unhandled", text="Viết một truyện vui đi"))
+        self.adapter.work = None
+        await self.adapter._dispatch(update("no-work", text="Giải thích Python"))
+        self.assertEqual(2, self.adapter.client.send_text_chunk.await_count)
+        self.assertTrue(all(call.args == ("dm1", adapter_module.OUT_OF_SCOPE)
+                            for call in self.adapter.client.send_text_chunk.await_args_list))
+        legacy_chat.reply.assert_not_awaited()
+        self.handler.assert_not_awaited()
 
     async def test_group_sessions_are_distinct_and_sequential(self):
         keys = []
 
-        async def handler(event):
-            keys.append(self.adapter._event_session_key(event))
+        async def handler(message):
+            keys.append(self.adapter._event_session_key(self.adapter._current_event))
             await asyncio.sleep(0)
             return "Done"
 
-        self.adapter._message_handler = handler
+        self.work_handler.side_effect = handler
         await self.adapter._dispatch(update("m1", chat="g1", kind="GROUP"))
         self.assertFalse(self.adapter._session_tasks)
         await self.adapter._dispatch(update("m2", chat="g1", user="u2", kind="GROUP"))
         self.assertNotEqual(keys[0], keys[1])
         self.assertFalse(self.adapter._session_tasks)
+        self.handler.assert_not_awaited()
 
     async def test_send_cannot_route_outside_active_turn(self):
         result = await self.adapter.send("dm1", "arbitrary outbound")
@@ -184,7 +202,7 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         self.adapter.client.send_text_chunk.assert_not_awaited()
 
     async def test_partial_ambiguous_send_never_repeats_chunks(self):
-        self.handler.return_value = "x" * 4500
+        self.work_handler.return_value = "x" * 4500
         self.adapter.client.send_text_chunk.side_effect = [{"message_id": "one"}, DeliveryUncertain()]
         await self.adapter._dispatch(update())
         self.assertEqual(self.adapter.client.send_text_chunk.await_count, 2)
@@ -195,19 +213,18 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(row[0], "failed_uncertain")
 
     async def test_timeout_stops_dispatch_without_replaying(self):
-        self.handler.side_effect = lambda event: asyncio.sleep(1)
-
-        async def slow_handler(event):
+        async def slow_handler(message):
             await asyncio.sleep(1)
             return "late"
 
-        self.adapter._message_handler = slow_handler
+        self.work_handler.side_effect = slow_handler
         with patch.object(adapter_module, "TURN_TIMEOUT_SECONDS", 0.001):
             with self.assertRaises(asyncio.TimeoutError):
                 await self.adapter._dispatch(update())
         self.assertFalse(self.adapter._session_tasks)
         await self.adapter._dispatch(update())
         self.adapter.client.send_text_chunk.assert_not_awaited()
+        self.handler.assert_not_awaited()
 
     async def test_active_webhook_refuses_polling_without_deleting(self):
         await self.adapter.disconnect()
@@ -274,6 +291,20 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         await self.adapter.handle_message(event)
         self.assertFalse(event._gateway_accepted)
         self.handler.assert_not_awaited()
+
+    async def test_even_active_event_cannot_enter_gateway_generation(self):
+        async def attempt_gateway(message):
+            event = self.adapter._current_event
+            event._gateway_accepted = True
+            await self.adapter.handle_message(event)
+            self.assertFalse(event._gateway_accepted)
+            self.assertFalse(event.allow_gateway_control)
+            return "Chức năng đã xử lý."
+
+        self.work_handler.side_effect = attempt_gateway
+        await self.adapter._dispatch(update())
+        self.handler.assert_not_awaited()
+        self.assertFalse(self.adapter._session_tasks)
 
     async def test_model_prose_never_discovers_files_or_attachments(self):
         text = "MEDIA:C:/secret.txt ![image](https://example.org/a.png)"
