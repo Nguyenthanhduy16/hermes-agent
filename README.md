@@ -189,7 +189,7 @@ Khi tài khoản có tính năng:
 
 Bot nhận tin nhóm khi được nhắc tên hoặc có người trả lời tin của bot; không nhận toàn bộ hội thoại nhóm. ID dùng gửi về nhóm là `chat.id`. [Quy tắc tương tác nhóm](https://docs.zaloplatforms.com/docs/BOT/best-practices/build-bot-interaction-with-group)
 
-Nhóm luôn cần được cấp quyền. Với `members`, thành viên có thể hỏi dữ liệu đã chia sẻ và trò chuyện. Nhắn riêng cần allowlist hoặc đăng ký đã duyệt đúng chat. Duyệt tự cấp quyền thành viên trong chat riêng: lịch, đổi ca, nhắc việc, góp ý, trò chuyện và issue khi đã bật. Tài liệu dùng chung cần được chia sẻ rõ trong manifest; các quyền nhóm và tài liệu riêng giữ nguyên. Với `allowlist`, cả nhóm và người gửi đều phải có trong danh sách. **Không gửi số điện thoại đăng ký trong nhóm.** Dù ngữ cảnh model được tách theo người, **câu trả lời gửi trong nhóm vẫn hiển thị cho các thành viên của nhóm**.
+Nhóm luôn cần được cấp quyền. Với `members`, thành viên có thể hỏi dữ liệu đã chia sẻ và trò chuyện. Khi bật đăng ký Workload, người chưa đăng ký thành công chỉ nhận hướng dẫn nhắn riêng `/dangky SỐ_ĐIỆN_THOẠI`, dùng **số điện thoại hiện tại trên Workload**; đăng ký xong mới dùng bot trong nhóm. Nhắn riêng cần allowlist hoặc đăng ký đã duyệt đúng chat. Duyệt tự cấp quyền thành viên trong chat riêng: lịch, đổi ca, nhắc việc, góp ý, trò chuyện và issue khi đã bật. Tài liệu dùng chung cần được chia sẻ rõ trong manifest; các quyền nhóm và tài liệu riêng giữ nguyên. Với `allowlist`, cả nhóm và người gửi đều phải có trong danh sách. **Không gửi số điện thoại đăng ký trong nhóm.** Dù ngữ cảnh model được tách theo người, **câu trả lời gửi trong nhóm vẫn hiển thị cho các thành viên của nhóm**.
 
 ## 6. Bài thử trước khi cho nhóm dùng
 
@@ -201,7 +201,7 @@ Nhóm luôn cần được cấp quyền. Với `members`, thành viên có th�
 | Nhóm và người đều được cấp quyền @bot | Bot trả lời đúng nhóm |
 | Nhóm chưa được cấp quyền @bot | Không xử lý câu hỏi |
 | Người chưa có trong danh sách user @bot trong nhóm, chế độ `allowlist` | Không xử lý câu hỏi |
-| Thành viên @bot trong nhóm được phép, chế độ `members` | Tra dữ liệu đã chia sẻ hoặc trò chuyện với Hermes; tác vụ ghi vẫn cần quyền riêng |
+| Thành viên @bot trong nhóm được phép, chế độ `members` | Nếu bật đăng ký: chưa đăng ký chỉ nhận hướng dẫn nhắn riêng; đăng ký thành công mới tra dữ liệu đã chia sẻ hoặc trò chuyện; tác vụ ghi vẫn cần quyền riêng |
 | Câu trả lời dài | Chia thành nhiều tin phù hợp giới hạn Zalo |
 | Mất mạng rồi có lại | Tiến trình nhận tin có cơ chế thử lại; kiểm tra bằng tin mới |
 

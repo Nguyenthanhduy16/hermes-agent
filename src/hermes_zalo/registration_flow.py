@@ -12,11 +12,14 @@ from .workload import WorkloadDirectory, WorkloadError, WorkloadSettings, normal
 ADMIN_COMMANDS = frozenset(('/dangkychoduyet', '/duyetdangky', '/tuchoidangky', '/thuhoidangky', '/thanhvien'))
 ENTRY_COMMANDS = frozenset(('/dangky', '/trangthaidangky'))
 GUIDE = ('Đăng ký bằng tin nhắn riêng: /dangky SỐ_ĐIỆN_THOẠI\n'
-         'Dùng đúng số trong Workload. Quản trị xác minh và duyệt để cấp quyền thành viên theo tính năng đã bật.\n'
+         'Dùng số điện thoại hiện tại trên Workload. Quản trị xác minh và duyệt để cấp quyền thành viên theo tính năng đã bật.\n'
          'Xem trạng thái: /dangky trangthai')
 AUTO_GUIDE = ('Nhắn riêng: /dangky SỐ_ĐIỆN_THOẠI\n'
-              'Số khớp duy nhất trong Workload sẽ được đăng ký tự động.\n'
+              'Dùng số điện thoại hiện tại trên Workload; số khớp duy nhất sẽ được đăng ký tự động.\n'
               '/dangky trangthai — xem trạng thái')
+GROUP_GUIDE = ('Bạn cần đăng ký trước khi dùng bot.\n'
+               'Nhắn riêng bot: /dangky SỐ_ĐIỆN_THOẠI\n'
+               'Lưu ý: dùng số điện thoại hiện tại trên Workload; không gửi số trong nhóm.')
 SUCCESS_PREFIX = '✅ Đăng ký thành công!'
 UNAVAILABLE = 'Đăng ký bằng số điện thoại chưa sẵn sàng. Nhờ quản trị kiểm tra cấu hình đăng ký.'
 AMBIGUOUS = ('Chưa có ánh xạ lịch xác định duy nhất đúng người. Nhờ quản trị bổ sung mã người '

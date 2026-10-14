@@ -88,6 +88,22 @@ class WorkService:
     def registration_admission(self, message):
         return bool(self.registration.bootstrap(message) or self.registration.approved(message))
 
+    def group_registration_response(self, message):
+        """Enrollment gates group usage without expanding any existing ACL."""
+        if message.chat_type != 'GROUP' or not self.registration.requested:
+            return None
+        if not is_allowed(message, self.settings.allowed_users, self.settings.allowed_groups,
+                          group_members=self.settings.group_access == 'members'):
+            return 'Nhóm hoặc tài khoản này chưa được cấp quyền dùng bot.'
+        if not self.registration.enabled:
+            return REGISTRATION_UNAVAILABLE
+        if self.registration.admin_locked(message):
+            return 'Quyền dùng bot đang bị khóa; nhờ quản trị kiểm tra.'
+        if self.registration.identity(message.user_id) is None:
+            from .registration_flow import GROUP_GUIDE
+            return GROUP_GUIDE
+        return None
+
     def member_admin_locked(self, user_id, chat_id=None):
         return bool(self.registration.store and self.registration.store.route_locked(user_id, chat_id))
 
@@ -530,6 +546,10 @@ class WorkService:
         kind = "chat"
         outcome = "ok"
         try:
+            group_guide = self.group_registration_response(message)
+            if group_guide is not None:
+                kind, outcome = 'command', 'denied'
+                return group_guide
             registration_response = await self.registration.handle(message)
             if registration_response is not None:
                 kind = 'command'
@@ -586,7 +606,7 @@ class WorkService:
                 kind = "command"
                 return ticket_response
             # Approval grants ordinary actions in the verified private chat.
-            # Unregistered group visitors retain only the explicitly shared read scope.
+            # Group enrollment does not grant private actions or widen read scope.
             if ((command in ('/nhac', '/issue', '/phanhoi') or normalized(text).startswith('nhac minh'))
                     and not self.member_feature_allowed(message.user_id, message.chat_id, message.chat_type)):
                 outcome = 'denied'

@@ -229,7 +229,8 @@ class ZaloAdapter(BasePlatformAdapter):
         return None
 
     def _archive_outgoing(self, text, status, key):
-        if self.conversations and self._current_message:
+        if (self.conversations and self._current_message and
+                not (self._send_permit.get() or {}).get('registration_only')):
             self.conversations.record_outgoing(self._current_message, text, status=status, delivery_key=key)
 
     async def _reminder_loop(self) -> None:
@@ -467,8 +468,14 @@ class ZaloAdapter(BasePlatformAdapter):
             return
         registration_admission = bool(self.work and getattr(self.work, 'registration_admission', lambda message: False)(message))
         registration_blocked = bool(self.work and getattr(self.work, 'registration_blocked', lambda message: False)(message))
+        group_guide = (getattr(self.work, 'group_registration_response', lambda message: None)(message)
+                       if self.work and message.chat_type == 'GROUP' else None)
+        # Locked members remain blocked. Other unapproved members may receive
+        # only a fixed enrollment guide inside an already authorized group.
+        locked = bool(self.work and getattr(self.work, 'member_admin_locked', lambda *args: False)(
+            message.user_id, message.chat_id if message.chat_type == 'PRIVATE' else None))
         if (not is_allowed(message, self.settings.allowed_users, self.settings.allowed_groups,
-                           group_members=self.settings.group_access == "members") and not registration_admission) or registration_blocked:
+                           group_members=self.settings.group_access == "members") and not registration_admission) or locked or (registration_blocked and group_guide is None):
             logger.info("Zalo message ignored: sender/chat not authorized")
             if self.work:
                 self.work.pilot.record("access", "denied")
@@ -506,11 +513,16 @@ class ZaloAdapter(BasePlatformAdapter):
         self._reply_chat = message.chat_id
         self._reply_budget = self.settings.max_reply_chars
         self._delivery_failed = False
-        permit = {"active": True, "chat_id": message.chat_id, "message_id": message.message_id}
+        permit = {"active": True, "chat_id": message.chat_id, "message_id": message.message_id,
+                  "registration_only": group_guide is not None}
         permit_token = self._send_permit.set(permit)
         started = time.monotonic()
         try:
             self.store.finish(message.key, "admitted")
+            if group_guide is not None:
+                delivered = await self.send(message.chat_id, group_guide, reply_to=message.message_id)
+                self.store.finish(message.key, 'completed' if delivered.success else 'failed_uncertain')
+                return
             if self.conversations:
                 self.conversations.record_incoming(message, self._archive_member(message))
                 if self.conversations.notice_needed(message):
@@ -634,6 +646,9 @@ class ZaloAdapter(BasePlatformAdapter):
             for chunk in split_text(text):
                 if self.work and self._current_message and getattr(self.work, 'member_admin_locked', lambda *args: False)(
                         self._current_message.user_id, self._current_message.chat_id):
+                    return SendResult(success=False, error='ZALO_ACCESS_CHANGED', retryable=False)
+                if (self.work and self._current_message and not permit.get('registration_only') and
+                        getattr(self.work, 'group_registration_response', lambda message: None)(self._current_message) is not None):
                     return SendResult(success=False, error='ZALO_ACCESS_CHANGED', retryable=False)
                 self._archive_sequence += 1
                 key = 'reply-' + str(self._archive_sequence)

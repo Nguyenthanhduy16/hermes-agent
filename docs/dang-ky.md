@@ -13,6 +13,16 @@ Số khớp Workload không xác minh người nhắn sở hữu số đó; ch�
 
 Không gửi số điện thoại trong nhóm. Bot lưu ID từ chính tin nhắn riêng nhận được; không suy ra chat riêng từ ID nhóm. Mỗi số trong Workload phải xác định một người; số bị trùng, mất số `0` đầu hoặc hiển thị dạng khoa học không được tự đoán sửa. Nếu Sheets làm mất số `0` đầu, quản trị đối chiếu số gốc rồi nhập lại ô theo định dạng văn bản; bot không tự sửa bảng.
 
+Khi bật đăng ký Workload, thành viên cần đăng ký thành công trước khi gọi bot trong nhóm được cấp quyền. Chọn **@Bot** hoặc trả lời tin của bot. Người chưa đăng ký nhận hướng dẫn tại nhóm:
+
+> Bạn cần đăng ký trước khi dùng bot.
+>
+> Nhắn riêng bot: /dangky SỐ_ĐIỆN_THOẠI
+>
+> Lưu ý: dùng số điện thoại hiện tại trên Workload; không gửi số trong nhóm.
+
+Đăng ký xong, quay lại nhóm dùng `/menu` hoặc hỏi tự nhiên; không đăng ký lại. Quyền nhóm, quyền dữ liệu và các thao tác chỉ dùng trong chat riêng vẫn giữ nguyên. Người bị khóa không được dùng bot; người bị từ chối/thu hồi cần nhắn riêng `/dangky trangthai` để quản trị kiểm tra. Lượt chỉ hướng dẫn đăng ký không gọi AI/Sheets hoặc lưu nội dung vào lịch sử hội thoại. Khi tắt đăng ký, cơ chế allowlist cũ vẫn giữ nguyên.
+
 Bot bỏ ký tự ẩn thường gặp khi sao chép (`U+200B`, `U+FEFF`) và chấp nhận khoảng trắng không ngắt (`U+00A0`, `U+202F`) trong cả tin đăng ký lẫn ô số điện thoại Workload. Cách này không thêm/bớt chữ số hoặc bỏ bước duyệt; số bị trùng sau chuẩn hóa vẫn bị chặn. Nếu còn báo không tìm thấy, kiểm tra cột C: số phải đủ chữ số, không kèm chữ, dấu nháy hoặc ký tự lạ khác; đặt ô ở định dạng văn bản rồi nhập lại từ nguồn đã xác minh.
 
 Mỗi tài khoản được tra đăng ký tối đa 5 lần/giờ, toàn bot tối đa 60 lần/giờ. Giới hạn còn hiệu lực sau khi khởi động lại. Xem trạng thái không tiêu tốn lượt tra.
