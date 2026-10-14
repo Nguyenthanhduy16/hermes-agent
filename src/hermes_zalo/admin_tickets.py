@@ -148,6 +148,19 @@ class TicketAdmin:
                     raise AdminError('Quyền đổi ca vừa thay đổi. Tải lại trước khi xác nhận.', 409)
                 with ticket_access_scope(actor.authorize):
                     return chat.service.admin_action(actor, ticket_id, action, version, reason.strip())
-        result = await asyncio.to_thread(apply)
+        begin_change = getattr(self.work, 'begin_schedule_change', None)
+        end_change = getattr(self.work, 'end_schedule_change', None)
+        changing = action in ('approve', 'reconcile') and callable(begin_change) and callable(end_change)
+        def apply_with_schedule_guard():
+            if changing:
+                begin_change()
+            try:
+                return apply()
+            finally:
+                if changing:
+                    end_change()
+        # A cancelled HTTP waiter cannot cancel a running thread's Sheets
+        # request. Keep reminders paused until the actual write task exits.
+        result = await asyncio.to_thread(apply_with_schedule_guard)
         self.auth.user(session, 'tickets')
         return dict(enabled=True, ticket=result)

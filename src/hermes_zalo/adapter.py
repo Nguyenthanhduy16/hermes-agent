@@ -21,7 +21,7 @@ from gateway.platforms.base import BasePlatformAdapter, SendResult
 from gateway.platforms.event import MessageEvent, MessageType, ProcessingOutcome
 from hermes_constants import get_hermes_home
 
-from .api import AuthenticationError, DeliveryUncertain, WebhookInspectionUnavailable, ZaloAPIError, ZaloClient
+from .api import AuthenticationError, DeliveryBlocked, DeliveryUncertain, WebhookInspectionUnavailable, ZaloAPIError, ZaloClient
 from .config import ConfigError, Settings
 from .events import is_allowed, parse_update, split_text
 from .mentions import strip_bot_mention
@@ -90,6 +90,7 @@ class ZaloAdapter(BasePlatformAdapter):
         self.store: StateStore | None = None
         self._poll_task: asyncio.Task | None = None
         self._reminder_task: asyncio.Task | None = None
+        self._schedule_reminder_task: asyncio.Task | None = None
         self._tickets_task: asyncio.Task | None = None
         self._issues_task: asyncio.Task | None = None
         self.work: WorkService | None = None
@@ -152,6 +153,9 @@ class ZaloAdapter(BasePlatformAdapter):
             self._mark_connected()
             self._poll_task = asyncio.create_task(self._poll_loop(), name="zalo-long-poll")
             self._reminder_task = asyncio.create_task(self._reminder_loop(), name="zalo-reminders")
+            if getattr(getattr(self.work, 'schedule_reminder_settings', None), 'enabled', False):
+                self._schedule_reminder_task = asyncio.create_task(
+                    self._schedule_reminder_loop(), name='zalo-schedule-reminders')
             self._tickets_task = asyncio.create_task(self._tickets_loop(), name="zalo-ticket-notifications")
             if getattr(self.work, 'managed_issues', None) is not None:
                 self._issues_task = asyncio.create_task(self._issues_loop(), name="zalo-issue-notifications")
@@ -185,6 +189,11 @@ class ZaloAdapter(BasePlatformAdapter):
             reminder_task.cancel()
             with suppress(asyncio.CancelledError):
                 await reminder_task
+        schedule_task, self._schedule_reminder_task = self._schedule_reminder_task, None
+        if schedule_task and schedule_task is not asyncio.current_task():
+            schedule_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await schedule_task
         tickets_task, self._tickets_task = self._tickets_task, None
         if tickets_task and tickets_task is not asyncio.current_task():
             tickets_task.cancel()
@@ -301,6 +310,103 @@ class ZaloAdapter(BasePlatformAdapter):
             if self.has_fatal_error:
                 await self._notify_fatal_error()
                 break
+
+    async def _schedule_reminder_loop(self) -> None:
+        """A calendar outage must not stop polling or manually created reminders."""
+        while self._running and not self.has_fatal_error:
+            settings = getattr(self.work, 'schedule_reminder_settings', None)
+            if settings is None or not settings.enabled:
+                return
+            backlog = False
+            try:
+                backlog = await self._deliver_schedule_reminders()
+                self.work.pilot.record('schedule_reminders', 'ok')
+            except asyncio.CancelledError:
+                raise
+            except Exception as error:
+                # Exception bodies may contain source URLs, IDs or private data.
+                logger.warning('Automatic schedule reminder tick unavailable (%s)', type(error).__name__)
+                if self.work is not None:
+                    self.work.pilot.record('schedule_reminders', 'error')
+            await asyncio.sleep(5 if backlog else settings.poll_seconds)
+
+    async def _deliver_schedule_reminders(self, now=None) -> bool:
+        if (self.work is None or self.client is None or self.has_fatal_error or
+                not getattr(getattr(self.work, 'schedule_reminder_settings', None), 'enabled', False)):
+            return False
+        work, client, store = self.work, self.client, self.work.schedule_reminders
+        if store is None:
+            return False
+        clock = (lambda: time.time()) if now is None else (lambda: now)
+        candidates = await work.automatic_schedule_candidates(now=clock())
+        attempted = 0
+        for index, candidate in enumerate(candidates):
+            if index % 20 == 0:
+                await asyncio.sleep(0)
+            if self.has_fatal_error:
+                return False
+            # Terminal records are intentionally never replayed, including a
+            # process interrupted after claiming but before delivery confirmed.
+            if store.get(candidate.id) is not None:
+                continue
+            if attempted >= 20:
+                # Hundreds of members can share a class time. Keep each batch
+                # bounded, but drain the remaining candidates before a normal
+                # minute-long poll interval can consume their delivery window.
+                return True
+            attempted += 1
+            candidate = await work.revalidate_automatic_schedule_candidate(candidate, now=clock())
+            if candidate is None or not work.automatic_schedule_delivery_allowed(candidate, now=clock()):
+                continue
+            # No awaits between the final authorization and the atomic claim.
+            if not store.claim(candidate, now=clock()):
+                continue
+            started, sent_chunks = time.monotonic(), 0
+            status = 'sent'
+
+            async def before_send():
+                # Revalidation also runs inside ZaloClient after a 429 wait.
+                # A changed schedule must not deliver the earlier text, even
+                # if the identity itself remains correctly registered.
+                if self.has_fatal_error:
+                    return False
+                try:
+                    refreshed = await work.revalidate_automatic_schedule_candidate(candidate, now=clock())
+                except Exception as error:
+                    # The callback runs before transport; a failed source read
+                    # explicitly blocks this attempt rather than implying that
+                    # the network may already have accepted the message.
+                    logger.warning('Automatic schedule reminder preflight unavailable (%s)', type(error).__name__)
+                    return False
+                return refreshed == candidate and work.automatic_schedule_delivery_allowed(candidate, now=clock())
+
+            try:
+                for chunk in split_text(candidate.text):
+                    if self.has_fatal_error:
+                        status = 'uncertain' if sent_chunks else 'blocked'
+                        break
+                    await client.send_text_chunk(candidate.chat_id, chunk, before_send=before_send)
+                    sent_chunks += 1
+            except DeliveryBlocked:
+                status = 'uncertain' if sent_chunks else 'blocked'
+            except AuthenticationError:
+                status = 'uncertain' if sent_chunks else 'failed'
+                self._set_fatal_error('zalo_auth', 'Token rejected when delivering schedule reminder.', retryable=False)
+            except DeliveryUncertain:
+                status = 'uncertain'
+            except ZaloAPIError as error:
+                rejected = error.code in (400, 401, 404, 405, 409, 413, 415, 422, 429)
+                status = 'failed' if rejected and not sent_chunks else 'uncertain'
+            except BaseException:
+                store.finish(candidate.id, 'uncertain')
+                raise
+            store.finish(candidate.id, status)
+            work.pilot.record('schedule_reminders', 'error' if status == 'failed' else status,
+                              (time.monotonic() - started) * 1000)
+            if self.has_fatal_error:
+                await self._notify_fatal_error()
+                break
+        return False
 
     async def _tickets_loop(self) -> None:
         try:

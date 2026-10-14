@@ -193,9 +193,9 @@ class RegistrationWorkTests(unittest.IsolatedAsyncioTestCase):
         await self.approve('new-user')
         self.service._tickets_values['TICKETS_CHAT_MODE'] = 'lab_live'
         reply = await self.send('/menu', user='new-user')
-        for expected in ('/lich homnay', '/lichcuatoi homnay', '/doica', '/thongbao', '/nhac', '/issue'):
+        for expected in ('/lich homnay', '/lichcuatoi homnay', '/doica', '/thongbao', '/issue'):
             self.assertIn(expected, reply)
-        for forbidden in ('/dangkychoduyet', '/thanhvien'):
+        for forbidden in ('/dangkychoduyet', '/thanhvien', '/nhac'):
             self.assertNotIn(forbidden, reply)
         self.directory.lookup.assert_not_awaited()  # Menu does not fetch the roster.
         self.sheets._lab_schedules.assert_not_awaited()

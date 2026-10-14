@@ -38,8 +38,7 @@ Yêu cầu tạo issue bằng lời tự nhiên chỉ mở hướng dẫn; vẫn
 | Menu đổi ca trong tin nhắn riêng | `/tickets` |
 | Bắt đầu yêu cầu đổi ca | `/doica` |
 | Hướng dẫn đổi ca | `/help tickets` |
-| Nhắc lịch: hướng dẫn đặt giờ nhắc | `/nhac` |
-| Thông báo: cách xem nhắc việc và yêu cầu đổi ca chờ xử lý | `/thongbao` |
+| Thông báo: lịch tự động khi đã bật, nhắc tự đặt và yêu cầu đổi ca | `/thongbao` |
 | Tạo issue: hướng dẫn lập bản nháp | `/issue` |
 
 `/trogiup` và `/help` mở cùng menu gọn. Hướng dẫn riêng theo tính năng vẫn báo rõ phần chưa kết nối, chưa bật hoặc chưa có quyền. Lệnh gõ sai như `/lichh` được hướng dẫn trở về menu.
@@ -128,9 +127,11 @@ Chỉ A, B và quản lý được xem yêu cầu theo quyền đã cấp. Quả
 
 Không cần mở web hoặc Mini App. B cần đã nhắn riêng và được liên kết đúng với bot để nhận thông báo yêu cầu mới. Không thấy tin hoặc mã hết hạn: dùng `/choxacnhan`. Các yêu cầu cũ không được tự gửi lại thông báo; gửi tin chưa rõ kết quả cũng không tự phát lại. Bản này dùng lệnh văn bản, chưa có nút bấm đồng ý/từ chối. Chế độ `lab_live` chỉ sửa D của hai ca đã xác nhận, không sửa Key Coach; `sheets_test` vẫn dùng bảng thử riêng. Nếu ghi chưa rõ kết quả ở luồng hai người, A hoặc B dùng `/doisoat` theo lệnh bot gửi để đọc lại, không tự ghi lại. Xem [hướng dẫn thành viên và quản trị](tickets-chat.md).
 
-## Nhắc lịch
+## Nhắc lịch tự động và nhắc tự đặt
 
-Thành viên đã duyệt được tạo, xem và hủy nhắc của mình tại chat riêng đã liên kết, không thêm ID vào `.env`. Mục **Nhắc lịch** trong menu dùng `/nhac`, hoặc nhắn `Nhắc lịch giúp mình`, để mở hướng dẫn nhắc việc. Bạn tự nhập thời gian và nội dung; bot chưa tự lấy lịch Sheets để tạo nhắc. `Xem các nhắc lịch của tôi` mở danh sách đang chờ trong chat hiện tại.
+Mục `/nhac` đã ẩn khỏi menu chính. Khi quản trị bật nhắc lịch tự động, thành viên đã đăng ký được nhắn riêng **20:00 tối hôm trước** và **30 phút trước mỗi ca** theo lịch Lab Coach. Thành viên không cần tạo từng nhắc. Tin gần giờ học chỉ nhắc chuẩn bị check-in, chưa ghi nhận điểm danh. Xem [chi tiết và cấu hình](nhac-lich-tu-dong.md).
+
+Lệnh `/nhac` và các nhắc tự đặt cũ vẫn hoạt động theo quyền hiện có. Thành viên đã duyệt được tạo, xem và hủy nhắc của mình tại chat riêng đã liên kết. `/nhac`, hoặc `Nhắc lịch giúp mình`, mở hướng dẫn; `Xem các nhắc lịch của tôi` mở danh sách **nhắc tự đặt** đang chờ trong chat hiện tại. Danh sách này không bao gồm thông báo lịch tự động.
 
 ```text
 /nhac sau 10 phut | Gửi báo cáo
@@ -150,6 +151,7 @@ Dấu `|` ngăn thời gian với nội dung. Nhắc việc phải có đủ gi�
 
 `/thongbao` mở hướng dẫn tra các mục bạn được phép dùng:
 
+- Khi đã bật: giờ tổng hợp lịch ngày mai và thời điểm nhắc trước ca qua tin nhắn riêng.
 - `/nhac xem`: nhắc đang chờ của chính bạn tại chat hiện tại.
 - `/nhac lichsu`: lịch sử nhắc của chính bạn tại chat hiện tại.
 - `/choxacnhan`: yêu cầu đổi ca đang chờ bạn, dùng trong **chat riêng** với bot. Nếu đang ở nhóm, chuyển sang nhắn riêng.

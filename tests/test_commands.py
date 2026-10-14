@@ -70,9 +70,9 @@ class CommandParsingTests(unittest.TestCase):
             self.assertNotIn("/lich", menu)
             self.assertNotIn("/doica", menu)
         menu = help_text(sheets_state="ready", lab=True, tickets=True, issues=True, reminders=True)
-        for command in ("/lich homnay", "/lichcuatoi homnay", "/doica", "/dangky", "/nhac", "/thongbao", "/issue"):
+        for command in ("/lich homnay", "/lichcuatoi homnay", "/doica", "/dangky", "/thongbao", "/issue"):
             self.assertIn(command, menu)
-        for hidden in ("/tailieu", "/hoi", "/phanhoi"):
+        for hidden in ("/tailieu", "/hoi", "/phanhoi", "/nhac"):
             self.assertNotIn(hidden, menu)
         self.assertLess(len(menu), 500)
         self.assertIn("chưa được cấp quyền", help_text("lich", sheets_state="denied"))
@@ -80,6 +80,21 @@ class CommandParsingTests(unittest.TestCase):
         self.assertNotIn("/issue tao", help_text("issue"))
         self.assertIn("chưa tạo issue", help_text("issue", issues=True))
         self.assertIn("chưa được cấp quyền", help_text("lich", sheets_state="denied", lab=True))
+
+    def test_automatic_notice_guide_uses_configured_policy_without_claiming_checkin(self):
+        disabled = help_text("thongbao", reminders=True)
+        self.assertNotIn("Nhắc lịch học tự động", disabled)
+        self.assertNotIn("20:00", disabled)
+        enabled = help_text("thongbao", auto_reminders=True,
+                            auto_reminders_evening_time="19:30", auto_reminders_lead_minutes=45)
+        self.assertIn("19:30", enabled)
+        self.assertIn("Trước mỗi ca 45 phút", enabled)
+        self.assertIn("tin nhắn riêng", enabled)
+        self.assertIn("không tự ghi nhận điểm danh", enabled)
+        self.assertNotIn("Chưa có mục thông báo", enabled)
+        self.assertNotIn("/nhac", help_text(auto_reminders=True, reminders=True))
+        self.assertIn("/thongbao", help_text(auto_reminders=True))
+        self.assertIn("/nhac huy", help_text("nhac", auto_reminders=True))
 
 
 class CalendarQueryTests(unittest.TestCase):
@@ -167,7 +182,7 @@ class CommandServiceTests(unittest.IsolatedAsyncioTestCase):
         menu = await self.send("/menu")
         self.assertIn("/lich homnay", menu)
         self.assertIn("/lichcuatoi homnay", menu)
-        self.assertIn("Nhắc lịch: /nhac", menu)
+        self.assertNotIn("/nhac", menu)
         self.assertIn("Thông báo: /thongbao", menu)
         self.assertIn("Tạo issue: /issue (chưa bật)", menu)
         self.assertNotIn("/doica", menu)  # Tickets is off in this fixture.
@@ -181,7 +196,10 @@ class CommandServiceTests(unittest.IsolatedAsyncioTestCase):
         with patch("hermes_zalo.tickets.runtime.open_chat", side_effect=AssertionError("must not open")):
             for command in ("/menu", "/thongbao", "/help thongbao"):
                 response = await self.send(command)
-                self.assertIn("/nhac", response)
+                if command == "/menu":
+                    self.assertNotIn("/nhac", response)
+                else:
+                    self.assertIn("/nhac", response)
                 self.assertIn("/doica" if command == "/menu" else "/choxacnhan", response)
         self.assertFalse(self.calls)
         self.assertFalse(self.service._tickets_initialized)
@@ -219,7 +237,8 @@ class CommandServiceTests(unittest.IsolatedAsyncioTestCase):
         self.client.settings = replace(self.client.settings, users=frozenset())
         self.assertNotIn("/issue", await self.send("/menu"))
         self.assertNotIn("/issue tao", await self.send("/issue"))
-        self.assertIn("/nhac", await self.send("/menu"))
+        self.assertNotIn("/nhac", await self.send("/menu"))
+        self.assertIn("/nhac huy", await self.send("/nhac"))
         self.assertFalse(self.calls)
         self.assertEqual(0, self.service.issues.db.execute("SELECT COUNT(*) FROM drafts").fetchone()[0])
 

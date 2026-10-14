@@ -5,9 +5,11 @@ an ambiguous send never retries because Zalo documents no idempotency key.
 """
 
 import asyncio
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 import math
+import inspect
 import random
 
 import httpx
@@ -38,6 +40,10 @@ class AuthenticationError(ZaloAPIError):
 
 class DeliveryUncertain(ZaloAPIError):
     """The server may have accepted a send; automatic resend risks duplicates."""
+
+
+class DeliveryBlocked(ZaloAPIError):
+    """An authorized sender's final check refused this transport attempt."""
 
 
 class WebhookInspectionUnavailable(ZaloAPIError):
@@ -125,7 +131,10 @@ class ZaloClient:
             raise ValueError("Polling timeout must be between 1 and 60 seconds.")
         return await self._request("getUpdates", {"timeout": timeout}, poll=True, read_timeout=timeout + 10)
 
-    async def send_text_chunk(self, chat_id: str, text: str) -> dict:
+    async def send_text_chunk(
+        self, chat_id: str, text: str, *,
+        before_send: Callable[[], bool | Awaitable[bool]] | None = None,
+    ) -> dict:
         if not isinstance(chat_id, str) or not chat_id.strip():
             raise ValueError("A nonempty chat ID string is required.")
         if not isinstance(text, str) or not text:
@@ -133,7 +142,8 @@ class ZaloClient:
         # UTF-16 units are conservative for the documented 2000-character cap.
         if any(0xD800 <= ord(char) <= 0xDFFF for char in text) or sum(2 if ord(char) > 0xFFFF else 1 for char in text) > 2000:
             raise ValueError("Message text exceeds the supported character limit or contains invalid Unicode.")
-        result = await self._request("sendMessage", {"chat_id": chat_id, "text": text}, sending=True)
+        guarded = {"before_send": before_send} if before_send is not None else {}
+        result = await self._request("sendMessage", {"chat_id": chat_id, "text": text}, sending=True, **guarded)
         if not isinstance(result.get("message_id"), (str, int)) or isinstance(result.get("message_id"), bool) or not str(result["message_id"]).strip():
             raise DeliveryUncertain("Zalo did not confirm a message ID; no automatic resend.", method="sendMessage")
         return result
@@ -146,8 +156,18 @@ class ZaloClient:
         sending: bool = False,
         poll: bool = False,
         read_timeout: int = 20,
+        before_send: Callable[[], bool | Awaitable[bool]] | None = None,
     ) -> dict | None:
         for attempt in range(self._max_attempts):
+            if sending and before_send is not None:
+                # A known 429 can wait before retrying. Recheck the current
+                # recipient and schedule after that wait, before ANY network
+                # attempt, without misclassifying denial as network ambiguity.
+                allowed = before_send()
+                if inspect.isawaitable(allowed):
+                    allowed = await allowed
+                if allowed is not True:
+                    raise DeliveryBlocked("Zalo delivery authorization changed.", method=method)
             try:
                 response = await self._client.post(
                     self._base_url + "/" + method,

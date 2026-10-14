@@ -154,7 +154,9 @@ def help_topic(argument):
 
 
 def help_text(topic="", *, sheets_state="not_configured", lab=False, issues=False,
-              issue_access=False, reminders=False, tickets=False, private_chat=True):
+              issue_access=False, reminders=False, tickets=False, private_chat=True,
+              auto_reminders=False, auto_reminders_evening_time="20:00",
+              auto_reminders_lead_minutes=30):
     topic = normalized(" ".join(topic.split())).lstrip("/")
     tomorrow = (datetime.now(VIETNAM_TZ) + timedelta(days=1)).strftime("%d/%m/%Y")
     if topic in ("lich", "lichcuatoi", "calendar"):
@@ -181,8 +183,14 @@ def help_text(topic="", *, sheets_state="not_configured", lab=False, issues=Fals
         return result
     if topic in ("thongbao", "thong bao"):
         lines = ["THÔNG BÁO", ""]
+        if auto_reminders:
+            lines += ["Nhắc lịch học tự động qua tin nhắn riêng:",
+                      f"• {auto_reminders_evening_time}: lịch ngày mai để chuẩn bị.",
+                      f"• Trước mỗi ca {auto_reminders_lead_minutes} phút: nhắc chuẩn bị check-in.",
+                      "Dành cho thành viên đã đăng ký thành công và khớp đúng người trên lịch.",
+                      "Không có ca thì không gửi. Tin nhắc không tự ghi nhận điểm danh.", ""]
         if reminders:
-            lines += ["Nhắc lịch của bạn tại chat này:",
+            lines += ["Nhắc việc đã tự đặt tại chat này:",
                       "/nhac xem — các nhắc đang chờ",
                       "/nhac lichsu — nhắc gần đây và kết quả gửi", ""]
         if tickets:
@@ -190,7 +198,7 @@ def help_text(topic="", *, sheets_state="not_configured", lab=False, issues=Fals
                       "/choxacnhan — yêu cầu đang chờ bạn đồng ý" +
                       (" (nhắn riêng cho bot)" if not private_chat else ""),
                       "Bot gửi thông báo riêng khi có yêu cầu mới cho tài khoản đã liên kết.", ""]
-        if not reminders and not tickets:
+        if not reminders and not tickets and not auto_reminders:
             lines += ["Chưa có mục thông báo được mở cho bạn tại đây.", ""]
         lines.append("/menu — trở về menu")
         return "\n".join(lines)
@@ -206,7 +214,7 @@ def help_text(topic="", *, sheets_state="not_configured", lab=False, issues=Fals
                 "Thay MÃ_NHẮC bằng mã bot gửi khi tạo hoặc trong danh sách.\n"
                 "Dấu | ngăn thời gian và nội dung. Giờ Việt Nam; bot nhắc tại chính chat tạo nhắc. "
                 "Máy chạy bot cần bật và có mạng.\n"
-                "Bạn tự đặt từng nhắc; bot chưa tự tạo nhắc từ lịch Sheets.")
+                "Đây là nhắc do bạn tự đặt, tách biệt với thông báo lịch học tự động.")
     if topic in ("hoi", "tailieu", "tai lieu"):
         return ("HỎI TÀI LIỆU\n/tailieu — xem tài liệu bạn được phép đọc\n"
                 "/hoi Giờ làm việc của nhóm là khi nào?\n"
@@ -265,9 +273,7 @@ def help_text(topic="", *, sheets_state="not_configured", lab=False, issues=Fals
             entries.append("Lịch của tôi: /lichcuatoi homnay")
     if tickets:
         entries.append("Đổi ca: /doica" + (" (nhắn riêng cho bot)" if not private_chat else ""))
-    if reminders:
-        entries.append("Nhắc lịch: /nhac")
-    if reminders or tickets:
+    if reminders or tickets or auto_reminders:
         entries.append("Thông báo: /thongbao")
     if issues or issue_access:
         entries.append("Tạo issue: /issue" + ("" if issues else " (chưa bật)"))

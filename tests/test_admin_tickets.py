@@ -1,5 +1,6 @@
 """Admin exchanges reuse live in-process stores with synthetic assignments only."""
 import asyncio
+import threading
 from dataclasses import replace
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -97,6 +98,35 @@ class AdminTicketsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual('rejected', result['ticket']['status'])
         self.assertEqual(before, self.provider.list_assignments())
         self.assertIn('Không đủ người hỗ trợ', result['ticket']['events'][-1]['text'])
+
+    async def test_cancelled_admin_waiter_keeps_reminders_paused_until_write_thread_exits(self):
+        self.accepted()
+        entered, release, finished = threading.Event(), threading.Event(), threading.Event()
+        original_action = self.service.admin_action
+        original_end = self.work.end_schedule_change
+        def delayed_action(*args, **kwargs):
+            entered.set()
+            if not release.wait(5):
+                raise AssertionError('Synthetic write not released')
+            return original_action(*args, **kwargs)
+        def ended():
+            original_end()
+            finished.set()
+        with patch.object(self.service, 'admin_action', side_effect=delayed_action), \
+                patch.object(self.work, 'end_schedule_change', side_effect=ended):
+            task = asyncio.create_task(self.admin.action(self.session, self.payload()))
+            try:
+                self.assertTrue(await asyncio.to_thread(entered.wait, 3))
+                self.assertEqual(1, self.work._automatic_schedule._writers)
+                task.cancel()
+                with self.assertRaises(asyncio.CancelledError):
+                    await task
+                self.assertEqual(1, self.work._automatic_schedule._writers)
+            finally:
+                release.set()
+                self.assertTrue(await asyncio.to_thread(finished.wait, 3))
+        self.assertEqual(0, self.work._automatic_schedule._writers)
+        self.assertEqual('completed', (await self.admin.detail(self.session, self.ticket['id']))['ticket']['status'])
 
     async def test_invalid_or_spoofed_payloads_do_not_write(self):
         self.accepted()

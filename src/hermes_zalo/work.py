@@ -86,6 +86,25 @@ class WorkService:
         if self.sheets is not None:
             self.sheets.calendar_authorizer = self._calendar_authorized
             self.sheets.calendar_access_guard = self._calendar_scope_allowed
+        from .schedule_reminder_flow import ScheduleReminderFlow
+        self._automatic_schedule = ScheduleReminderFlow(self, values, prefix.with_suffix('.schedule-notices.sqlite3'))
+        self.schedule_reminder_settings = self._automatic_schedule.settings
+        self.schedule_reminders = self._automatic_schedule.store
+
+    async def automatic_schedule_candidates(self, now=None):
+        return await self._automatic_schedule.candidates(now)
+
+    async def revalidate_automatic_schedule_candidate(self, candidate, now=None):
+        return await self._automatic_schedule.revalidate(candidate, now)
+
+    def automatic_schedule_delivery_allowed(self, candidate, now=None):
+        return self._automatic_schedule.delivery_allowed(candidate, now)
+
+    def begin_schedule_change(self):
+        self._automatic_schedule.begin_schedule_change()
+
+    def end_schedule_change(self):
+        self._automatic_schedule.end_schedule_change()
 
     def registration_admission(self, message):
         return bool(self.registration.bootstrap(message) or self.registration.approved(message))
@@ -219,6 +238,7 @@ class WorkService:
 
     def recover(self):
         self.reminders.recover_claimed()
+        self.schedule_reminders.recover_claimed()
         self.issues.recover()
         self._managed_issue_store.recover()
 
@@ -234,6 +254,7 @@ class WorkService:
         if self.sheets:
             await self.sheets.close()
         self.reminders.close()
+        self._automatic_schedule.close()
         self.issues.close()
         self._managed_issue_store.close()
         self.pilot.close()
@@ -408,7 +429,16 @@ class WorkService:
                         return self._ticket_participant_snapshot(chat, account_ids) == participant_snapshot
                     with ticket_access_scope(guard):
                         return chat.handle(message)
-                response = await asyncio.to_thread(dispatch)
+                changes_schedule = command in ('/duyet', '/doisoat', '/dongy')
+                def schedule_dispatch():
+                    if changes_schedule:
+                        self.begin_schedule_change()
+                    try:
+                        return dispatch()
+                    finally:
+                        if changes_schedule:
+                            self.end_schedule_change()
+                response = await asyncio.to_thread(schedule_dispatch)
                 if self.registration.enabled and response == TICKETS_UNVERIFIED:
                     response = (self.registration.guide + '\nĐăng ký thành công bạn được tra lịch và đổi ca theo phạm vi đã bật, '
                                 'không cần thêm ID riêng vào cấu hình.')
@@ -444,6 +474,9 @@ class WorkService:
                          issues=bool(issue_access and (self.managed_issues_ready or
                                      self.sheets and self.sheets.settings.issues_enabled)),
                          issue_access=issue_access, reminders=can_write,
+                         auto_reminders=bool(self._automatic_schedule.ready),
+                         auto_reminders_evening_time=self.schedule_reminder_settings.evening_time,
+                         auto_reminders_lead_minutes=self.schedule_reminder_settings.lead_minutes,
                          tickets=bool(not self._tickets_error and (can_write or self.registration.approved(message)) and
                                       (self._tickets_chat is not None or
                                        str(self._tickets_values.get("TICKETS_CHAT_MODE") or "off").strip().lower()
