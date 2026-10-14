@@ -106,7 +106,7 @@ test('rewritten and original request URL contracts preserve allowed filters', as
 
 test('route/method/query allowlist rejects open proxy, unknown endpoints and duplicates', async () => {
   for (const url of [
-    '/api/secrets', '/api/proxy?__route=https://evil.example.test/', '/api/proxy?__route=../api/session',
+    '/api/secrets', '/api/backup', '/api/proxy?__route=backup', '/api/proxy?__route=https://evil.example.test/', '/api/proxy?__route=../api/session',
     '/api/session?url=https://evil.example.test/', '/api/session?__route=members',
     '/api/members?page=1&page=2', '/api/proxy?__route=session&__route=members',
     '//evil.example.test/api/session', 'https://evil.example.test/api/session',
@@ -119,7 +119,32 @@ test('route/method/query allowlist rejects open proxy, unknown endpoints and dup
   const { res, requests } = await call(incoming('/api/member/lock'));
   assert.equal(res.statusCode, 405);
   assert.equal(requests.length, 0);
-  assert.equal(Object.keys(ROUTES).length, 29);
+  assert.equal(Object.keys(ROUTES).length, 30);
+});
+
+test('self password change preserves CSRF, clears session cookie and forbids target query', async () => {
+  const payload = { current_password: 'synthetic-current-password', new_password: 'synthetic-new-password', confirm_password: 'synthetic-new-password' };
+  const { res, requests } = await call(incoming('/api/password/change', {
+    method: 'POST', data: payload, headers: { cookie: COOKIE },
+  }), { fetchImpl: async (_url, options) => {
+    assert.equal(options.headers.Cookie, COOKIE);
+    assert.equal(options.headers['X-CSRF-Token'], CSRF);
+    assert.deepEqual(JSON.parse(options.body.toString('utf8')), payload);
+    return new Response(JSON.stringify({ ok: true }), { headers: {
+      'Content-Type': 'application/json', 'Set-Cookie': 'labcoach_admin=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0; Secure',
+    } });
+  } });
+  assert.equal(res.statusCode, 200);
+  assert.equal(requests.length, 1);
+  assert.match(res.headers['set-cookie'][0], /Max-Age=0/);
+  for (const options of [{ headers: { 'x-csrf-token': undefined } }, { headers: { origin: 'https://other.example.test' } }]) {
+    const denied = await call(incoming('/api/password/change', { method: 'POST', data: payload, ...options }));
+    assert.equal(denied.res.statusCode, 403);
+    assert.equal(denied.requests.length, 0);
+  }
+  const denied = await call(incoming('/api/password/change?username=other', { method: 'POST', data: payload }));
+  assert.equal(denied.res.statusCode, 400);
+  assert.equal(denied.requests.length, 0);
 });
 
 test('ticket list and detail preserve only the supported filters', async () => {

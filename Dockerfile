@@ -84,7 +84,7 @@ RUN ln -s /opt/hermes/bin/hermes /usr/local/bin/hermes
 WORKDIR /app
 COPY pyproject.toml ./
 COPY src/ ./src/
-RUN python -m pip install --no-cache-dir '.[sheets]'
+RUN python -m pip install --no-cache-dir '.[sheets,backup]'
 COPY plugin/ ./plugin/
 COPY config/hermes.config.example.yaml ./config/hermes.config.example.yaml
 COPY scripts/nlu_check.py ./scripts/nlu_check.py

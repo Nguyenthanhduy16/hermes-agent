@@ -327,7 +327,7 @@
   function renderAccountAudit(account) {
     const target=$("account-audit");target.replaceChildren();target.hidden=!account;if(!account)return;
     target.append(el("h3","","Lịch sử tài khoản"),el("p","secondary-line",`Issue đang phụ trách: ${account.open_issues??0} · Cập nhật ${date(account.updated)}`));
-    const names={account_created:"Tạo tài khoản",account_updated:"Cập nhật tài khoản",faculty_designated:"Chỉ định Giảng viên",created:"Tạo tài khoản",updated:"Cập nhật tài khoản",create:"Tạo tài khoản",update:"Cập nhật tài khoản",faculty_granted:"Chỉ định Giảng viên",password_reset:"Đặt lại mật khẩu"};
+    const names={account_created:"Tạo tài khoản",account_updated:"Cập nhật tài khoản",faculty_designated:"Chỉ định Giảng viên",created:"Tạo tài khoản",updated:"Cập nhật tài khoản",create:"Tạo tài khoản",update:"Cập nhật tài khoản",faculty_granted:"Chỉ định Giảng viên",password_reset:"Đặt lại mật khẩu",password_changed:"Tự đổi mật khẩu"};
     for(const item of account.audit||[]){const row=el("div","issue-audit");row.append(el("strong","",names[item.action]||item.action),el("p","secondary-line",`${item.actor||"Hệ thống"} · ${date(item.created_at??item.created??item.at)}`));if(item.reason)row.append(el("p","",item.reason));target.append(row);}
     if(!account.audit?.length)target.append(el("p","muted","Chưa có lịch sử thay đổi."));
   }
@@ -348,6 +348,18 @@
   $("confirmation-dialog").addEventListener("close",()=>{if(!$("confirmation-dialog").open)finishConfirmation(false);});
   $("login-form").addEventListener("submit",event=>{event.preventDefault();$("login-error").hidden=true;busy(event.currentTarget,async()=>{try{await api("/api/session");const data=await api("/api/login",{username:$("username").value.trim(),password:$("password").value});$("password").value="";const session=data.user?data:await api("/api/session");if(!session.user)throw new Error("Đăng nhập chưa hoàn tất. Vui lòng thử lại.");showApp(session.user);}catch(e){$("password").value="";notice($("login-error"),e);}});});
   $("logout").addEventListener("click",()=>busy($("logout"),async()=>{try{await api("/api/logout",{});showLogin();}catch(e){notice($("page-error"),e);}}));
+  let passwordChangeBusy=false;
+  function clearPasswordFields() { ["password-current","password-new","password-confirm"].forEach(id=>{$(id).value="";}); }
+  $("change-password").addEventListener("click",()=>{if(!state.user)return;clearPasswordFields();$("password-error").hidden=true;$("password-dialog").showModal();$("password-current").focus();});
+  $("password-dialog").addEventListener("close",clearPasswordFields);
+  $("password-form").addEventListener("submit",async event=>{
+    event.preventDefault();if(passwordChangeBusy||!state.user)return;passwordChangeBusy=true;$("password-error").hidden=true;
+    try { await busy(event.currentTarget,async()=>{
+      const payload={current_password:$("password-current").value,new_password:$("password-new").value,confirm_password:$("password-confirm").value};
+      if(payload.new_password!==payload.confirm_password)throw new Error("Hai lần nhập mật khẩu mới chưa khớp.");
+      await api("/api/password/change",payload);clearPasswordFields();$("password-dialog").close();state.csrf="";showLogin();toast("Đã đổi mật khẩu. Đăng nhập lại bằng mật khẩu mới.");
+    }); } catch(error){notice(state.user?$("password-error"):$("login-error"),error);} finally {clearPasswordFields();passwordChangeBusy=false;}
+  });
   $("brand-home").addEventListener("click",event=>{event.preventDefault();navigate(firstView());});
   document.querySelectorAll(".nav-item").forEach(node=>node.addEventListener("click",()=>navigate(node.dataset.view)));
   $("refresh-view").addEventListener("click",()=>busy($("refresh-view"),refresh));

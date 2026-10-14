@@ -104,6 +104,22 @@ Sao chép đúng mã từ phản hồi của bot. Trước khi duyệt, bot đ�
 
 Quản trị dùng `/thanhvien` trong chat riêng để tìm thành viên đã duyệt theo nguồn Workload hiện tại; mỗi trang tối đa 5 người gồm tên, 4 số điện thoại cuối, mã thành viên và lệnh thu hồi. Dùng `/thanhvien 2` để xem tiếp, sao chép lệnh thu hồi đúng người. Dữ liệu đăng ký và quyền thành viên lưu trong SQLite trên máy chạy bot, còn sau khi khởi động lại; không ghi danh bạ vào code, `.env` hoặc Git. Chỉ quản trị đã cấu hình được xem danh sách và thay đổi trạng thái.
 
+## Xử lý khi đăng ký hoặc liên kết bị nhầm
+
+Giữ `REGISTRATION_AUTO_APPROVE=true`: thành viên mới có số khớp duy nhất vẫn đăng ký tự động. Không cần Admin duyệt từng người. Nếu tin “Đăng ký thành công” hiện sai tên, thành viên dừng dùng lịch cá nhân/đổi ca và báo Admin; không thử số của người khác.
+
+**Đúng người đã đăng ký nhưng liên kết Tickets sai:** Admin có quyền `members` mở **Thành viên** → tìm người → xem chi tiết → chọn liên kết hệ thống đã đối chiếu → xem trước → xác nhận. Có thể khóa quyền trong lúc kiểm tra, rồi mở lại sau khi xử lý. Thao tác này chỉ sửa liên kết nội bộ; không đổi danh tính đăng ký hoặc ô lịch thật. Tên trùng, tài khoản đích thuộc người khác hoặc còn yêu cầu đổi ca liên quan thì hệ thống chặn; xử lý đúng nguyên nhân trước, không ghi đè.
+
+**Đã đăng ký nhầm sang người khác:** trang Admin chưa có chức năng chuyển chủ tài khoản hoặc sửa tùy ý số điện thoại, tên và Zalo ID. Thực hiện theo thứ tự:
+
+1. Trong **Thành viên**, xác định đúng hồ sơ bị nhầm và khóa quyền tạm thời. Kiểm tra tên, mã thành viên và Zalo ID; chỉ bốn số điện thoại cuối được hiển thị.
+2. Quản trị đăng ký đã cấu hình trong `REGISTRATION_ADMIN_USERS` và `ZALO_ALLOWED_USERS` nhắn riêng bot: `/thuhoidangky MÃ_THÀNH_VIÊN`. Tài khoản web có quyền `members` không tự có quyền dùng lệnh này.
+3. Sau khi xác minh đúng người và nguồn Workload, Admin bỏ khóa hồ sơ cũ. **Bỏ khóa không khôi phục đăng ký đã thu hồi.** Thành viên nhắn riêng lại `/dangky SỐ_ĐIỆN_THOẠI_ĐÚNG`.
+4. Đăng ký sau thu hồi vẫn **chờ duyệt**, dù đang bật tự duyệt. Quản trị dùng `/dangkychoduyet`, đối chiếu tài khoản thực tế rồi `/duyetdangky DK-MÃ_YÊU_CẦU`.
+5. Nếu còn báo xung đột Tickets, dùng phần sửa liên kết ở trên. Khi tài khoản đích thuộc chat khác, nhờ người vận hành kiểm tra và thu hồi đúng liên kết cũ; không nhập ID hoặc sửa SQLite tùy ý.
+
+Mã thành viên gắn với hồ sơ đã lưu; sửa liên kết không đổi mã hoặc chuyển lịch sử của người cũ sang người mới. Các quyết định duyệt/thu hồi, khóa/mở và sửa liên kết đều có lịch sử thao tác. Nếu thông tin Workload đã đổi khiến không thể mở khóa hoặc đối chiếu, nhờ người vận hành xử lý nguồn/ánh xạ trước; không tắt kiểm tra để đi tiếp.
+
 ## Duyệt xong được dùng những gì?
 
 | Phạm vi | Điều kiện |

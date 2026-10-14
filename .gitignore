@@ -21,3 +21,6 @@ dist/
 .coverage
 htmlcov/
 railway-transfer*.zip
+backups/
+*.lcbak
+*.backup-key

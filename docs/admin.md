@@ -81,6 +81,8 @@ Trên Windows, có thể tạo tài khoản giới hạn quyền bằng môi tr�
 
 Chỉ cấp các quyền cần thiết. Để bổ sung quyền mà giữ mật khẩu và quyền cũ, dùng `grant-permissions --username TEN --permissions tickets`. Muốn đổi mật khẩu/quyền của tài khoản đã có, chạy lại lệnh tạo tương ứng kèm `--replace`; thao tác yêu cầu nhập mật khẩu mới và thu hồi các phiên đăng nhập cũ. Không đặt mật khẩu vào tham số dòng lệnh. Đăng nhập sai nhiều lần sẽ bị giới hạn tạm thời.
 
+**Tự đổi mật khẩu:** đăng nhập → **Đổi mật khẩu** ở góc trên bên phải → nhập mật khẩu hiện tại và mật khẩu mới hai lần (12–256 ký tự). Thành công sẽ đăng xuất mọi phiên của chính tài khoản; đăng nhập lại bằng mật khẩu mới. Giới hạn 5 lần thử trong 10 phút. Nếu quên mật khẩu, nhờ Giảng viên hoặc người vận hành đặt lại bằng cơ chế hiện có. Mỗi người dùng tài khoản riêng, không chia sẻ mật khẩu.
+
 ## 4. Quản lý Thành viên
 
 1. **Tìm kiếm/lọc:** dùng tên hoặc mã thành viên; lọc trạng thái đăng ký, bị khóa và tình trạng liên kết.
@@ -89,6 +91,8 @@ Chỉ cấp các quyền cần thiết. Để bổ sung quyền mà giữ mật 
 4. **Sửa liên kết:** chọn phương án đã được hệ thống đối chiếu → xem trước → xác nhận. Mỗi bước kiểm tra lại dữ liệu; không sửa ô lịch thật.
 
 Sửa liên kết hiện hỗ trợ lịch Lab đã cấu hình qua Tickets. Tên trùng, nguồn thay đổi, tài khoản đích thuộc người khác hoặc còn yêu cầu đổi ca liên quan sẽ bị chặn; cần xác minh đúng người trước. Trang không cho nhập tùy ý user/chat ID để ghi đè một người khác. **Lịch sử thay đổi** cho biết ai thực hiện, khi nào và thông tin trước/sau.
+
+Đăng ký vẫn **tự duyệt** khi số điện thoại khớp duy nhất Workload và không xung đột. Sửa liên kết Tickets khác với đổi chủ danh tính: nếu đăng ký nhầm người, khóa trước rồi làm theo [quy trình thu hồi và đăng ký lại](dang-ky.md); không sửa họ tên để chuyển quyền của người khác. Việc tự duyệt không chứng minh quyền sở hữu số điện thoại.
 
 ## 5. Hội thoại & Ghi nhớ
 
@@ -113,6 +117,8 @@ Có thể đặt hạn sử dụng. **Ngừng dùng** có hiệu lực với l�
 Hội thoại “mình đã đổi ca rồi” chỉ là lời nhắn, không xác nhận đổi ca thật. Lịch/Workload/Tickets và các bước xác nhận hiện có vẫn quyết định danh tính, quyền và kết quả nghiệp vụ. Luồng lệnh và NLU đã có được giữ nguyên.
 
 ## 6. Dữ liệu, thời hạn lưu và sao lưu
+
+Có thể dùng [sao lưu mã hóa hằng ngày vào Google Drive](backup-google-drive.md). Công cụ tạo bản sao SQLite bằng API backup, kiểm tra tính toàn vẹn và chỉ khôi phục vào thư mục thử trống. Lịch chạy cần được chủ thư mục Drive cấp quyền một lần; chỉ báo đã hoạt động sau khi có file thực tế và kiểm tra khôi phục đạt.
 
 - Lần đầu trong mỗi phạm vi người/cuộc trò chuyện, bot gửi thông báo việc lưu tin và quyền xem của quản trị. Hội thoại bị từ chối quyền truy cập không được ghi vào kho này.
 - Tin đăng ký `/dangky` được che thông tin; số điện thoại và mẫu bí mật nhận diện được cũng được che trước khi lưu. Việc che là có giới hạn, không bảo đảm phát hiện mọi bí mật viết tự do. Không gửi khóa hoặc dữ liệu không được phép cho bot.

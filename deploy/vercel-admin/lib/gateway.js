@@ -13,6 +13,7 @@ export const ROUTES = Object.freeze({
   '/api/session': { method: 'GET', query: [] },
   '/api/login': { method: 'POST', query: [] },
   '/api/logout': { method: 'POST', query: [] },
+  '/api/password/change': { method: 'POST', query: [] },
   '/api/tickets': { method: 'GET', query: ['q', 'status', 'page'] },
   '/api/ticket': { method: 'GET', query: ['id'] },
   '/api/ticket/action': { method: 'POST', query: [] },

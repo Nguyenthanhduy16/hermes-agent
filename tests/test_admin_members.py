@@ -171,6 +171,43 @@ class MemberAdminTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual('lab-alpha', new['member_id'])
         self.assertIsNotNone(self.ticket_store.account('wrong'))
 
+    async def test_wrong_autoapproved_identity_requires_revoke_and_manual_review_before_link_repair(self):
+        # The web repair is not an identity editor: a wrong phone must first be
+        # revoked by a configured registration administrator, then submitted
+        # again from the actual private route and explicitly reviewed.
+        original = self.person
+        self.add_account('original-account', 'lab-alpha', original.name, ('member', 'dm-member'))
+        store = self.work.registration.store
+        await self.lock()
+        with self.assertRaises(RegistrationError):
+            store.revoke(self.actor, self.record.member_id)
+        store.revoke('admin', self.record.member_id)
+        await self.lock(False)
+
+        self.person = replace(original, name='Người Thử Beta', phone='0900000002',
+                              fingerprint='synthetic-beta-fingerprint')
+        self.provider.inspect_members.return_value = [dict(member_id='lab-beta', member_name=self.person.name)]
+        correct = store.request(replace(self.message, message_id='correct-phone'), self.person, auto_approve=True)
+        self.assertEqual('pending', correct.status)
+        self.assertNotEqual(self.record.member_id, correct.member_id)
+        self.assertFalse(self.work.registration.member_allows('member', 'dm-member', 'PRIVATE'))
+        detail = await self.admin.detail(correct.member_id)
+        self.assertEqual([], detail['candidates'])
+        self.assertEqual('lab-alpha', self.identities.resolve(self.chat.bot_scope, 'member', 'dm-member')['member_id'])
+
+        correct = store.approve('admin', correct.id, self.person)
+        detail = await self.admin.detail(correct.member_id)
+        preview = await self.admin.preview_link(correct.member_id, detail['candidates'][0]['account_id'], self.actor)
+        await self.admin.confirm_link(preview['preview_token'], self.actor)
+        self.assertEqual('lab-beta', self.identities.resolve(self.chat.bot_scope, 'member', 'dm-member')['member_id'])
+        self.assertEqual('lab-alpha', self.ticket_store.account('original-account')['member_id'])
+        self.assertEqual('revoked', store.latest_member(self.record.member_id).status)
+        self.assertEqual(original.name, store.latest_member(self.record.member_id).name)
+        self.assertTrue(self.work.registration.member_allows('member', 'dm-member', 'PRIVATE'))
+        self.assertFalse(self.work.registration.member_allows('member', 'other-dm', 'PRIVATE'))
+        self.assertFalse(self.work.registration.member_allows('member', 'new-group', 'GROUP'))
+        self.assertEqual('tickets_link', (await self.admin.audit(correct.member_id))['items'][0]['action'])
+
     async def test_never_steals_account_from_another_private_route(self):
         self.add_account(route=('different-user', 'dm-different'))
         with self.assertRaisesRegex(AdminMemberError, 'thuộc người khác'):

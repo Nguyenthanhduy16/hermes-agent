@@ -113,6 +113,38 @@ class AdminHttpTests(unittest.TestCase):
             self.assertEqual(200, status)
         return client
 
+    def test_password_change_checks_session_origin_csrf_and_clears_cookie(self):
+        client = self.client([])
+        payload = dict(current_password=self.PASSWORD, new_password='Synthetic-new-password-123',
+                       confirm_password='Synthetic-new-password-123')
+        for path, options, status in (
+            ('/api/password/change', {'csrf': False}, 403),
+            ('/api/password/change', {'origin': 'https://untrusted.invalid'}, 403),
+            ('/api/password/change?username=someone', {}, 400),
+        ):
+            self.assertEqual(status, self.request('POST', path, client=client, data=payload, **options)[0])
+        anonymous = self.client()
+        self.assertEqual(401, self.request('POST', '/api/password/change', client=anonymous, data=payload)[0])
+        other = dict(client)
+        status, result, headers = self.request('POST', '/api/password/change', client=client, data=payload)
+        self.assertEqual(200, status)
+        self.assertEqual({'ok': True}, result)
+        self.assertIn('Max-Age=0', headers['Set-Cookie'])
+        self.assertEqual('', client['cookie'])
+        self.assertEqual(401, self.request('GET', '/api/members', client=other)[0])
+        self.request('GET', '/api/session', client=client)
+        self.assertEqual(200, self.request('POST', '/api/login', client=client,
+            data={'username': 'operator', 'password': payload['new_password']})[0])
+
+    def test_password_change_requires_current_password_and_does_not_logout_on_typo(self):
+        client = self.client([])
+        status, result, _ = self.request('POST', '/api/password/change', client=client,
+            data=dict(current_password='Wrong-current-password', new_password='Synthetic-new-password-123',
+                      confirm_password='Synthetic-new-password-123'))
+        self.assertEqual(400, status)
+        self.assertEqual('Mật khẩu hiện tại chưa đúng.', result['error'])
+        self.assertIsNotNone(self.request('GET', '/api/session', client=client)[1]['user'])
+
     def test_no_data_before_login_static_page_is_safe_and_cookie_is_protected(self):
         self.assertEqual(401, self.request('GET', '/api/history')[0])
         anon = self.client()

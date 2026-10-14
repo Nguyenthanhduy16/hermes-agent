@@ -10,6 +10,7 @@ from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib.resources import files
 import json
+import os
 import secrets
 import threading
 from urllib.parse import parse_qs, urlsplit
@@ -17,6 +18,7 @@ from urllib.parse import parse_qs, urlsplit
 from .admin_auth import AdminAuth, AdminError
 from .admin_members import AdminMemberError, MemberAdmin
 from .admin_tickets import TicketAdmin
+from .backup_service import BackupHTTPError, BackupService
 from .conversations import ConversationConflict, ConversationError
 from .issue_management import IssueError
 from .reminders import VIETNAM_TZ
@@ -248,8 +250,9 @@ class AdminServer(ThreadingHTTPServer):
     allow_reuse_address = True
     request_queue_size = 16
 
-    def __init__(self, app, loop, config):
+    def __init__(self, app, loop, config, *, backup_service=None):
         self.app, self.loop, self.config = app, loop, config
+        self.backup_service = backup_service or BackupService.from_mapping({})
         self._slots = threading.BoundedSemaphore(16)
         super().__init__((config.host, config.port), Handler)
         self.origins = {config.public_url} if config.public_url else {
@@ -288,7 +291,7 @@ class Handler(BaseHTTPRequestHandler):
         super().setup()
         self.connection.settimeout(10)
 
-    def reply(self, status, body, mime='application/json; charset=utf-8', cookie=None):
+    def reply(self, status, body, mime='application/json; charset=utf-8', cookie=None, extra_headers=None):
         # Closing a rejected POST with unread bytes can turn an intended 403
         # into a TCP reset on Windows. Consume only the same bounded body size
         # accepted by the endpoint; never drain chunked or oversized streams.
@@ -312,8 +315,31 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header('Set-Cookie', f'{COOKIE}={cookie}; HttpOnly; SameSite=Strict; Path=/; Max-Age={28800 if cookie else 0}{secure}')
         if self.server.config.public_url:
             self.send_header('Strict-Transport-Security', 'max-age=31536000')
+        for name, value in (extra_headers or {}).items():
+            self.send_header(name, value)
         self.end_headers()
         self.wfile.write(raw)
+
+    def backup_download(self):
+        # A single exact machine endpoint bypasses the Vercel proxy secret.
+        # It still requires its own secret, canonical host and no browser Origin.
+        if self.path != '/api/backup':
+            raise BackupHTTPError('Đường dẫn sao lưu không hợp lệ.', 400)
+        if self.command != 'GET':
+            raise BackupHTTPError('Sao lưu chỉ hỗ trợ GET.', 405)
+        if (self.headers.get_all('Host') != [self.headers.get('Host')]
+                or self.headers.get('Host') not in self.server.hosts):
+            raise BackupHTTPError('Địa chỉ truy cập không được phép.', 403)
+        if any(self.headers.get_all(name) for name in ('Origin', 'Sec-Fetch-Site', 'Sec-Fetch-Mode', 'Sec-Fetch-Dest', 'Cookie')):
+            raise BackupHTTPError('Yêu cầu sao lưu chỉ dành cho dịch vụ đã cấu hình.', 403)
+        lengths = self.headers.get_all('Content-Length', [])
+        if self.headers.get_all('Transfer-Encoding') or lengths not in ([], ['0']):
+            raise BackupHTTPError('Yêu cầu sao lưu không nhận nội dung.', 400)
+        download = self.server.backup_service.download(self.headers.get_all('X-LabCoach-Backup-Key', []))
+        return self.reply(200, download.body, 'application/octet-stream', extra_headers={
+            'Content-Disposition': 'attachment; filename="labcoach-backup.lcbak"',
+            'X-LabCoach-Backup-SHA256': download.sha256,
+        })
 
     def request_data(self):
         # The optional gateway credential belongs only to server-to-server
@@ -372,6 +398,8 @@ class Handler(BaseHTTPRequestHandler):
     def dispatch(self):
         self._body_consumed = False
         try:
+            if urlsplit(self.path).path == '/api/backup':
+                return self.backup_download()
             path, query, data = self.request_data()
             if self.command == 'GET' and path in ('/', '/admin.js', '/admin.css', '/static/admin.js', '/static/admin.css'):
                 name = 'index.html' if path == '/' else path.rsplit('/', 1)[-1]
@@ -400,6 +428,13 @@ class Handler(BaseHTTPRequestHandler):
             if path == '/api/logout' and self.command == 'POST':
                 auth.logout(session)
                 return self.reply(200, {'ok': True}, cookie='')
+            if path == '/api/password/change' and self.command == 'POST':
+                if query:
+                    raise AdminError('Tham số đổi mật khẩu không hợp lệ.')
+                # Password hashing runs on the bounded HTTP worker, keeping
+                # the bot loop available while auth rechecks the live session.
+                result = auth.change_password(session, data)
+                return self.reply(200, result, cookie='')
             auth.user(session)
             future = asyncio.run_coroutine_threadsafe(
                 self.server.app.route(self.command, path, query, data, session), self.server.loop)
@@ -409,6 +444,9 @@ class Handler(BaseHTTPRequestHandler):
                 future.cancel()
                 raise AdminError('Thao tác chưa xác định kết quả. Tải lại dữ liệu trước khi thử lại.', 503) from None
             self.reply(200, result)
+        except BackupHTTPError as error:
+            self.reply(error.status, {'error': str(error)}, extra_headers=(
+                {'Retry-After': str(error.retry_after)} if error.retry_after is not None else None))
         except AdminError as error:
             self.reply(error.status, {'error': str(error)})
         except IssueError as error:
@@ -433,11 +471,13 @@ class Handler(BaseHTTPRequestHandler):
 
 
 class AdminRuntime:
-    def __init__(self, work, conversations, path, config, *, mode='local'):
+    def __init__(self, work, conversations, path, config, *, mode='local', backup_values=None):
         self.auth = AdminAuth(path)
         self.app = AdminApplication(work, conversations, self.auth, mode=mode)
         try:
-            self.server = AdminServer(self.app, asyncio.get_running_loop(), config)
+            self.backup_service = BackupService.from_mapping({} if mode == 'demo' else (
+                os.environ if backup_values is None else backup_values))
+            self.server = AdminServer(self.app, asyncio.get_running_loop(), config, backup_service=self.backup_service)
         except BaseException:
             self.auth.close()
             raise

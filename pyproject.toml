@@ -11,6 +11,7 @@ dependencies = ["httpx>=0.28.1,<1", "PyYAML>=6.0.2,<7"]
 
 [project.optional-dependencies]
 sheets = ["google-auth[requests]>=2.55.1,<3"]
+backup = ["cryptography>=46,<51"]
 
 [project.scripts]
 zalo-bot = "hermes_zalo.cli:main"

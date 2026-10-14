@@ -58,6 +58,7 @@ class AdminAuth:
             CREATE TABLE IF NOT EXISTS admin_sessions (
               hash TEXT PRIMARY KEY, username TEXT, csrf TEXT NOT NULL, expires REAL NOT NULL);
             CREATE TABLE IF NOT EXISTS admin_login_attempts (username TEXT NOT NULL, at REAL NOT NULL);
+            CREATE TABLE IF NOT EXISTS admin_password_attempts (username TEXT NOT NULL, at REAL NOT NULL);
             CREATE TABLE IF NOT EXISTS admin_auth_audit (
               id INTEGER PRIMARY KEY, actor TEXT NOT NULL, action TEXT NOT NULL, at REAL NOT NULL);
         ''')
@@ -366,6 +367,48 @@ class AdminAuth:
         if not db.execute('SELECT 1 FROM admin_sessions WHERE hash=? AND csrf=? AND expires>?',
                           (session.get('hash'), session.get('csrf'), self.clock())).fetchone():
             raise AdminError('Phiên đăng nhập hết hạn; tải lại trang để tiếp tục.', 401)
+
+    def change_password(self, session, data):
+        """An authenticated account can change only its own password."""
+        with self.lock:
+            self._user(self.db, session)
+        if not isinstance(data, dict) or set(data) != {'current_password', 'new_password', 'confirm_password'}:
+            raise AdminError('Chỉ nhập mật khẩu hiện tại, mật khẩu mới và xác nhận mật khẩu mới.')
+        new_password = data['new_password']
+        if not isinstance(new_password, str) or not 12 <= len(new_password) <= 256:
+            raise AdminError('Mật khẩu mới cần từ 12 đến 256 ký tự.')
+        if not isinstance(data['confirm_password'], str) or data['confirm_password'] != new_password:
+            raise AdminError('Hai lần nhập mật khẩu mới chưa khớp.')
+        now = self.clock()
+        with self.transaction() as db:
+            user = self._user(db, session)
+            username = user['username']
+            db.execute('DELETE FROM admin_password_attempts WHERE at<=?', (now - 600,))
+            attempts = db.execute('SELECT COUNT(*) FROM admin_password_attempts WHERE username=?', (username,)).fetchone()[0]
+            if attempts >= 5:
+                raise AdminError('Đã thử đổi mật khẩu nhiều lần; thử lại sau 10 phút.', 429)
+            # Commit the attempt before password work so concurrent guesses
+            # and renewed login sessions cannot bypass the account limit.
+            db.execute('INSERT INTO admin_password_attempts VALUES (?,?)', (username, now))
+            account = db.execute('SELECT * FROM admin_accounts WHERE username=?', (username,)).fetchone()
+        if not password_matches(data['current_password'], account['password']):
+            raise AdminError('Mật khẩu hiện tại chưa đúng.')
+        if data['current_password'] == new_password:
+            raise AdminError('Chọn mật khẩu mới khác mật khẩu hiện tại.')
+        encoded = password_hash(new_password)
+        with self.transaction() as db:
+            self._user(db, session)
+            current = db.execute('SELECT * FROM admin_accounts WHERE username=?', (username,)).fetchone()
+            if current['revision'] != account['revision'] or current['password'] != account['password']:
+                raise AdminError('Tài khoản đã thay đổi; đăng nhập lại.', 401)
+            before = self._public_account(current)
+            db.execute('UPDATE admin_accounts SET password=?,revision=revision+1,updated=? WHERE username=?',
+                       (encoded, self.clock(), username))
+            db.execute('DELETE FROM admin_sessions WHERE username=?', (username,))
+            db.execute('DELETE FROM admin_password_attempts WHERE username=?', (username,))
+            after = self._public_account(db.execute('SELECT * FROM admin_accounts WHERE username=?', (username,)).fetchone())
+            self._audit(db, 'web:' + username, 'password_changed', username, before, after)
+        return {'ok': True}
 
     def logout(self, session):
         with self.transaction() as db:

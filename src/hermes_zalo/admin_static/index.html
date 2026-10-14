@@ -43,7 +43,7 @@
       <div class="sidebar-user"><div class="avatar small" aria-hidden="true">A</div><div><strong id="admin-name">Admin</strong><span id="admin-role">Quản trị viên</span></div><button id="logout" class="icon-button" type="button" title="Đăng xuất" aria-label="Đăng xuất">↗</button></div>
     </aside>
     <main class="main">
-      <header class="topbar"><div><span class="breadcrumb">LabCoach</span><span aria-hidden="true"> / </span><span id="breadcrumb-current">Thành viên</span></div><span class="timezone">Giờ Việt Nam · UTC+7</span></header>
+      <header class="topbar"><div><span class="breadcrumb">LabCoach</span><span aria-hidden="true"> / </span><span id="breadcrumb-current">Thành viên</span></div><div class="topbar-actions"><span class="timezone">Giờ Việt Nam · UTC+7</span><button id="change-password" class="button secondary small" type="button">Đổi mật khẩu</button></div></header>
       <div class="main-content">
         <div class="page-heading"><div><p class="eyebrow" id="page-eyebrow">QUẢN LÝ ĐỘI NGŨ</p><h1 id="page-title">Thành viên</h1><p id="page-description" class="muted">Theo dõi quyền sử dụng và liên kết lịch của từng thành viên.</p></div><button id="refresh-view" class="button secondary" type="button">↻ Làm mới</button></div>
         <div id="page-error" class="notice error" role="alert" hidden></div>
@@ -103,6 +103,14 @@
     </main>
   </div>
   <div id="boot-state" class="boot-state"><span class="brand-mark">L</span><p>Đang mở không gian quản trị…</p></div>
+
+  <dialog id="password-dialog" class="modal" aria-labelledby="password-title"><form id="password-form"><div class="modal-heading"><h2 id="password-title">Đổi mật khẩu của bạn</h2><button class="icon-button" type="button" data-close="password-dialog" aria-label="Đóng">×</button></div><div class="modal-body">
+    <p class="muted">Dùng mật khẩu riêng, từ 12 đến 256 ký tự. Đổi xong, mọi phiên của tài khoản này sẽ đăng xuất; hãy đăng nhập lại bằng mật khẩu mới.</p>
+    <label>Mật khẩu hiện tại<input id="password-current" type="password" required maxlength="256" autocomplete="current-password"></label>
+    <label>Mật khẩu mới<input id="password-new" type="password" required minlength="12" maxlength="256" autocomplete="new-password"></label>
+    <label>Nhập lại mật khẩu mới<input id="password-confirm" type="password" required minlength="12" maxlength="256" autocomplete="new-password"></label>
+    <p id="password-error" class="notice error" role="alert" hidden></p>
+  </div><div class="modal-actions"><button class="button secondary" type="button" data-close="password-dialog">Hủy</button><button class="button primary" type="submit">Đổi và đăng xuất</button></div></form></dialog>
 
   <dialog id="memory-dialog" class="modal"><form id="memory-form"><div class="modal-heading"><div><p class="eyebrow">THÔNG TIN GHI NHỚ</p><h2 id="memory-dialog-title">Thêm ghi nhớ</h2></div><button class="icon-button" type="button" data-close="memory-dialog" aria-label="Đóng">×</button></div><div class="modal-body"><p class="muted">Viết ngắn gọn những thông tin có ích cho các lần trao đổi sau.</p><label>Nội dung<textarea id="memory-content" rows="5" required maxlength="2000"></textarea></label><label>Mã thành viên<input id="memory-member" required maxlength="120"></label><div class="form-grid"><label>Phạm vi<select id="memory-scope"><option value="personal">Chỉ cá nhân này</option><option value="session">Cuộc trò chuyện nguồn</option><option value="group">Nhóm được chọn</option></select></label><label>Hết hạn (không bắt buộc)<input id="memory-expires" type="date"></label></div><label id="memory-session-wrap" hidden>Mã phiên hội thoại<input id="memory-session" maxlength="500"></label><label id="memory-chat-wrap" hidden>ID nhóm<input id="memory-chat" maxlength="200"></label><div id="memory-share-warning" class="notice warning" hidden>Ghi nhớ sẽ được sử dụng trong nhóm đã chọn. Kiểm tra nội dung và quyền chia sẻ trước khi lưu.</div><label class="checkbox-label" id="memory-share-wrap" hidden><input type="checkbox" id="memory-share">Tôi xác nhận được phép chia sẻ nội dung này cho nhóm.</label><label class="checkbox-label"><input type="checkbox" id="memory-active" checked>Sử dụng ghi nhớ này cho các lượt trả lời phù hợp.</label><div id="memory-source" class="source-note" hidden></div><p id="memory-error" class="notice error" role="alert" hidden></p></div><div class="modal-actions"><button class="button secondary" type="button" data-close="memory-dialog">Hủy</button><button class="button primary" type="submit">Lưu ghi nhớ</button></div></form></dialog>
 
