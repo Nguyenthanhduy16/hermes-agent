@@ -32,18 +32,40 @@
       <a href="#" class="brand" id="brand-home"><span class="brand-mark">L</span><span>LabCoach <small>QUẢN TRỊ</small></span></a>
       <p class="nav-label">KHÔNG GIAN LÀM VIỆC</p>
       <nav aria-label="Điều hướng chính">
+        <button class="nav-item" type="button" data-view="issues"><span class="nav-icon" aria-hidden="true">☑</span>Issue</button>
         <button class="nav-item active" type="button" data-view="members"><span class="nav-icon" aria-hidden="true">◫</span>Thành viên</button>
         <button class="nav-item" type="button" data-view="conversations"><span class="nav-icon" aria-hidden="true">☷</span>Hội thoại</button>
         <button class="nav-item" type="button" data-view="memories"><span class="nav-icon" aria-hidden="true">◇</span>Ghi nhớ</button>
+        <button class="nav-item" type="button" data-view="accounts"><span class="nav-icon" aria-hidden="true">◎</span>Quản lý Admin</button>
       </nav>
       <div class="sidebar-note"><span class="status-dot" aria-hidden="true"></span><strong>Không gian riêng</strong><p>Mọi thay đổi quyền và ghi nhớ đều có lịch sử để kiểm tra.</p></div>
-      <div class="sidebar-user"><div class="avatar small" aria-hidden="true">A</div><div><strong id="admin-name">Admin</strong><span>Quản trị viên</span></div><button id="logout" class="icon-button" type="button" title="Đăng xuất" aria-label="Đăng xuất">↗</button></div>
+      <div class="sidebar-user"><div class="avatar small" aria-hidden="true">A</div><div><strong id="admin-name">Admin</strong><span id="admin-role">Quản trị viên</span></div><button id="logout" class="icon-button" type="button" title="Đăng xuất" aria-label="Đăng xuất">↗</button></div>
     </aside>
     <main class="main">
       <header class="topbar"><div><span class="breadcrumb">LabCoach</span><span aria-hidden="true"> / </span><span id="breadcrumb-current">Thành viên</span></div><span class="timezone">Giờ Việt Nam · UTC+7</span></header>
       <div class="main-content">
         <div class="page-heading"><div><p class="eyebrow" id="page-eyebrow">QUẢN LÝ ĐỘI NGŨ</p><h1 id="page-title">Thành viên</h1><p id="page-description" class="muted">Theo dõi quyền sử dụng và liên kết lịch của từng thành viên.</p></div><button id="refresh-view" class="button secondary" type="button">↻ Làm mới</button></div>
         <div id="page-error" class="notice error" role="alert" hidden></div>
+
+        <section id="issues-view" hidden aria-label="Quản lý Issue">
+          <div class="summary-grid"><article class="summary-card"><span>Issue phù hợp</span><strong id="issue-total">—</strong><small>Theo bộ lọc hiện tại</small></article><article class="summary-card summary-explainer"><span class="summary-symbol" aria-hidden="true">✓</span><div><strong>Mỗi yêu cầu, một người phụ trách</strong><p>Nhận việc từ danh sách chung. Các Admin khác vẫn có thể hỗ trợ bằng ghi chú.</p></div></article></div>
+          <div class="panel"><div class="panel-heading"><h2>Yêu cầu của thành viên</h2><span class="tag subtle">Cùng theo dõi tiến độ</span></div>
+            <form id="issues-filter" class="filters issue-filters">
+              <label class="search-label">Tìm kiếm<input id="issues-q" type="search" placeholder="Mã hoặc nội dung issue…" maxlength="120"></label>
+              <label>Loại<select id="issues-kind"><option value="">Tất cả</option value="support">Báo lỗi / hỗ trợ</option><option value="feature">Góp ý / tính năng</option></select></label>
+              <label>Trạng thái<select id="issues-status"><option value="">Tất cả</option><option value="new">Mới</option><option value="in_progress">Đang xử lý</option><option value="waiting">Chờ bổ sung</option><option value="done">Hoàn thành</option></select></label>
+              <label>Mã thành viên<input id="issues-member" placeholder="Tất cả" maxlength="120"></label>
+              <label>Người phụ trách<select id="issues-assignee"><option value="">Tất cả</option><option value="unassigned">Chưa có người nhận</option></select></label>
+              <button class="button secondary" type="submit">Tìm kiếm</button>
+            </form><div id="issues-content" class="table-scroll"></div><div id="issues-pagination" class="pagination"></div>
+          </div>
+        </section>
+        <section id="issue-view" hidden aria-label="Chi tiết Issue"><button id="issue-back" class="text-button back-button" type="button">← Danh sách Issue</button><div id="issue-content"></div></section>
+
+        <section id="accounts-view" hidden aria-label="Quản lý Admin">
+          <div class="notice info"><strong>Mỗi người sử dụng tài khoản riêng.</strong> Quyền hội thoại và ghi nhớ được cấp riêng. Khóa hoặc đổi quyền sẽ thu hồi phiên đăng nhập cũ.</div>
+          <div class="panel"><div class="panel-heading"><h2>Đội ngũ quản trị</h2><button id="new-account" class="button primary" type="button">+ Tạo Admin</button></div><form id="accounts-filter" class="filters"><label class="search-label"><span class="sr-only">Tìm tài khoản Admin</span><input id="accounts-q" type="search" placeholder="Tìm tên hoặc tài khoản…" maxlength="120"></label><button class="button secondary" type="submit">Tìm kiếm</button></form><div id="accounts-content" class="table-scroll"></div><div id="accounts-pagination" class="pagination"></div></div>
+        </section>
 
         <section id="members-view" aria-label="Danh sách thành viên">
           <div class="summary-grid"><article class="summary-card"><span>Thành viên phù hợp</span><strong id="member-total">—</strong><small>Theo bộ lọc hiện tại</small></article><article class="summary-card summary-explainer"><span class="summary-symbol" aria-hidden="true">↔</span><div><strong>Một người, một liên kết</strong><p>Dùng mã thành viên cố định để tránh nhầm người trùng tên.</p></div></article></div>
@@ -72,6 +94,12 @@
 
   <dialog id="link-dialog" class="modal"><form id="link-form"><div class="modal-heading"><div><p class="eyebrow">LIÊN KẾT THÀNH VIÊN</p><h2>Xử lý liên kết</h2></div><button class="icon-button" type="button" data-close="link-dialog" aria-label="Đóng">×</button></div><div class="modal-body"><p class="muted">Chọn đúng tài khoản đích. Hệ thống sẽ kiểm tra xung đột và hiển thị thay đổi trước khi lưu.</p><label>Mã tài khoản cần liên kết<input id="link-target" required maxlength="200" placeholder="Mã tài khoản đích"></label><div id="link-preview" hidden></div><p id="link-error" class="notice error" role="alert" hidden></p></div><div class="modal-actions"><button class="button secondary" type="button" data-close="link-dialog">Hủy</button><button id="link-submit" class="button primary" type="submit">Xem trước thay đổi</button></div></form></dialog>
   <dialog id="source-dialog" class="modal wide"><div class="modal-heading"><h2>Tin nhắn nguồn</h2><button class="icon-button" type="button" data-close="source-dialog" aria-label="Đóng">×</button></div><div id="source-content" class="modal-body"></div></dialog>
+  <dialog id="account-dialog" class="modal" aria-labelledby="account-title"><form id="account-form"><div class="modal-heading"><div><p class="eyebrow">ĐỘI NGŨ QUẢN TRỊ</p><h2 id="account-title">Tạo Admin</h2></div><button class="icon-button" type="button" data-close="account-dialog" aria-label="Đóng">×</button></div><div class="modal-body">
+    <div class="form-grid"><label>Tên đăng nhập<input id="account-username" required maxlength="48" pattern="[a-z][a-z0-9_.-]{2,47}" title="3–48 ký tự: bắt đầu bằng chữ thường, tiếp theo là chữ thường, số, dấu chấm, gạch ngang hoặc gạch dưới." autocomplete="off" spellcheck="false"></label><label>Tên hiển thị<input id="account-name" required maxlength="100" autocomplete="off"></label></div>
+    <p id="account-role" class="notice info"></p><label id="account-password-label">Mật khẩu ban đầu<input id="account-password" type="password" minlength="12" maxlength="1024" autocomplete="new-password"></label>
+    <fieldset class="permission-options"><legend>Quyền được cấp</legend><label class="checkbox-label"><input id="account-issues" type="checkbox">Nhận và xử lý Issue</label><label class="checkbox-label"><input id="account-members" type="checkbox">Quản lý thành viên</label><label class="checkbox-label"><input id="account-conversations" type="checkbox">Xem và quản lý ngữ cảnh hội thoại</label><label class="checkbox-label"><input id="account-memories" type="checkbox">Quản lý ghi nhớ (cần quyền hội thoại)</label></fieldset>
+    <label class="checkbox-label"><input id="account-active" type="checkbox" checked>Tài khoản đang hoạt động</label><p class="muted">Mật khẩu chỉ nhập tại đây. Hệ thống không hiển thị lại mật khẩu đã lưu.</p><div id="account-audit" class="context-section" hidden></div><p id="account-error" class="notice error" role="alert" hidden></p>
+  </div><div class="modal-actions"><button class="button secondary" type="button" data-close="account-dialog">Hủy</button><button class="button primary" type="submit">Lưu tài khoản</button></div></form></dialog>
   <dialog id="confirmation-dialog" class="modal confirmation-modal" aria-labelledby="confirmation-title" aria-describedby="confirmation-description"><div class="modal-heading"><h2 id="confirmation-title">Xác nhận thao tác</h2><button class="icon-button" type="button" data-close="confirmation-dialog" aria-label="Hủy và đóng">×</button></div><div class="modal-body"><p id="confirmation-description"></p></div><div class="modal-actions"><button id="confirmation-cancel" class="button secondary" type="button" autofocus>Hủy</button><button id="confirmation-accept" class="button primary" type="button">Xác nhận</button></div></dialog>
 </body>
 </html>

@@ -59,7 +59,10 @@ def interpret(text):
     # become issue confirmation or bulk deletes.
     if re.match(r"^(?:nhac minh|/nhac)(?:\s|$)", folded):
         return "", text  # existing strict reminder parser, including deadlines
-    if re.search(r"\b(?:tao issue|tao ticket|bao loi)\b", folded):
+    if phrase in ('xem issue cua minh', 'xem issue cua toi', 'yeu cau ho tro cua minh',
+                  'xem cac yeu cau ho tro cua minh'):
+        return '/issue', 'danhsach'
+    if re.search(r"\b(?:tao issue|tao ticket|bao loi|de xuat tinh nang|gop y tinh nang)\b", folded):
         return "/trogiup", "issue"
     if re.search(r"\b(?:quy dinh|quy trinh|noi quy|nghi phep|xin nghi|di muon|cham cong|doi ca|chuan bi)\b", folded):
         return "/hoi", text

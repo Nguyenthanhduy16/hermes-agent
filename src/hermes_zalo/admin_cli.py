@@ -7,7 +7,7 @@ from pathlib import Path
 import tempfile
 from types import SimpleNamespace
 
-from .admin_auth import AdminAuth, AdminError, PERMISSIONS
+from .admin_auth import AdminAuth, AdminError, PERMISSIONS, ROLES
 from .admin_config import AdminConfig
 from .config import Settings, load_env
 from .conversations import ConversationStore
@@ -35,7 +35,8 @@ async def demo(root, port):
         REGISTRATION_ADMIN_USERS='demo-operator', REGISTRATION_WORKLOAD_TAB='Demo Workload',
         REGISTRATION_WORKLOAD_NAME_COLUMN='A', REGISTRATION_WORKLOAD_PHONE_COLUMN='B',
         REGISTRATION_WORKLOAD_HEADER_ROW='1', REGISTRATION_WORKLOAD_NAME_HEADER='Họ tên',
-        REGISTRATION_WORKLOAD_PHONE_HEADER='Số điện thoại', TICKETS_CHAT_MODE='off')
+        REGISTRATION_WORKLOAD_PHONE_HEADER='Số điện thoại', TICKETS_CHAT_MODE='off',
+        ZALO_ISSUES_MODE='managed')
     sheet_settings = SheetsSettings('demo-sheet-not-connected', root / 'no-key.json')
     source = WorkloadSettings.from_mapping(values, sheet_settings).source_key
     people = {}
@@ -80,15 +81,18 @@ async def demo(root, port):
     history.record_incoming(group, members[0].member_id)
     history.record_outgoing(group, 'Chào nhóm! Hãy @bot kèm câu hỏi nhé.', delivery_key='answer')
     history.complete_turn(group)
+    from .issue_demo import seed_issues
+    seed_issues(work, members)
     config = AdminConfig(enabled=True, conversations=True, port=port)
     runtime = AdminRuntime(work, history, prefix.with_suffix('.admin.sqlite3'), config, mode='demo')
-    runtime.auth.create_account('admin', 'LabCoach-Demo-2026', PERMISSIONS)
+    runtime.auth.create_account('admin', 'LabCoach-Demo-2026', PERMISSIONS, role='faculty', display_name='Giảng viên mẫu')
+    runtime.auth.create_account('hotro', 'LabCoach-Demo-2026', ['issues'], display_name='Admin hỗ trợ mẫu')
     runtime.auth.create_account('quanly', 'LabCoach-Demo-2026', ['members'])
     runtime.auth.create_account('hoithoai', 'LabCoach-Demo-2026', ['conversations', 'memories'])
     print(f'LabCoach Admin DEMO: http://127.0.0.1:{runtime.server.server_port}/', flush=True)
     print('Dữ liệu mô phỏng; không kết nối Zalo, Sheets hoặc model.\n'
           'Đăng nhập: admin / LabCoach-Demo-2026\n'
-          'Thử quyền riêng: quanly hoặc hoithoai, cùng mật khẩu demo. Ctrl+C để dừng.', flush=True)
+          'Thử quyền riêng: hotro, quanly hoặc hoithoai, cùng mật khẩu demo. Ctrl+C để dừng.', flush=True)
     try:
         await asyncio.Event().wait()
     finally:
@@ -104,8 +108,13 @@ def main(argv=None):
     sample.add_argument('--port', type=int, default=8787)
     create = commands.add_parser('create-account', help='Tạo tài khoản web riêng; mật khẩu nhập ẩn.')
     create.add_argument('--username')
-    create.add_argument('--permissions', default='members,conversations,memories')
+    create.add_argument('--permissions', default='members,issues',
+                        help='Quyền tách biệt; mặc định members,issues. conversations/memories phải được cấp rõ.')
     create.add_argument('--replace', action='store_true')
+    create.add_argument('--role', choices=sorted(ROLES), default='admin')
+    create.add_argument('--display-name')
+    faculty = commands.add_parser('designate-faculty', help='Chỉ định rõ một tài khoản hiện có làm Giảng viên; giữ nguyên quyền riêng.')
+    faculty.add_argument('--username', required=True)
     args = parser.parse_args(argv)
     try:
         if args.action == 'demo':
@@ -115,13 +124,22 @@ def main(argv=None):
         load_env(Path('.env'))
         import os
         settings = provisioning_settings(os.environ, Path.cwd(), windows=os.name == 'nt')
+        if args.action == 'designate-faculty':
+            auth = AdminAuth(state_prefix(settings).with_suffix('.admin.sqlite3'))
+            try:
+                auth.designate_faculty(args.username)
+            finally:
+                auth.close()
+            print('Đã chỉ định Giảng viên trên máy/volume này. Các phiên cũ đã bị thu hồi; vui lòng đăng nhập lại.')
+            return 0
         username = args.username or input('Tên đăng nhập Admin: ').strip()
         password = getpass.getpass('Mật khẩu mới (ít nhất 12 ký tự): ')
         if password != getpass.getpass('Nhập lại mật khẩu: '):
             raise AdminError('Hai lần nhập mật khẩu chưa giống nhau.')
         auth = AdminAuth(state_prefix(settings).with_suffix('.admin.sqlite3'))
         try:
-            auth.create_account(username, password, args.permissions.split(','), replace=args.replace)
+            auth.create_account(username, password, [item.strip() for item in args.permissions.split(',') if item.strip()],
+                                replace=args.replace, role=args.role, display_name=args.display_name)
         finally:
             auth.close()
         print('Đã lưu tài khoản Admin trên máy/volume này. Chưa bật trang web hoặc bot.')

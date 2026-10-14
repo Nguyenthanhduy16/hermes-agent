@@ -91,6 +91,7 @@ class ZaloAdapter(BasePlatformAdapter):
         self._poll_task: asyncio.Task | None = None
         self._reminder_task: asyncio.Task | None = None
         self._tickets_task: asyncio.Task | None = None
+        self._issues_task: asyncio.Task | None = None
         self.work: WorkService | None = None
         self._groups_supported = False
         self._bot_names: tuple[str, ...] = ()
@@ -152,6 +153,8 @@ class ZaloAdapter(BasePlatformAdapter):
             self._poll_task = asyncio.create_task(self._poll_loop(), name="zalo-long-poll")
             self._reminder_task = asyncio.create_task(self._reminder_loop(), name="zalo-reminders")
             self._tickets_task = asyncio.create_task(self._tickets_loop(), name="zalo-ticket-notifications")
+            if getattr(self.work, 'managed_issues', None) is not None:
+                self._issues_task = asyncio.create_task(self._issues_loop(), name="zalo-issue-notifications")
             logger.info("Zalo adapter connected; group capability=%s", self._groups_supported)
             return True
         except AuthenticationError:
@@ -187,6 +190,11 @@ class ZaloAdapter(BasePlatformAdapter):
             tickets_task.cancel()
             with suppress(asyncio.CancelledError):
                 await tickets_task
+        issues_task, self._issues_task = self._issues_task, None
+        if issues_task and issues_task is not asyncio.current_task():
+            issues_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await issues_task
         await self.cancel_background_tasks()
         if self._archive_task:
             self._archive_task.cancel()
@@ -341,6 +349,66 @@ class ZaloAdapter(BasePlatformAdapter):
                 raise
             await self.work.finish_ticket_notification(notice['id'], status)
             self.work.pilot.record('tickets_notification', 'error' if status == 'failed' else status,
+                                   (time.monotonic() - started) * 1000)
+            if self.has_fatal_error:
+                await self._notify_fatal_error()
+                break
+
+    async def _issues_loop(self) -> None:
+        try:
+            while self._running:
+                await self._deliver_issue_notifications()
+                await asyncio.sleep(1)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            # The durable outbox remains reviewable in Admin; a stopped optional
+            # sender must not disable calendar commands or expose issue details.
+            logger.error('Issue notification sender stopped; check local storage and restart. No request details logged')
+
+    async def _deliver_issue_notifications(self) -> None:
+        if (self.work is None or self.client is None or self.has_fatal_error
+                or getattr(self.work, 'managed_issues', None) is None):
+            return
+        store = self.work.managed_issues
+        for _ in range(20):
+            notice = await self.work.claim_issue_notification()
+            if notice is None:
+                break
+            started, sent_chunks = time.monotonic(), 0
+            status, error_code = 'sent', ''
+            try:
+                for chunk in split_text(notice['text']):
+                    # No allowlist fallback: the current stable member, Zalo
+                    # account and authorized private route must all still match.
+                    # Recheck after every await, so locking/rebinding a member
+                    # stops later chunks without replaying the earlier ones.
+                    if notice.get('chat_type') != 'PRIVATE' or not self.work.issue_delivery_allowed(notice):
+                        status = 'uncertain' if sent_chunks else 'blocked'
+                        error_code = 'access_revoked'
+                        break
+                    if self.has_fatal_error:
+                        status = 'uncertain' if sent_chunks else 'blocked'
+                        error_code = 'interrupted'
+                        break
+                    await self.client.send_text_chunk(notice['chat_id'], chunk)
+                    sent_chunks += 1
+            except AuthenticationError:
+                status, error_code = ('uncertain' if sent_chunks else 'failed'), 'rejected'
+                self._set_fatal_error('zalo_auth', 'Token rejected when delivering issue notification.', retryable=False)
+            except DeliveryUncertain:
+                status, error_code = 'uncertain', 'network'
+            except ZaloAPIError as error:
+                # Only an explicit, known rejection before the FIRST delivered
+                # chunk is retryable. Zalo provides no send idempotency key.
+                rejected = error.code in (400, 401, 404, 405, 409, 413, 415, 422, 429)
+                status = 'failed' if rejected and not sent_chunks else 'uncertain'
+                error_code = 'rate_limit' if error.code == 429 else 'rejected'
+            except BaseException:
+                store.finish_notification(notice['id'], 'uncertain', 'interrupted')
+                raise
+            store.finish_notification(notice['id'], status, error_code)
+            self.work.pilot.record('issue_notification', 'error' if status == 'failed' else status,
                                    (time.monotonic() - started) * 1000)
             if self.has_fatal_error:
                 await self._notify_fatal_error()

@@ -119,7 +119,7 @@ test('route/method/query allowlist rejects open proxy, unknown endpoints and dup
   const { res, requests } = await call(incoming('/api/member/lock'));
   assert.equal(res.statusCode, 405);
   assert.equal(requests.length, 0);
-  assert.equal(Object.keys(ROUTES).length, 18);
+  assert.equal(Object.keys(ROUTES).length, 26);
 });
 
 test('canonical browser Host and Origin are checked before any upstream call', async () => {

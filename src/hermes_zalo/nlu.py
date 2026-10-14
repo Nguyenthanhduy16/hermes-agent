@@ -53,7 +53,7 @@ person/room/course: chép nguyên tên/phòng/khóa được nói tới, không 
 tickets_start: muốn bắt đầu đổi ca, chỉ mở bước chọn; tickets_pending: chờ mình đồng ý;
 tickets_list: yêu cầu của mình; tickets_history: lịch sử đổi ca.
 reminder_list/history/help: xem nhắc việc/lịch sử/hướng dẫn tạo nhắc; không tự tạo/hủy nhắc.
-issue_draft: muốn báo lỗi/tạo issue với đủ tiêu đề và mô tả; title/description phải là các đoạn
+issue_draft: muốn báo lỗi/tạo issue/đề xuất tính năng với đủ tiêu đề và mô tả; title/description phải là các đoạn
 nguyên văn của tin nhắn. Thiếu thông tin: issue_help. Không xác nhận hoặc hủy issue.
 documents: hỏi quy định/tài liệu/thông tin nội bộ; chat: trò chuyện thường không cần dữ liệu nội bộ.
 menu: xem chức năng. clarify: thiếu thông tin, thao tác không hỗ trợ, ngày không rõ hoặc nhiều việc.
@@ -256,7 +256,8 @@ def to_action(data, text, *, today=None):
     if intent == 'issue_draft':
         if not data['title'].strip() or not data['description'].strip():
             return Action(reply=CLARIFY['issue_details'])
-        return Action('/issue', 'tao ' + data['title'] + ' | ' + data['description'])
+        feature = bool(re.search(r'\b(?:de xuat tinh nang|gop y tinh nang)\b', folded(text)))
+        return Action('/issue', ('dexuat ' if feature else 'tao ') + data['title'] + ' | ' + data['description'])
     commands = {'tickets_pending': ('/choxacnhan', ''), 'tickets_list': ('/yeucau', ''),
                 'tickets_history': ('/lichsudoica', ''), 'reminder_list': ('/nhac', 'xem'),
                 'reminder_history': ('/nhac', 'lichsu'), 'reminder_help': ('/trogiup', 'nhac'),

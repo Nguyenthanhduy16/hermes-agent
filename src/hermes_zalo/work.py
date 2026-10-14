@@ -9,6 +9,7 @@ import time
 from dataclasses import replace
 
 from .issues import IssueStore, issue_target, preview
+from .issue_management import ManagedIssueStore
 from .knowledge import KnowledgeBase, NO_MATCH, NO_SOURCES, UNAVAILABLE
 from .reminders import ReminderStore, VIETNAM_TZ, parse_reminder_command
 from .sheets import SheetsClient, SheetsError, SheetsSettings
@@ -53,6 +54,7 @@ class WorkService:
         self._tickets_error = False
         self._tickets_notifications_error = False
         self._registration_notice_retry_at = 0
+        self._issue_notice_retry_at = 0
         self._tickets_lock = asyncio.Lock()
         self._tickets_registration_lock = asyncio.Lock()
         self._tickets_bootstrapped = tickets_chat is not _LAZY_TICKETS
@@ -61,6 +63,12 @@ class WorkService:
         self.knowledge = KnowledgeBase(settings.knowledge_dir)
         self.reminders = ReminderStore(prefix.with_suffix(".reminders.sqlite3"))
         self.issues = IssueStore(prefix.with_suffix(".issues.sqlite3"))
+        self._managed_issue_store = ManagedIssueStore(prefix.with_suffix('.issues.sqlite3'))
+        self.issue_mode = str(values.get('ZALO_ISSUES_MODE') or 'legacy').strip().lower()
+        if self.issue_mode not in {'legacy', 'managed', 'off'}:
+            self.issue_mode = 'off'
+            logger.warning('Invalid Issue mode; only Issue is disabled. Use legacy, managed or off')
+        self.managed_issues = self._managed_issue_store if self.issue_mode == 'managed' else None
         from .pilot import PilotStore
         self.pilot = PilotStore(prefix.with_suffix(".pilot.sqlite3"))
         self.sheets = sheets_client
@@ -103,9 +111,49 @@ class WorkService:
                 self.registration.member_allows(user_id, chat_id, chat_type))
 
     def _issue_scope_allowed(self, user_id, chat_id, chat_type):
+        if self.issue_mode != 'legacy':
+            return bool(self.managed_issues_ready and chat_type == 'PRIVATE' and
+                        self.registration.member_allows(user_id, chat_id, chat_type) and
+                        self.member_feature_allowed(user_id, chat_id, chat_type))
         return bool(self.sheets and self.member_feature_allowed(user_id, chat_id, chat_type) and (
             self.sheets.settings.allows(user_id, chat_id, chat_type) or
             self.registration.member_allows(user_id, chat_id, chat_type)))
+
+    @property
+    def managed_issues_ready(self):
+        return bool(self.managed_issues and self.managed_issues.migration_report().get('ready'))
+
+    def issue_delivery_allowed(self, notice):
+        record = self.registration.identity(notice['user_id'])
+        return bool(self.managed_issues_ready and notice['chat_type'] == 'PRIVATE' and record and
+                    record.member_id == notice['member_id'] and record.chat_id == notice['chat_id'] and
+                    self.member_feature_allowed(notice['user_id'], notice['chat_id'], 'PRIVATE'))
+
+    async def claim_issue_notification(self):
+        if not self.managed_issues_ready or time.monotonic() < self._issue_notice_retry_at:
+            return None
+        # Inspect only the first eligible pending notice; transient roster errors
+        # leave it pending. Never claim before the read-only roster check.
+        rows = self.managed_issues.pending_notifications(limit=1)
+        if not rows:
+            return None
+        notice = rows[0]
+        if self.issue_delivery_allowed(notice):
+            record = self.registration.identity(notice['user_id'])
+            try:
+                await self.registration.validate(record, require_unique_name=False)
+            except RegistrationError:
+                return self.managed_issues.claim_notification(lambda item: False, notification_id=notice['id'])
+            except WorkloadError as error:
+                from .workload import NOT_FOUND_ERROR, DUPLICATE_PHONE_ERROR
+                if str(error) in (NOT_FOUND_ERROR, DUPLICATE_PHONE_ERROR):
+                    return self.managed_issues.claim_notification(lambda item: False, notification_id=notice['id'])
+                self._issue_notice_retry_at = time.monotonic() + 30
+                return None
+            except SheetsError:
+                self._issue_notice_retry_at = time.monotonic() + 30
+                return None
+        return self.managed_issues.claim_notification(self.issue_delivery_allowed, notification_id=notice['id'])
 
     def ticket_delivery_allowed(self, user_id, chat_id):
         if self.background_registration_blocked(user_id, chat_id):
@@ -154,6 +202,7 @@ class WorkService:
     def recover(self):
         self.reminders.recover_claimed()
         self.issues.recover()
+        self._managed_issue_store.recover()
 
     async def close(self):
         if self.intent_router is not None:
@@ -168,6 +217,7 @@ class WorkService:
             await self.sheets.close()
         self.reminders.close()
         self.issues.close()
+        self._managed_issue_store.close()
         self.pilot.close()
         self.profiles.close()
         self.registration.close()
@@ -373,7 +423,8 @@ class WorkService:
         issue_access = self._issue_scope_allowed(message.user_id, message.chat_id, message.chat_type)
         answer = help_text(topic, sheets_state=state,
                          lab=bool(self.sheets and self.sheets.settings.calendar_format == "lab"),
-                         issues=bool(issue_access and self.sheets.settings.issues_enabled),
+                         issues=bool(issue_access and (self.managed_issues_ready or
+                                     self.sheets and self.sheets.settings.issues_enabled)),
                          issue_access=issue_access, reminders=can_write,
                          tickets=bool(not self._tickets_error and (can_write or self.registration.approved(message)) and
                                       (self._tickets_chat is not None or
@@ -385,6 +436,9 @@ class WorkService:
         if self.registration.enabled:
             answer = answer.replace('Lịch của bạn: /dangky Họ tên đầy đủ, rồi /lichcuatoi homnay.',
                                     'Lịch của bạn: /lichcuatoi homnay sau khi đăng ký số điện thoại thành công.')
+        if self.managed_issues_ready and normalized(topic.strip().lstrip('/')) == 'issue' and issue_access:
+            from .issue_chat import GUIDE
+            answer = GUIDE
         if self.registration.enabled and not topic.strip():
             answer = answer.replace('Chưa đăng ký tên? /dangky Họ tên đầy đủ', 'Đăng ký danh tính: nhắn riêng /dangky SỐ_ĐIỆN_THOẠI')
             if message.chat_type == 'PRIVATE':
@@ -400,7 +454,7 @@ class WorkService:
             allowed.add('calendar')
         if self.member_feature_allowed(*scope):
             allowed.update(('reminder_list', 'reminder_history', 'reminder_help'))
-        if self._issue_scope_allowed(*scope) and self.sheets.settings.issues_enabled:
+        if self._issue_scope_allowed(*scope) and (self.managed_issues_ready or self.sheets and self.sheets.settings.issues_enabled):
             allowed.update(('issue_help', 'issue_draft'))
         if self._tickets_chat is not None or str(self._tickets_values.get('TICKETS_CHAT_MODE') or 'off').lower() in ('sheets_test', 'lab_live', 'lab_live_test'):
             allowed.update(('tickets_start', 'tickets_pending', 'tickets_list', 'tickets_history'))
@@ -613,6 +667,12 @@ class WorkService:
                          for i, r in enumerate(rows[:30], 1)]
                 return ("Nhắc việc của bạn tại đây (giờ Việt Nam):\n\n" + "\n\n".join(lines) +
                         "\n\nHủy một nhắc đang chờ: /nhac huy MÃ_NHẮC\nXem lịch sử gần đây: /nhac lichsu")
+            if command == '/issue' and self.issue_mode != 'legacy':
+                from .issue_chat import handle as handle_issue
+                kind = 'issues'
+                return await handle_issue(self, message, argument)
+            if command == '/issue' and self._managed_issue_store.migration_report().get('source_reconciled'):
+                return 'Issue đã chuyển sang trang Admin. Nhờ người vận hành bật chế độ managed; không ghi vào Sheets cũ.'
             if command in ("/lich", "/lichcuatoi", "/issue"):
                 kind = "issues" if command == "/issue" else "calendar"
                 if self.sheets_error:

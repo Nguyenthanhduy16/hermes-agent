@@ -6,6 +6,8 @@ Người dùng đã xác nhận nhắn riêng nhận được câu trả lời v
 
 **Bot đã chạy được?** Xem [hướng dẫn tính năng mới theo từng bước](docs/huong-dan-tinh-nang.md). Bản tài liệu hiện tìm trích đoạn `.md`/`.txt` theo từ khóa, chưa có PDF/Word hoặc hỏi đáp ngữ nghĩa.
 
+**Issue và đội hỗ trợ:** đã có chế độ quản lý trên Admin với vai trò **Giảng viên – Admin – Thành viên**: nhận việc, bàn giao, phản hồi Zalo, ghi chú nội bộ và estimate. Mặc định giữ nguồn Sheets cũ; chỉ chuyển sang `ZALO_ISSUES_MODE=managed` sau đối soát dữ liệu. Xem [lệnh thành viên, quyền, tạo Giảng viên và triển khai](docs/ISSUES.md). Quyền hội thoại/ghi nhớ vẫn cấp riêng.
+
 **Menu:** `/menu` hiển thị **Tra lịch**, **Lịch của tôi**, **Đổi ca**, **Nhắc lịch**, **Thông báo** và **Tạo issue** theo cấu hình và quyền của bạn. **Đổi ca** dùng `/doica` để chọn ca ngay; **Nhắc lịch** dùng `/nhac` để tự đặt giờ nhắc. **Thông báo** dùng `/thongbao` để xem hướng dẫn tra nhắc việc và yêu cầu đổi ca đang chờ, không tự tạo nhắc từ lịch Sheets. **Tạo issue** dùng `/issue`, kèm **(chưa bật)** khi đã được cấp quyền nhưng tính năng đang tắt. Tài liệu/quy định và góp ý vẫn ẩn khỏi menu chính; xem [bảng lệnh](docs/lenh-zalo.md).
 
 **Thành viên nhóm:** khi bật `ZALO_GROUP_ACCESS=members`, mọi thành viên trong nhóm được cho phép có thể **@bot hoặc trả lời tin bot** để hỏi lịch/quy định được chia sẻ và trò chuyện bình thường, như `Giải thích Python là gì?` hoặc `Viết giúp mình lời chúc sinh nhật`. Trò chuyện dùng Hermes, tách phiên theo người và cuộc trò chuyện; không mở công cụ cho model tự sửa lịch/tạo issue. Xem [hướng dẫn nhóm](docs/dung-trong-nhom.md).

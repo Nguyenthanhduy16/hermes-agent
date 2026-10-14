@@ -17,6 +17,7 @@ from urllib.parse import parse_qs, urlsplit
 from .admin_auth import AdminAuth, AdminError
 from .admin_members import AdminMemberError, MemberAdmin
 from .conversations import ConversationConflict, ConversationError
+from .issue_management import IssueError
 from .reminders import VIETNAM_TZ
 
 COOKIE = 'labcoach_admin'
@@ -57,8 +58,77 @@ class AdminApplication:
             result['last_prepared'] = dict(result['last_prepared'], included_memory_ids=[])
         return result
 
+    def _issue_labels(self, issue):
+        result = dict(issue)
+        registrations = self.work.registration.store
+        result['member_name'] = 'Chưa xác minh người gửi'
+        if registrations and issue.get('member_id'):
+            with registrations.lock:
+                row = registrations.db.execute('SELECT name FROM registration_requests WHERE member_id=? '
+                    'ORDER BY updated DESC LIMIT 1', (issue['member_id'],)).fetchone()
+            if row:
+                result['member_name'] = row['name']
+        return result
+
     async def route(self, method, path, query, data, session):
         actor = 'web:' + self.auth.user(session)['username']
+        if path in ('/api/admin/accounts', '/api/admin/account', '/api/admin/account/save'):
+            # Authentication module checks faculty again inside account transactions.
+            if method == 'GET' and path == '/api/admin/accounts':
+                result = self.auth.list_accounts(session, query=query.get('q', ''), page=number(query.get('page')))
+                counts = self.work._managed_issue_store.counts_by_assignee(self.auth.user(session, 'issues'))
+                for row in result['items']:
+                    row['open_issues'] = counts.get(row['username'], 0)
+                return result
+            if method == 'GET' and path == '/api/admin/account':
+                result = self.auth.account_detail(session, query.get('username', ''))
+                counts = self.work._managed_issue_store.counts_by_assignee(self.auth.user(session, 'issues'))
+                return dict(result, open_issues=counts.get(result['username'], 0))
+            if method == 'POST' and path == '/api/admin/account/save':
+                return self.auth.manage_account(session, data)
+        if path in ('/api/issues', '/api/issue', '/api/issue/operators', '/api/issue/action', '/api/issue/notification/retry'):
+            current = self.auth.user(session, 'issues')
+            if not self.work.managed_issues_ready:
+                raise AdminError('Quản lý Issue chưa bật hoặc chưa hoàn tất kiểm tra chuyển dữ liệu.', 503)
+            store = self.work.managed_issues
+            if method == 'GET' and path == '/api/issues':
+                if set(query) - {'kind', 'status', 'member_id', 'assignee', 'q', 'page'}:
+                    raise AdminError('Bộ lọc Issue không hợp lệ.')
+                result = store.list_issues(current, **dict(query, page=number(query.get('page'))))
+                result['items'] = [self._issue_labels(item) for item in result['items']]
+                return result
+            if method == 'GET' and path == '/api/issue':
+                result = store.detail(query.get('id'), current)
+                result['issue'] = self._issue_labels(result['issue'])
+                return result
+            if method == 'GET' and path == '/api/issue/operators':
+                return self.auth.issue_operators(session)
+            if method == 'POST' and path == '/api/issue/notification/retry':
+                if set(data) != {'id', 'confirm'} or data.get('confirm') is not True or type(data.get('id')) is not int:
+                    raise AdminError('Cần xác nhận đúng thông báo gửi lại.')
+                store.retry_notification(data['id'], current)
+                return {'ok': True}
+            if method == 'POST' and path == '/api/issue/action':
+                if data.get('confirm') is not True:
+                    raise AdminError('Cần xác nhận thao tác Issue.')
+                payload = dict(data)
+                identity, action, revision = payload.pop('id', None), payload.pop('action', None), payload.pop('revision', None)
+                payload.pop('confirm', None)
+                if 'target_actor' in payload:
+                    raise AdminError('Không được tự khai danh tính người nhận.', 403)
+                if action == 'assign':
+                    operator = next((item for item in self.auth.issue_operators(session)['items']
+                                     if item['username'] == payload.get('assignee')), None)
+                    if operator is None:
+                        raise AdminError('Người nhận đã bị khóa hoặc chưa có quyền Issue.', 409)
+                    # Only active, explicitly authorized accounts returned by auth.
+                    payload['target_actor'] = dict(operator, permissions=['issues'], active=True)
+                if action == 'status' and 'public_reply' in payload:
+                    if 'text' in payload:
+                        raise AdminError('Phản hồi bị lặp.')
+                    payload['text'] = payload.pop('public_reply')
+                current = self.auth.user(session, 'issues')
+                return store.act(identity, current, action, revision, **payload)
         if path.startswith('/api/member'):
             self.auth.user(session, 'members')
             if method == 'GET' and path == '/api/members':
@@ -312,6 +382,8 @@ class Handler(BaseHTTPRequestHandler):
                 raise AdminError('Thao tác chưa xác định kết quả. Tải lại dữ liệu trước khi thử lại.', 503) from None
             self.reply(200, result)
         except AdminError as error:
+            self.reply(error.status, {'error': str(error)})
+        except IssueError as error:
             self.reply(error.status, {'error': str(error)})
         except ConversationConflict as error:
             self.reply(409, {'error': str(error)})

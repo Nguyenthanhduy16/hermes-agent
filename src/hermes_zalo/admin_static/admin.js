@@ -2,7 +2,7 @@
 
 (() => {
   const $ = (id) => document.getElementById(id);
-  const state = {user:null,csrf:"",view:"members",member:null,tab:"info",memberPage:1,historyPage:1,memoryPage:1,sessionKey:"",editingMemory:null,linkToken:null,request:0};
+  const state = {user:null,csrf:"",view:"members",member:null,tab:"info",memberPage:1,historyPage:1,memoryPage:1,issuePage:1,accountPage:1,issue:null,editingAccount:null,operators:[],sessionKey:"",editingMemory:null,linkToken:null,request:0};
   let pendingConfirmation=null;
   function finishConfirmation(accepted=false) {
     const resolve=pendingConfirmation;
@@ -26,6 +26,8 @@
   function beginLoad(target) { const token={user:state.user};loads.set(target,token);loading(target);return token; }
   function currentLoad(target,token) { return token.user===state.user && state.user!==null && loads.get(target)===token; }
   const viewInfo = {
+    issues:["HỖ TRỢ CÙNG ĐỘI NGŨ","Issue","Tiếp nhận, phân công và phản hồi các yêu cầu của thành viên."],
+    accounts:["PHÂN QUYỀN RÕ RÀNG","Quản lý Admin","Quản lý tài khoản và theo dõi công việc của đội ngũ hỗ trợ."],
     members:["QUẢN LÝ ĐỘI NGŨ","Thành viên","Theo dõi quyền sử dụng và liên kết lịch của từng thành viên."],
     conversations:["HIỂU TỪNG CUỘC TRAO ĐỔI","Hội thoại","Xem những gì thành viên đã nói và cách bot phản hồi."],
     memories:["GHI NHỚ CÓ KIỂM SOÁT","Thông tin ghi nhớ","Quản lý những thông tin hữu ích cho các lần trao đổi sau."]
@@ -38,6 +40,9 @@
   function el(tag, className, text) { const node=document.createElement(tag); if(className) node.className=className; if(text!==undefined && text!==null) node.textContent=String(text); return node; }
   function button(text, className, handler) { const b=el("button",className,text); b.type="button"; if(handler)b.addEventListener("click",handler); return b; }
   function can(permission) { return Boolean(state.user && Array.isArray(state.user.permissions) && state.user.permissions.includes(permission) && (permission!=="memories" || state.user.permissions.includes("conversations"))); }
+  function isFaculty() { return state.user?.role==="faculty"; }
+  function canView(view) { return view==="accounts"?isFaculty():view==="issues"?isFaculty()||can("issues"):can(view); }
+  function firstView() { return ["issues","members","conversations","memories","accounts"].find(canView)||"members"; }
   function textValue(value, fallback="—") { return value===undefined || value===null || value==="" ? fallback : String(value); }
   function date(value) { if(value===undefined || value===null || value==="")return "—"; const v=typeof value==="number" ? new Date(value<1e12?value*1000:value) : new Date(value); return Number.isNaN(v.getTime())?"—":new Intl.DateTimeFormat("vi-VN",{dateStyle:"short",timeStyle:"short",timeZone:"Asia/Ho_Chi_Minh"}).format(v); }
   function isoDay(value) { if(!value)return ""; const d=typeof value==="number"?new Date(value*1000):new Date(value); if(Number.isNaN(d.getTime()))return ""; return new Intl.DateTimeFormat("en-CA",{year:"numeric",month:"2-digit",day:"2-digit",timeZone:"Asia/Ho_Chi_Minh"}).format(d); }
@@ -68,15 +73,15 @@
   function query(path,values) { const params=new URLSearchParams(); Object.entries(values).forEach(([key,value])=>{if(value!==undefined && value!==null && value!=="")params.set(key,String(value));});return `${path}?${params}`; }
   async function busy(node,task) { const controls=node.matches("button")?[node]:Array.from(node.querySelectorAll("button[type=submit]"));controls.forEach(b=>{b.disabled=true;});try{return await task();}finally{controls.forEach(b=>{b.disabled=false;});} }
   function paging(target,data,callback) {
-    target.replaceChildren(); target.classList.add("pagination"); const page=Number(data.page)||1;const limit=Number(data.limit)||20;const total=Number(data.total)||0;const pages=Math.max(1,Math.ceil(total/limit));
+    target.replaceChildren(); target.classList.add("pagination"); const page=Number(data.page)||1;const limit=Number(data.page_size??data.limit)||20;const total=Number(data.total)||0;const pages=Math.max(1,Math.ceil(total/limit));
     target.append(el("span","",total?`${(page-1)*limit+1}–${Math.min(page*limit,total)} / ${total} kết quả`:"0 kết quả"));
     const controls=el("div","pagination-controls");const previous=button("←","",()=>callback(page-1));previous.disabled=page<=1;previous.setAttribute("aria-label","Trang trước");const next=button("→","",()=>callback(page+1));next.disabled=page>=pages;next.setAttribute("aria-label","Trang sau");controls.append(previous,el("span","",`Trang ${page} / ${pages}`),next);target.append(controls);
   }
   function pagedShell(target,data,render,callback) { const stack=el("div","stack"); if(data.items && data.items.length)data.items.forEach(item=>stack.append(render(item)));else empty(stack,"Chưa có dữ liệu phù hợp","Thử đổi bộ lọc hoặc quay lại sau.");const pager=el("div","pagination");paging(pager,data,callback);target.replaceChildren(stack,pager); }
-  function showLogin() { finishConfirmation(false);state.user=null;state.member=null;state.sessionKey="";state.editingMemory=null;state.linkToken=null;state.request++;document.querySelectorAll("dialog[open]").forEach(d=>d.close());["members-content","member-profile","member-tab-content","conversations-content","memories-content","source-content","link-preview","memory-source"].forEach(id=>$(id).replaceChildren());$("memory-form").reset();$("app-view").hidden=true;$("login-view").hidden=false;$("boot-state").hidden=true;$("password").value="";$("username").focus(); }
-  function showApp(user) { state.user=user;$("admin-name").textContent=user.username||"Admin";$("login-view").hidden=true;$("app-view").hidden=false;$("boot-state").hidden=true;document.querySelectorAll(".nav-item").forEach(node=>{node.hidden=!can(node.dataset.view==="conversations"?"conversations":node.dataset.view);});const first=["members","conversations","memories"].find(can)||"members";navigate(first); }
-  async function navigate(view) { state.view=view;state.member=null;state.sessionKey="";state.request++;clearError();["members","member","conversations","memories"].forEach(name=>{$(`${name}-view`).hidden=name!==view;});document.querySelectorAll(".nav-item").forEach(node=>node.classList.toggle("active",node.dataset.view===view));const info=viewInfo[view];$("page-eyebrow").textContent=info[0];$("page-title").textContent=info[1];$("page-description").textContent=info[2];$("breadcrumb-current").textContent=info[1];await refresh(); }
-  async function refresh() { clearError();try{if(state.member)await loadMember(state.member.member_id,true);else if(state.view==="members")await loadMembers(state.memberPage);else if(state.view==="conversations")await loadHistory($("conversations-content"),state.historyPage,historyFilters());else await loadMemories($("memories-content"),state.memoryPage,$("memories-member").value.trim());}catch(error){notice($("page-error"),error);} }
+  function showLogin() { finishConfirmation(false);state.user=null;state.member=null;state.issue=null;state.editingAccount=null;state.operators=[];state.sessionKey="";state.editingMemory=null;state.linkToken=null;state.request++;document.querySelectorAll("dialog[open]").forEach(d=>d.close());["members-content","member-profile","member-tab-content","conversations-content","memories-content","source-content","link-preview","memory-source","issues-content","issue-content","accounts-content","account-audit"].forEach(id=>$(id).replaceChildren());$("memory-form").reset();$("account-form").reset();$("app-view").hidden=true;$("login-view").hidden=false;$("boot-state").hidden=true;$("password").value="";$("username").focus(); }
+  function showApp(user) { state.user=user;$("admin-name").textContent=user.display_name||user.username||"Admin";$("admin-role").textContent=isFaculty()?"Giảng viên":"Admin";$("login-view").hidden=true;$("app-view").hidden=false;$("boot-state").hidden=true;document.querySelectorAll(".nav-item").forEach(node=>{node.hidden=!canView(node.dataset.view);});navigate(firstView()); }
+  async function navigate(view) { state.view=view;state.member=null;state.issue=null;state.sessionKey="";state.request++;clearError();["members","member","conversations","memories","issues","issue","accounts"].forEach(name=>{$(`${name}-view`).hidden=name!==view;});document.querySelectorAll(".nav-item").forEach(node=>node.classList.toggle("active",node.dataset.view===view));const info=viewInfo[view];$("page-eyebrow").textContent=info[0];$("page-title").textContent=info[1];$("page-description").textContent=info[2];$("breadcrumb-current").textContent=info[1];await refresh(); }
+  async function refresh() { clearError();try{if(state.member)await loadMember(state.member.member_id,true);else if(state.issue)await loadIssue(state.issue.id);else if(state.view==="issues")await loadIssues(state.issuePage);else if(state.view==="accounts")await loadAccounts(state.accountPage);else if(state.view==="members")await loadMembers(state.memberPage);else if(state.view==="conversations")await loadHistory($("conversations-content"),state.historyPage,historyFilters());else await loadMemories($("memories-content"),state.memoryPage,$("memories-member").value.trim());}catch(error){notice($("page-error"),error);} }
 
   async function loadMembers(page=1) {
     const target=$("members-content");if(!can("members")){noAccess(target);$("members-pagination").replaceChildren();return;}state.memberPage=page;const load=beginLoad(target);const data=await api(query("/api/members",{q:$("members-q").value.trim(),status:$("members-status").value,link:$("members-link").value,page}));if(!currentLoad(target,load))return;$("member-total").textContent=textValue(data.total,"0");
@@ -133,13 +138,108 @@
   }
   async function loadAudit(target,page=1,filters={}) { const load=beginLoad(target);const data=await api(query("/api/audit",{...filters,page}));if(!currentLoad(target,load))return;const box=panel();if(data.items?.length)data.items.forEach(item=>{const row=el("article","audit-entry");const header=el("div","audit-header");header.append(el("strong","",actionNames[item.action]||item.action),el("time","",date(item.created_at??item.created??item.at)));row.append(header,el("p","",`Thực hiện: ${textValue(item.actor)}`));if(item.before||item.after)row.append(el("div","audit-detail",`Trước: ${pretty(item.before)}\n\nSau: ${pretty(item.after)}`));else if(item.detail||item.details)row.append(el("div","audit-detail",pretty(item.detail||item.details)));box.append(row);});else empty(box,"Chưa có thay đổi","Các thao tác quản trị sẽ được ghi lại tại đây.");const pager=el("div","pagination");paging(pager,data,p=>loadAudit(target,p,filters).catch(e=>notice($("page-error"),e)));target.replaceChildren(box,pager); }
 
+  const issueStatusNames={new:"Mới",in_progress:"Đang xử lý",waiting:"Chờ bổ sung",done:"Hoàn thành"};
+  const issueKindNames={support:"Báo lỗi / hỗ trợ",feature:"Góp ý / tính năng"};
+  const permissionNames={issues:"Issue",members:"Thành viên",conversations:"Hội thoại",memories:"Ghi nhớ"};
+  const issueActionNames={notification_retry:"Thử gửi lại thông báo",create:"Tạo yêu cầu",created:"Tạo yêu cầu",claim:"Nhận xử lý",assign:"Phân công",status:"Đổi trạng thái",reopen:"Mở lại",comment:"Thêm phản hồi",plan:"Cập nhật kế hoạch"};
+  const issueStatusTag=value=>tag(issueStatusNames[value]||value,value==="waiting"?"warning":value==="new"?"subtle":"");
+  function labeledInput(label,type="text",value="",required=false) { const wrap=el("label","",label);const input=el(type==="textarea"?"textarea":"input");if(type!=="textarea")input.type=type;else input.rows=3;input.value=value??"";input.required=required;wrap.append(input);return {wrap,input}; }
+  function labeledSelect(label,options,value="") { const wrap=el("label","",label);const input=el("select");for(const [key,text] of options){const item=el("option","",text);item.value=key;input.append(item);}input.value=value;if(input.selectedIndex<0&&input.options.length)input.selectedIndex=0;wrap.append(input);return {wrap,input}; }
+  function submitButton(text) { const b=button(text,"button primary");b.type="submit";return b; }
+  function issueError(error) { notice($("page-error"),error);$("page-error").scrollIntoView({block:"nearest"}); }
+  async function loadOperators() {
+    const user=state.user;const data=await api("/api/issue/operators");if(user!==state.user)return;
+    state.operators=data.items||[];const select=$("issues-assignee"),value=select.value;
+    select.replaceChildren();[["","Tất cả"],["unassigned","Chưa có người nhận"],...state.operators.map(x=>[x.username,x.display_name||x.username])].forEach(([key,name])=>{const option=el("option","",name);option.value=key;select.append(option);});
+    select.value=value;if(select.selectedIndex<0)select.value="";
+  }
+  async function loadIssues(page=1) {
+    const target=$("issues-content");if(!canView("issues")){noAccess(target);return;}state.issuePage=page;const load=beginLoad(target);
+    await loadOperators();if(!currentLoad(target,load))return;
+    const data=await api(query("/api/issues",{q:$("issues-q").value.trim(),kind:$("issues-kind").value,status:$("issues-status").value,member_id:$("issues-member").value.trim(),assignee:$("issues-assignee").value,page}));
+    if(!currentLoad(target,load))return;$("issue-total").textContent=data.total??0;
+    if(!data.items?.length)empty(target,"Chưa có yêu cầu phù hợp","Thành viên có thể gửi yêu cầu hỗ trợ bằng /issue trong tin nhắn riêng với bot.");
+    else {const table=el("table"),head=el("thead"),row=el("tr"),body=el("tbody");["Yêu cầu","Người gửi","Trạng thái","Phụ trách","Cập nhật",""].forEach(t=>row.append(el("th","",t)));head.append(row);
+      data.items.forEach(item=>{const tr=el("tr"),title=el("td","issue-title-cell"),status=el("td"),person=el("td"),action=el("td");title.append(button(item.title||item.id,"text-button person-name",()=>openIssue(item.id)),el("div","secondary-line",`${item.code||item.id} · ${issueKindNames[item.kind]||item.kind}`));person.append(el("div","",item.member_name||item.member_id),el("div","secondary-line",item.member_id));status.append(issueStatusTag(item.status));action.append(button("Xem →","text-button",()=>openIssue(item.id)));tr.append(title,person,status,el("td","",item.assignee_display_name||item.assignee||"Chưa có"),el("td","muted",date(item.updated_at??item.updated)),action);body.append(tr);});table.append(head,body);target.replaceChildren(table);}
+    paging($("issues-pagination"),data,p=>loadIssues(p).catch(issueError));
+  }
+  async function openIssue(id) { state.issue={id};await loadIssue(id).catch(issueError); }
+  async function loadIssue(id) {
+    if(!canView("issues"))return;clearError();$("issues-view").hidden=true;$("issue-view").hidden=false;$("page-title").textContent="Chi tiết Issue";$("page-description").textContent="Thông tin, người phụ trách và tiến độ xử lý.";$("breadcrumb-current").textContent="Issue / Chi tiết";
+    const target=$("issue-content"),load=beginLoad(target);const data=await api(query("/api/issue",{id}));if(!currentLoad(target,load)||$("issue-view").hidden)return;state.issue=data.issue||data;renderIssue(data);
+  }
+  async function issueMutation(action,values,node) {
+    const issue=state.issue;if(!issue)return;clearError();
+    await busy(node,async()=>{try {await api("/api/issue/action",{id:issue.id,action,revision:issue.revision,confirm:true,...values});toast("Đã cập nhật yêu cầu.");if(state.issue?.id===issue.id)await loadIssue(issue.id);}catch(error){issueError(error);}});
+  }
+  function renderIssue(data) {
+    const issue=state.issue,target=$("issue-content"),editable=isFaculty()||issue.assignee===state.user.username;
+    const heading=el("article","panel detail-panel issue-heading"),tags=el("div","profile-tags");tags.append(tag(issue.code||issue.id,"subtle"),issueStatusTag(issue.status),tag(issueKindNames[issue.kind]||issue.kind,"subtle"));
+    heading.append(tags,el("h2","",issue.title),el("p","issue-body",issue.body||issue.description||""),el("p","secondary-line",`Người gửi: ${issue.member_name||issue.member_id} · ${issue.member_id} · ${date(issue.created_at??issue.created)}`));
+    const owner=el("div","section-toolbar issue-owner");owner.append(el("p","",`Phụ trách: ${issue.assignee_display_name||issue.assignee||"Chưa có người nhận"}`));
+    if(!issue.assignee&&issue.status==="new"){const claim=button("Nhận xử lý","button primary",async()=>{if(await confirmAction("Nhận xử lý yêu cầu",`Bạn sẽ là người phụ trách chính của ${issue.code||issue.id}.`,"Nhận xử lý"))await issueMutation("claim",{},claim);});owner.append(claim);}heading.append(owner);
+    const grid=el("div","issue-detail-grid"),main=el("div","stack"),side=el("div","stack");
+    const comments=el("article","panel detail-panel");comments.append(el("h2","","Trao đổi xử lý"));
+    if(!data.comments?.length)comments.append(el("p","muted","Chưa có ghi chú hoặc phản hồi."));
+    for(const item of data.comments||[]){const note=el("article",`issue-comment ${item.visibility==="public"?"public":"internal"}`),meta=el("div","history-header");meta.append(tag(item.visibility==="public"?"Phản hồi cho người gửi":"Ghi chú nội bộ",item.visibility==="public"?"":"warning"),el("strong","",item.actor||item.author||"Admin"),el("time","",date(item.created_at??item.created??item.at)));note.append(meta,el("p","issue-body",item.body||item.text||item.content));comments.append(note);}
+    main.append(comments);
+    const commentBox=el("article","panel detail-panel"),form=el("form","stack");commentBox.append(el("h2","","Thêm trao đổi"));
+    const visibility=labeledSelect("Nơi hiển thị",editable?[["internal","Ghi chú nội bộ — chỉ đội hỗ trợ"],["public","Phản hồi cho người gửi — gửi qua Zalo"]]:[["internal","Ghi chú nội bộ — chỉ đội hỗ trợ"]],"internal");
+    const content=labeledInput("Nội dung","textarea","",true);content.input.maxLength=1200;const add=submitButton("Lưu ghi chú");visibility.input.addEventListener("change",()=>{add.textContent=visibility.input.value==="public"?"Gửi phản hồi":"Lưu ghi chú";});form.append(visibility.wrap,content.wrap,add);
+    form.addEventListener("submit",async event=>{event.preventDefault();if(!content.input.value.trim())return;if(visibility.input.value==="public"&&!await confirmAction("Gửi phản hồi cho thành viên",content.input.value.trim(),"Gửi phản hồi"))return;await issueMutation("comment",{text:content.input.value.trim(),visibility:visibility.input.value},form);});commentBox.append(form);main.append(commentBox);
+    if(editable&&issue.status!=="new")side.append(issueStatusForm(issue));
+    if(isFaculty())side.append(issueAssignForm(issue));
+    if(issue.kind==="feature")side.append(issuePlanForm(issue,editable));
+    if(data.notifications?.length){const notices=el("article","panel detail-panel");notices.append(el("h2","","Thông báo Zalo"));for(const item of data.notifications){const row=el("div","issue-notification");const labels={pending:"Chờ gửi",sending:"Đang gửi",sent:"Đã gửi",failed:"Gửi lỗi",uncertain:"Chưa rõ kết quả",blocked:"Đã chặn"};row.append(tag(labels[item.status]||item.status,item.status==="failed"?"danger":item.status==="uncertain"?"warning":"subtle"),el("span","secondary-line",date(item.updated_at??item.updated??item.created)));if(item.status==="failed"&&item.attempts<3){const retry=button("Thử gửi lại","text-button",async()=>{if(!await confirmAction("Gửi lại thông báo","Chỉ thử lại thông báo đã xác định chưa gửi thành công. Hệ thống sẽ kiểm tra quyền người nhận trước khi gửi.","Gửi lại"))return;await busy(retry,async()=>{try{await api("/api/issue/notification/retry",{id:item.id,confirm:true});toast("Đã đưa thông báo vào hàng chờ.");await loadIssue(issue.id);}catch(error){issueError(error);}});});row.append(retry);}notices.append(row);}side.append(notices);}
+    const audit=el("article","panel detail-panel");audit.append(el("h2","","Lịch sử xử lý"));for(const item of data.audit||[]){const row=el("div","issue-audit");row.append(el("strong","",issueActionNames[item.action]||item.action),el("p","secondary-line",`${item.actor||"Hệ thống"} · ${date(item.created_at??item.created??item.at)}`));if(item.details?.reason||item.reason)row.append(el("p","",item.details?.reason||item.reason));if(item.details?.to)row.append(el("p","",`Chuyển tới: ${issueStatusNames[item.details.to]||item.details.to}`));audit.append(row);}if(!data.audit?.length)audit.append(el("p","muted","Chưa có lịch sử."));side.append(audit);
+    grid.append(main,side);target.replaceChildren(heading,grid);
+  }
+  function issueStatusForm(issue) {
+    const box=el("article","panel detail-panel"),form=el("form","stack");box.append(el("h2","",issue.status==="done"?"Mở lại yêu cầu":"Cập nhật trạng thái"));
+    if(issue.status==="done"){const reason=labeledInput("Lý do mở lại","textarea","",true);reason.input.maxLength=500;form.append(reason.wrap,submitButton("Mở lại"));form.addEventListener("submit",async e=>{e.preventDefault();if(await confirmAction("Mở lại yêu cầu",reason.input.value.trim(),"Mở lại"))await issueMutation("reopen",{reason:reason.input.value.trim()},form);});}
+    else {const choices=issue.status==="waiting"?[["in_progress","Đang xử lý"],["done","Hoàn thành"]]:[["waiting","Chờ bổ sung"],["done","Hoàn thành"]];const status=labeledSelect("Trạng thái mới",choices,choices[0][0]),reply=labeledInput("Phản hồi cho người gửi","textarea");reply.input.maxLength=1200;const help=el("p","muted","Khi chờ bổ sung hoặc hoàn thành, hãy viết phản hồi rõ ràng để bot gửi cho thành viên.");const sync=()=>{reply.input.required=["waiting","done"].includes(status.input.value);};status.input.addEventListener("change",sync);sync();form.append(status.wrap,reply.wrap,help,submitButton("Cập nhật"));form.addEventListener("submit",async e=>{e.preventDefault();if(await confirmAction("Cập nhật trạng thái",`Chuyển sang “${issueStatusNames[status.input.value]}”.${reply.input.value.trim()?"\n\nPhản hồi cho người gửi:\n"+reply.input.value.trim():""}`,"Xác nhận cập nhật"))await issueMutation("status",{status:status.input.value,public_reply:reply.input.value.trim()},form);});}
+    box.append(form);return box;
+  }
+  function issueAssignForm(issue) {
+    const box=el("article","panel detail-panel"),form=el("form","stack");box.append(el("h2","","Phân công / bàn giao"));
+    const owner=labeledSelect("Người phụ trách",[["","Chọn người phụ trách"],...state.operators.map(x=>[x.username,x.display_name||x.username])],issue.assignee||""),reason=labeledInput("Lý do phân công","textarea","",true);owner.input.required=true;reason.input.maxLength=500;form.append(owner.wrap,reason.wrap,submitButton("Lưu phân công"));form.addEventListener("submit",async e=>{e.preventDefault();if(await confirmAction("Phân công yêu cầu",`Giao cho ${owner.input.selectedOptions[0].textContent}.\n${reason.input.value.trim()}`,"Xác nhận phân công"))await issueMutation("assign",{assignee:owner.input.value,reason:reason.input.value.trim()},form);});box.append(form);return box;
+  }
+  function issuePlanForm(issue,editable) {
+    const box=el("article","panel detail-panel");box.append(el("h2","","Kế hoạch thực hiện"));
+    const priorities={"":"Chưa đánh giá",low:"Thấp",normal:"Bình thường",high:"Cao",urgent:"Khẩn cấp"};
+    if(!editable){box.append(el("p","",`Ưu tiên: ${priorities[issue.priority]||"Chưa đánh giá"}`),el("p","",`Estimate: ${textValue(issue.estimate)}`),el("p","",`Dự kiến xong: ${textValue(issue.due_date)}`));return box;}
+    const form=el("form","stack"),priority=labeledSelect("Mức ưu tiên",Object.entries(priorities),issue.priority||""),estimate=labeledInput("Estimate (ví dụ: 2 ngày)","text",issue.estimate||""),due=labeledInput("Ngày dự kiến hoàn thành","date",issue.due_date||"");estimate.input.maxLength=100;form.append(priority.wrap,estimate.wrap,due.wrap,submitButton("Lưu kế hoạch"));form.addEventListener("submit",async e=>{e.preventDefault();await issueMutation("plan",{priority:priority.input.value,estimate:estimate.input.value.trim(),due_date:due.input.value},form);});box.append(form);return box;
+  }
+  async function loadAccounts(page=1) {
+    const target=$("accounts-content");if(!isFaculty()){noAccess(target);return;}state.accountPage=page;const load=beginLoad(target);const data=await api(query("/api/admin/accounts",{q:$("accounts-q").value.trim(),page}));if(!currentLoad(target,load))return;
+    if(!data.items?.length)empty(target,"Không tìm thấy tài khoản","Thử từ khóa khác hoặc tạo tài khoản Admin mới.");else {const table=el("table"),head=el("thead"),row=el("tr"),body=el("tbody");["Tài khoản","Vai trò","Quyền","Trạng thái","Issue đang xử lý",""].forEach(t=>row.append(el("th","",t)));head.append(row);data.items.forEach(item=>{const tr=el("tr"),name=el("td"),permissions=el("td","account-permission-cell"),status=el("td"),actions=el("td");name.append(button(item.display_name||item.username,"text-button person-name",()=>openAccount(item.username)),el("div","secondary-line",item.username));for(const permission of item.permissions||[])permissions.append(tag(permissionNames[permission]||permission,"subtle"));status.append(tag(item.active?"Hoạt động":"Đã khóa",item.active?"":"danger"));actions.append(button("Chỉnh sửa","text-button",()=>openAccount(item.username)));tr.append(name,el("td","",item.role==="faculty"?"Giảng viên":"Admin"),permissions,status,el("td","",item.open_issues??0),actions);body.append(tr);});table.append(head,body);target.replaceChildren(table);}paging($("accounts-pagination"),data,p=>loadAccounts(p).catch(issueError));
+  }
+  async function openAccount(username=null) {
+    if(!isFaculty())return;const user=state.user;try{const data=username?await api(query("/api/admin/account",{username})):null;if(user!==state.user)return;const account=data?.account||data;state.editingAccount=account;$("account-form").reset();$("account-error").hidden=true;$("account-title").textContent=account?"Chỉnh sửa tài khoản":"Tạo Admin";$("account-username").value=account?.username||"";$("account-username").readOnly=Boolean(account);$("account-name").value=account?.display_name||"";$("account-password").value="";$("account-password").required=!account;$("account-password-label").firstChild.textContent=account?"Mật khẩu mới (để trống để giữ nguyên)":"Mật khẩu ban đầu";$("account-role").textContent=account?.role==="faculty"?"Vai trò: Giảng viên. Việc chỉ định Giảng viên được thực hiện bằng công cụ quản trị trên server.":"Vai trò: Admin. Tài khoản này không được cấp hoặc thay đổi quyền của Admin khác.";$("account-active").checked=account?Boolean(account.active):true;Object.keys(permissionNames).forEach(p=>{$(`account-${p}`).checked=account?Boolean(account.permissions?.includes(p)):p==="issues";});renderAccountAudit(account);$("account-dialog").showModal();(account?$("account-name"):$("account-username")).focus();}catch(error){issueError(error);}
+  }
+  function renderAccountAudit(account) {
+    const target=$("account-audit");target.replaceChildren();target.hidden=!account;if(!account)return;
+    target.append(el("h3","","Lịch sử tài khoản"),el("p","secondary-line",`Issue đang phụ trách: ${account.open_issues??0} · Cập nhật ${date(account.updated)}`));
+    const names={account_created:"Tạo tài khoản",account_updated:"Cập nhật tài khoản",faculty_designated:"Chỉ định Giảng viên",created:"Tạo tài khoản",updated:"Cập nhật tài khoản",create:"Tạo tài khoản",update:"Cập nhật tài khoản",faculty_granted:"Chỉ định Giảng viên",password_reset:"Đặt lại mật khẩu"};
+    for(const item of account.audit||[]){const row=el("div","issue-audit");row.append(el("strong","",names[item.action]||item.action),el("p","secondary-line",`${item.actor||"Hệ thống"} · ${date(item.created_at??item.created??item.at)}`));if(item.reason)row.append(el("p","",item.reason));target.append(row);}
+    if(!account.audit?.length)target.append(el("p","muted","Chưa có lịch sử thay đổi."));
+  }
+  $("issues-filter").addEventListener("submit",event=>{event.preventDefault();clearError();loadIssues(1).catch(issueError);});
+  $("issue-back").addEventListener("click",()=>navigate("issues"));
+  $("accounts-filter").addEventListener("submit",event=>{event.preventDefault();clearError();loadAccounts(1).catch(issueError);});
+  $("new-account").addEventListener("click",()=>openAccount());
+  $("account-dialog").addEventListener("close",()=>{$("account-password").value="";state.editingAccount=null;});
+  $("account-conversations").addEventListener("change",()=>{if(!$("account-conversations").checked)$("account-memories").checked=false;});
+  $("account-memories").addEventListener("change",()=>{if($("account-memories").checked)$("account-conversations").checked=true;});
+  $("account-form").addEventListener("submit",event=>{event.preventDefault();$("account-error").hidden=true;busy(event.currentTarget,async()=>{try {const old=state.editingAccount;const payload={operation:old?"update":"create",username:$("account-username").value.trim(),display_name:$("account-name").value.trim(),permissions:Object.keys(permissionNames).filter(p=>$(`account-${p}`).checked),active:$("account-active").checked,confirm:true};if(old)payload.version=old.version;const password=$("account-password").value;if(password)payload.password=password;if(!await confirmAction(old?"Cập nhật tài khoản":"Tạo tài khoản Admin",`${payload.display_name} (${payload.username})\n${payload.active?"Hoạt động":"Khóa tài khoản"} · Quyền: ${payload.permissions.map(p=>permissionNames[p]).join(", ")||"Chưa cấp quyền"}${old?"\nCác phiên đăng nhập cũ sẽ bị thu hồi.":""}`,"Xác nhận lưu",!payload.active))return;await api("/api/admin/account/save",payload);$("account-password").value="";$("account-dialog").close();toast("Đã lưu tài khoản.");if(old?.username===state.user?.username){showLogin();return;}await loadAccounts(state.accountPage);}catch(error){$("account-password").value="";notice($("account-error"),error);}});});
+
   $("confirmation-cancel").addEventListener("click",()=>finishConfirmation(false));
   $("confirmation-accept").addEventListener("click",()=>finishConfirmation(true));
   $("confirmation-dialog").addEventListener("cancel",event=>{event.preventDefault();finishConfirmation(false);});
   $("confirmation-dialog").addEventListener("close",()=>{if(!$("confirmation-dialog").open)finishConfirmation(false);});
   $("login-form").addEventListener("submit",event=>{event.preventDefault();$("login-error").hidden=true;busy(event.currentTarget,async()=>{try{await api("/api/session");const data=await api("/api/login",{username:$("username").value.trim(),password:$("password").value});$("password").value="";const session=data.user?data:await api("/api/session");if(!session.user)throw new Error("Đăng nhập chưa hoàn tất. Vui lòng thử lại.");showApp(session.user);}catch(e){$("password").value="";notice($("login-error"),e);}});});
   $("logout").addEventListener("click",()=>busy($("logout"),async()=>{try{await api("/api/logout",{});showLogin();}catch(e){notice($("page-error"),e);}}));
-  $("brand-home").addEventListener("click",event=>{event.preventDefault();navigate(can("members")?"members":can("conversations")?"conversations":"memories");});
+  $("brand-home").addEventListener("click",event=>{event.preventDefault();navigate(firstView());});
   document.querySelectorAll(".nav-item").forEach(node=>node.addEventListener("click",()=>navigate(node.dataset.view)));
   $("refresh-view").addEventListener("click",()=>busy($("refresh-view"),refresh));
   $("members-filter").addEventListener("submit",event=>{event.preventDefault();clearError();loadMembers(1).catch(e=>notice($("page-error"),e));});
