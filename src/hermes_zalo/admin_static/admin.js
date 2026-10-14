@@ -4,6 +4,7 @@
   const $ = (id) => document.getElementById(id);
   const state = {user:null,csrf:"",view:"members",member:null,tab:"info",memberPage:1,historyPage:1,memoryPage:1,issuePage:1,ticketPage:1,accountPage:1,issue:null,ticket:null,ticketBusy:false,ticketRefreshRequired:null,editingAccount:null,operators:[],sessionKey:"",editingMemory:null,linkToken:null,request:0};
   let pendingConfirmation=null;
+  let registrationRepair=null,registrationRequestBusy=false;
   function finishConfirmation(accepted=false) {
     const resolve=pendingConfirmation;
     pendingConfirmation=null;
@@ -35,6 +36,7 @@
   };
   const statusNames = {approved:"Đã duyệt",pending:"Chờ duyệt",rejected:"Từ chối",revoked:"Thu hồi",locked:"Đã khóa",sent:"Đã gửi",received:"Đã nhận",failed:"Gửi lỗi",uncertain:"Chưa rõ kết quả",linked:"Đã liên kết",missing:"Thiếu liên kết",conflict:"Có xung đột",disabled:"Chưa bật"};
   const actionNames = {locked:"Khóa thành viên",unlocked:"Mở quyền thành viên",tickets_link:"Cập nhật liên kết Tickets",context_rebuilt:"Làm mới ngữ cảnh",memory_created:"Tạo ghi nhớ",memory_updated:"Sửa ghi nhớ",memory_stopped:"Ngừng dùng ghi nhớ",member_lock:"Khóa thành viên",member_unlock:"Mở quyền thành viên",member_link:"Cập nhật liên kết",lock:"Khóa thành viên",unlock:"Mở quyền thành viên",link_confirm:"Cập nhật liên kết",context_reset:"Xóa ngữ cảnh",context_rebuild:"Làm mới ngữ cảnh",memory_create:"Tạo ghi nhớ",memory_update:"Sửa ghi nhớ",memory_stop:"Ngừng dùng ghi nhớ",memory_save:"Lưu ghi nhớ"};
+  Object.assign(actionNames,{identity_corrected_from:"Thu hồi danh tính đăng ký nhầm",identity_corrected_to:"Liên kết đúng danh tính",registration_context_detached:"Làm mới ngữ cảnh sau khi sửa đăng ký",memory_stopped_registration_correction:"Ngừng ghi nhớ của đăng ký nhầm"});
   const isGroup = (value) => String(value || "").toUpperCase() === "GROUP";
   const scopeNames = {personal:"Cá nhân",session:"Cuộc trò chuyện",group:"Nhóm"};
   const fieldNames = {member_id:"Mã thành viên",user_id:"ID người dùng",zalo_user_id:"ID Zalo",chat_id:"ID cuộc trò chuyện",private_chat_id:"ID chat riêng",group_id:"ID nhóm",account_id:"Mã tài khoản",id:"Mã",name:"Tên",role:"Vai trò",status:"Trạng thái",locked:"Đã khóa",revision:"Phiên bản",content:"Nội dung",scope:"Phạm vi",active:"Đang sử dụng",session_key:"Mã phiên",expires:"Hết hạn",source_message_id:"Mã tin nguồn",create_account:"Tạo liên kết mới",phone_masked:"Điện thoại đã che"};
@@ -79,7 +81,7 @@
     const controls=el("div","pagination-controls");const previous=button("←","",()=>callback(page-1));previous.disabled=page<=1;previous.setAttribute("aria-label","Trang trước");const next=button("→","",()=>callback(page+1));next.disabled=page>=pages;next.setAttribute("aria-label","Trang sau");controls.append(previous,el("span","",`Trang ${page} / ${pages}`),next);target.append(controls);
   }
   function pagedShell(target,data,render,callback) { const stack=el("div","stack"); if(data.items && data.items.length)data.items.forEach(item=>stack.append(render(item)));else empty(stack,"Chưa có dữ liệu phù hợp","Thử đổi bộ lọc hoặc quay lại sau.");const pager=el("div","pagination");paging(pager,data,callback);target.replaceChildren(stack,pager); }
-  function showLogin() { finishConfirmation(false);state.user=null;state.member=null;state.issue=null;state.ticket=null;state.ticketBusy=false;state.ticketRefreshRequired=null;state.editingAccount=null;state.operators=[];state.sessionKey="";state.editingMemory=null;state.linkToken=null;state.request++;document.querySelectorAll("dialog[open]").forEach(d=>d.close());["members-content","member-profile","member-tab-content","conversations-content","memories-content","source-content","link-preview","memory-source","issues-content","issue-content","tickets-content","ticket-content","accounts-content","account-audit"].forEach(id=>$(id).replaceChildren());$("tickets-nav-count").hidden=true;$("memory-form").reset();$("account-form").reset();$("app-view").hidden=true;$("login-view").hidden=false;$("boot-state").hidden=true;$("password").value="";$("username").focus(); }
+  function showLogin() { finishConfirmation(false);clearRegistrationRepair();state.user=null;state.member=null;state.issue=null;state.ticket=null;state.ticketBusy=false;state.ticketRefreshRequired=null;state.editingAccount=null;state.operators=[];state.sessionKey="";state.editingMemory=null;state.linkToken=null;state.request++;document.querySelectorAll("dialog[open]").forEach(d=>d.close());["members-content","member-profile","member-tab-content","conversations-content","memories-content","source-content","link-preview","memory-source","issues-content","issue-content","tickets-content","ticket-content","accounts-content","account-audit"].forEach(id=>$(id).replaceChildren());$("tickets-nav-count").hidden=true;$("memory-form").reset();$("account-form").reset();$("app-view").hidden=true;$("login-view").hidden=false;$("boot-state").hidden=true;$("password").value="";$("username").focus(); }
   function showApp(user) { state.user=user;$("admin-name").textContent=user.display_name||user.username||"Admin";$("admin-role").textContent=isFaculty()?"Giảng viên":"Admin";$("login-view").hidden=true;$("app-view").hidden=false;$("boot-state").hidden=true;document.querySelectorAll(".nav-item").forEach(node=>{node.hidden=!canView(node.dataset.view);});navigate(firstView());if(firstView()!=="tickets")refreshTicketCount(); }
   async function navigate(view) { state.view=view;state.member=null;state.issue=null;state.ticket=null;state.sessionKey="";state.request++;clearError();["members","member","conversations","memories","issues","issue","tickets","ticket","accounts"].forEach(name=>{$(`${name}-view`).hidden=name!==view;});document.querySelectorAll(".nav-item").forEach(node=>node.classList.toggle("active",node.dataset.view===view));const info=viewInfo[view];$("page-eyebrow").textContent=info[0];$("page-title").textContent=info[1];$("page-description").textContent=info[2];$("breadcrumb-current").textContent=info[1];await refresh(); }
   async function refresh() { clearError();try{if(state.member)await loadMember(state.member.member_id,true);else if(state.issue)await loadIssue(state.issue.id);else if(state.ticket)await loadTicket(state.ticket.id);else if(state.view==="tickets")await loadTickets(state.ticketPage);else if(state.view==="issues")await loadIssues(state.issuePage);else if(state.view==="accounts")await loadAccounts(state.accountPage);else if(state.view==="members")await loadMembers(state.memberPage);else if(state.view==="conversations")await loadHistory($("conversations-content"),state.historyPage,historyFilters());else await loadMemories($("memories-content"),state.memoryPage,$("memories-member").value.trim());}catch(error){notice($("page-error"),error);} }
@@ -93,7 +95,7 @@
   async function loadMember(id,preserve=false) {
     clearError();$("members-view").hidden=true;$("member-view").hidden=false;$("page-title").textContent="Chi tiết thành viên";$("page-description").textContent="Danh tính, liên kết và dữ liệu trao đổi của một thành viên.";$("breadcrumb-current").textContent="Thành viên / Chi tiết";const target=$("member-profile");const load=beginLoad(target);$("member-tab-content").replaceChildren();const data=await api(query("/api/member",{id}));if(!currentLoad(target,load)||$("member-view").hidden)return;state.member=data.member||data;renderProfile();await renderMemberTab();
   }
-  function renderProfile() { const member=state.member;const info=el("div");info.append(el("h2","",member.name||member.member_id),el("p","secondary-line",member.member_id));const tags=el("div","profile-tags");tags.append(statusTag(member.locked?"locked":member.status),statusTag(member.link_status||"missing"));info.append(tags);const actions=el("div","profile-actions");const lock=button(member.locked?"Mở quyền":"Khóa quyền",`button ${member.locked?"secondary":"danger"}`,()=>changeLock(lock));actions.append(button("Xử lý liên kết","button secondary",openLink),lock);$("member-profile").replaceChildren(el("div","avatar large",initials(member.name)),info,actions);document.querySelectorAll("#member-tabs button").forEach(node=>{node.hidden=(node.dataset.tab==="history"||node.dataset.tab==="context")?!can("conversations"):node.dataset.tab==="memories"?!can("memories"):false;}); }
+  function renderProfile() { const member=state.member;const info=el("div");info.append(el("h2","",member.name||member.member_id),el("p","secondary-line",member.member_id));const tags=el("div","profile-tags");tags.append(statusTag(member.locked?"locked":member.status),statusTag(member.link_status||"missing"));info.append(tags);const actions=el("div","profile-actions");const lock=button(member.locked?"Mở quyền":"Khóa quyền",`button ${member.locked?"secondary":"danger"}`,()=>changeLock(lock));if(can("members"))actions.append(button("Sửa đăng ký nhầm","button secondary",openRegistrationRepair),button("Xử lý liên kết","button secondary",openLink),lock);$("member-profile").replaceChildren(el("div","avatar large",initials(member.name)),info,actions);document.querySelectorAll("#member-tabs button").forEach(node=>{node.hidden=(node.dataset.tab==="history"||node.dataset.tab==="context")?!can("conversations"):node.dataset.tab==="memories"?!can("memories"):false;}); }
   function detailPanel(title,rows) { const box=el("article","panel detail-panel");box.append(el("h2","",title));const dl=el("dl","details-list");rows.forEach(([label,value])=>{const row=el("div","detail-row");row.append(el("dt","",label),el("dd","",textValue(value)));dl.append(row);});box.append(dl);return box; }
   async function renderMemberTab() {
     const target=$("member-tab-content");loads.set(target,{});clearError();document.querySelectorAll("#member-tabs button").forEach(node=>node.classList.toggle("active",node.dataset.tab===state.tab));const m=state.member;if(!m)return;
@@ -109,6 +111,73 @@
     input.id="link-target";input.required=true;previous.replaceWith(input);$("link-dialog").showModal();input.focus();input.addEventListener("change",()=>{state.linkToken=null;$("link-submit").textContent="Xem trước thay đổi";$("link-preview").hidden=true;}); }
   function pretty(value) { if(value===null||value===undefined)return "—";if(Array.isArray(value))return value.length?value.map(pretty).join("\n\n"):"Không có";if(typeof value==="object")return Object.entries(value).filter(([k])=>!/(token|password|secret|phone(?!_masked))/i.test(k)).map(([k,v])=>`${fieldNames[k]||k}: ${pretty(v)}`).join("\n");if(typeof value==="boolean")return value?"Có":"Không";return String(value); }
   function previewLink(data) { const box=el("div","preview-block");box.append(el("h3","","Thay đổi dự kiến"));if(data.message)box.append(el("p","",data.message));box.append(el("h3","","Hiện tại"),el("pre","",pretty(data.before)),el("h3","","Sau khi xác nhận"),el("pre","",pretty(data.after)));$("link-preview").replaceChildren(box);$("link-preview").hidden=false; }
+
+  function clearRegistrationRepair() {
+    registrationRepair=null;
+    ["registration-repair-phone","registration-repair-reason"].forEach(id=>{$(id).value="";$(id).disabled=false;});
+    $("registration-repair-verified").checked=false;$("registration-repair-verified").required=false;
+    $("registration-repair-preview").replaceChildren();$("registration-repair-preview").hidden=true;
+    $("registration-repair-fields").hidden=false;$("registration-repair-check-wrap").hidden=true;
+    $("registration-repair-error").hidden=true;$("registration-repair-error").textContent="";
+    $("registration-repair-reload").hidden=true;$("registration-repair-submit").hidden=false;
+    $("registration-repair-submit").disabled=false;$("registration-repair-submit").textContent="Xem trước thay đổi";
+  }
+  function openRegistrationRepair() {
+    if(!can("members")||!state.member||registrationRequestBusy)return;
+    clearRegistrationRepair();registrationRepair={user:state.user,memberId:state.member.member_id,token:null};
+    $("registration-repair-dialog").showModal();$("registration-repair-phone").focus();
+  }
+  function currentRegistrationRepair(operation) { return operation===registrationRepair&&state.user===operation.user&&state.member?.member_id===operation.memberId&&$("registration-repair-dialog").open; }
+  function renderRegistrationPreview(data) {
+    const grid=el("div","registration-repair-grid");
+    for(const [title,value] of [["Hiện tại",data.before],["Sau khi sửa",data.after]]){
+      const identity=value||{};
+      grid.append(detailPanel(title,[["Họ tên",identity.name],["Điện thoại",identity.phone_masked],["Mã thành viên",identity.member_id||"Được cấp cố định khi xác nhận"],["ID Zalo",identity.zalo_user_id||data.before?.zalo_user_id],["ID chat riêng",identity.private_chat_id||data.before?.private_chat_id]]));
+    }
+    const target=$("registration-repair-preview");target.replaceChildren(grid);if(data.message)target.append(el("p","notice warning",data.message));target.hidden=false;
+    $("registration-repair-fields").hidden=true;["registration-repair-phone","registration-repair-reason"].forEach(id=>{$(id).disabled=true;});
+    $("registration-repair-check-wrap").hidden=false;$("registration-repair-verified").required=true;
+    $("registration-repair-submit").textContent="Xác nhận sửa đăng ký";$("registration-repair-verified").focus();
+  }
+  async function submitRegistrationRepair(event) {
+    event.preventDefault();const operation=registrationRepair;
+    if(!operation||operation.failed||registrationRequestBusy||!can("members")||!currentRegistrationRepair(operation))return;
+    registrationRequestBusy=true;$("registration-repair-submit").disabled=true;$("registration-repair-error").hidden=true;
+    const confirming=Boolean(operation.token);
+    try {
+      if(!confirming){
+        const payload={member_id:operation.memberId,phone:$("registration-repair-phone").value.trim(),reason:$("registration-repair-reason").value.trim()};
+        $("registration-repair-phone").value="";
+        ["registration-repair-phone","registration-repair-reason"].forEach(id=>{$(id).disabled=true;});
+        if(!payload.phone||!payload.reason)throw new Error("Nhập số điện thoại đúng trên Workload và lý do sửa.");
+        const data=await api("/api/member/registration/preview",payload);
+        if(!currentRegistrationRepair(operation))return;
+        if(typeof data.preview_token!=="string"||!data.preview_token||!data.before||!data.after)throw new Error("Chưa nhận được bản xem trước hợp lệ. Vui lòng nhập lại để kiểm tra.");
+        operation.token=data.preview_token;renderRegistrationPreview(data);
+      }else{
+        if(!$("registration-repair-verified").checked)throw new Error("Cần xác nhận đã kiểm tra đúng chủ tài khoản Zalo.");
+        const preview_token=operation.token;operation.token=null;
+        const data=await api("/api/member/registration/confirm",{preview_token,confirm:true});
+        if(!currentRegistrationRepair(operation))return;
+        const memberId=data.member_id||data.member?.member_id;
+        if(!memberId)throw new Error("Chưa nhận được hồ sơ sau khi sửa.");
+        $("registration-repair-dialog").close();clearRegistrationRepair();
+        toast(data.message||"Đã sửa đăng ký. Thành viên có thể dùng bot với danh tính đúng.");
+        await loadMember(memberId,true).catch(error=>notice($("page-error"),error));
+      }
+    }catch(error){
+      if(!currentRegistrationRepair(operation))return;
+      if(confirming&&operation.token===null){
+        operation.failed=true;
+        $("registration-repair-submit").hidden=true;$("registration-repair-reload").hidden=false;
+        $("registration-repair-verified").checked=false;$("registration-repair-verified").required=false;
+        notice($("registration-repair-error"),new Error(`${messageOf(error)} Tải lại hồ sơ để kiểm tra kết quả trước khi thử lại.`));
+      }else notice($("registration-repair-error"),error);
+    }finally{
+      registrationRequestBusy=false;
+      if(currentRegistrationRepair(operation)){$("registration-repair-phone").value="";$("registration-repair-submit").disabled=false;if(!confirming&&!operation.token)["registration-repair-phone","registration-repair-reason"].forEach(id=>{$(id).disabled=false;});}
+    }
+  }
 
   function historyFilters() { return {member_id:$("history-member").value.trim(),chat_id:$("history-chat").value.trim(),start:$("history-start").value,end:$("history-end").value}; }
   async function loadHistory(target,page=1,filters={}) { if(!can("conversations")){noAccess(target);return;}const load=beginLoad(target);if(target.id==="conversations-content")state.historyPage=page;const data=await api(query("/api/history",{...filters,page}));if(!currentLoad(target,load))return;pagedShell(target,data,historyCard,p=>loadHistory(target,p,filters).catch(e=>notice($("page-error"),e))); }
@@ -365,6 +434,9 @@
   $("refresh-view").addEventListener("click",()=>busy($("refresh-view"),refresh));
   $("members-filter").addEventListener("submit",event=>{event.preventDefault();clearError();loadMembers(1).catch(e=>notice($("page-error"),e));});
   $("member-back").addEventListener("click",()=>navigate("members"));
+  $("registration-repair-dialog").addEventListener("close",clearRegistrationRepair);
+  $("registration-repair-form").addEventListener("submit",submitRegistrationRepair);
+  $("registration-repair-reload").addEventListener("click",()=>{const memberId=registrationRepair?.memberId;if(!memberId||registrationRequestBusy)return;$("registration-repair-dialog").close();clearRegistrationRepair();openMember(memberId);});
   document.querySelectorAll("#member-tabs button").forEach(node=>node.addEventListener("click",()=>{state.tab=node.dataset.tab;renderMemberTab().catch(e=>notice($("page-error"),e));}));
   $("conversations-filter").addEventListener("submit",event=>{event.preventDefault();clearError();if($("history-start").value&&$("history-end").value&&$("history-start").value>$("history-end").value){notice($("page-error"),new Error("Ngày bắt đầu phải trước hoặc cùng ngày kết thúc."));return;}loadHistory($("conversations-content"),1,historyFilters()).catch(e=>notice($("page-error"),e));});
   $("memories-filter").addEventListener("submit",event=>{event.preventDefault();clearError();loadMemories($("memories-content"),1,$("memories-member").value.trim()).catch(e=>notice($("page-error"),e));});

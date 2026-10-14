@@ -30,6 +30,8 @@ export const ROUTES = Object.freeze({
   '/api/member/lock': { method: 'POST', query: [] },
   '/api/member/link/preview': { method: 'POST', query: [] },
   '/api/member/link/confirm': { method: 'POST', query: [] },
+  '/api/member/registration/preview': { method: 'POST', query: [] },
+  '/api/member/registration/confirm': { method: 'POST', query: [] },
   '/api/sessions': { method: 'GET', query: ['member_id', 'chat_id', 'page'] },
   '/api/history': { method: 'GET', query: ['session_key', 'member_id', 'chat_id', 'start', 'end', 'page', 'message_id'] },
   '/api/context': { method: 'GET', query: ['session_key'] },

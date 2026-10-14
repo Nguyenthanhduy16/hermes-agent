@@ -119,7 +119,28 @@ test('route/method/query allowlist rejects open proxy, unknown endpoints and dup
   const { res, requests } = await call(incoming('/api/member/lock'));
   assert.equal(res.statusCode, 405);
   assert.equal(requests.length, 0);
-  assert.equal(Object.keys(ROUTES).length, 30);
+  assert.equal(Object.keys(ROUTES).length, 32);
+});
+
+test('registration repair stays on fixed POST routes with CSRF and no phone query', async () => {
+  for (const [path, data] of [
+    ['/api/member/registration/preview', { member_id: 'member-synthetic', phone: '0900000001', reason: 'Synthetic test' }],
+    ['/api/member/registration/confirm', { preview_token: 'synthetic-preview', confirm: true }],
+  ]) {
+    const { res, requests } = await call(incoming(path, { method: 'POST', data, headers: { cookie: COOKIE } }));
+    assert.equal(res.statusCode, 200);
+    assert.equal(requests.length, 1);
+    assert.equal(requests[0].url, ENV.LABCOACH_API_URL + path);
+    assert.equal(requests[0].options.headers.Cookie, COOKIE);
+    assert.equal(requests[0].options.headers['X-CSRF-Token'], CSRF);
+    assert.deepEqual(JSON.parse(requests[0].options.body.toString('utf8')), data);
+    for (const req of [incoming(path), incoming(path + '?phone=0900000001', { method: 'POST', data }),
+      incoming(path, { method: 'POST', data, headers: { origin: 'https://evil.example.test' } })]) {
+      const blocked = await call(req);
+      assert.ok([400, 403, 405].includes(blocked.res.statusCode));
+      assert.equal(blocked.requests.length, 0);
+    }
+  }
 });
 
 test('self password change preserves CSRF, clears session cookie and forbids target query', async () => {

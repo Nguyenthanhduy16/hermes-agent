@@ -66,7 +66,7 @@ Tài khoản web tách khỏi đăng ký Zalo. Thành viên đã đăng ký, qu�
 
 | Quyền | Được làm |
 | --- | --- |
-| `members` | Xem thành viên, khóa/mở quyền, kiểm tra và sửa liên kết được phép |
+| `members` | Xem thành viên, khóa/mở quyền, sửa đăng ký nhầm và liên kết được phép |
 | `tickets` | Xem yêu cầu đổi ca, duyệt/từ chối và đối soát kết quả chưa xác định |
 | `issues` | Xem và xử lý issue trong phạm vi được cấp |
 | `conversations` | Xem hội thoại riêng/nhóm bot đã lưu, xem và thay đổi ngữ cảnh; nội dung ghi nhớ được ẩn nếu thiếu quyền `memories` |
@@ -89,10 +89,15 @@ Chỉ cấp các quyền cần thiết. Để bổ sung quyền mà giữ mật 
 2. **Xem chi tiết:** kiểm tra mã thành viên, đăng ký, tài khoản Zalo, chat riêng, nguồn Workload và liên kết Tickets/lịch. Chat riêng và ID nhóm là hai phạm vi khác nhau.
 3. **Khóa/mở quyền:** đọc phạm vi tác động rồi xác nhận. Khóa giữ dữ liệu, chặn dùng bot và không thể vượt bằng đăng ký lại. Mở khóa không duyệt lại đăng ký đã bị thu hồi, không cấp quản trị hoặc quyền nhóm mới; hệ thống đối chiếu lại Workload trước khi mở.
 4. **Sửa liên kết:** chọn phương án đã được hệ thống đối chiếu → xem trước → xác nhận. Mỗi bước kiểm tra lại dữ liệu; không sửa ô lịch thật.
+5. **Sửa đăng ký nhầm:** mở chi tiết hồ sơ → **Sửa đăng ký nhầm** → nhập số điện thoại đúng **hiện có trên Workload** và lý do → **Xem trước thay đổi** → đối chiếu tên, tài khoản Zalo, chat riêng → xác nhận đã kiểm tra đúng chủ tài khoản → **Xác nhận sửa đăng ký**. Thành viên không cần đăng ký lại; dùng `/dangky trangthai` để kiểm tra tên mới, rồi `/lichcuatoi` hoặc `/doica`.
 
 Sửa liên kết hiện hỗ trợ lịch Lab đã cấu hình qua Tickets. Tên trùng, nguồn thay đổi, tài khoản đích thuộc người khác hoặc còn yêu cầu đổi ca liên quan sẽ bị chặn; cần xác minh đúng người trước. Trang không cho nhập tùy ý user/chat ID để ghi đè một người khác. **Lịch sử thay đổi** cho biết ai thực hiện, khi nào và thông tin trước/sau.
 
-Đăng ký vẫn **tự duyệt** khi số điện thoại khớp duy nhất Workload và không xung đột. Sửa liên kết Tickets khác với đổi chủ danh tính: nếu đăng ký nhầm người, khóa trước rồi làm theo [quy trình thu hồi và đăng ký lại](dang-ky.md); không sửa họ tên để chuyển quyền của người khác. Việc tự duyệt không chứng minh quyền sở hữu số điện thoại.
+Sửa đăng ký nhầm thu hồi đăng ký cũ và duyệt hồ sơ đúng cho **cùng tài khoản Zalo/chat riêng**. Mã thành viên cũ được giữ; người đúng dùng mã cố định đã có hoặc được cấp mã mới. Lịch sử, issue và ghi nhớ cá nhân cũ không chuyển sang người mới; ngữ cảnh cũ được làm mới, nhắc việc thủ công cũ được ngừng dùng. Liên kết Tickets được kiểm tra và tạo lại khi thành viên dùng bot. Không sửa ô lịch, không cấp thêm quyền quản trị hoặc quyền nhóm.
+
+Hồ sơ đã thu hồi/từ chối, tài khoản bị khóa, số hoặc tên không khớp duy nhất, đích đã có người đăng ký và yêu cầu đổi ca liên quan chưa kết thúc đều bị chặn. Cần xử lý đúng nguyên nhân; nút sửa không ghi đè tài khoản người khác. Nếu thao tác lỗi hoặc mất kết nối, **tải lại hồ sơ để kiểm tra kết quả trước khi thử lại**. Xem thêm [hướng dẫn đăng ký](dang-ky.md#xử-lý-khi-đăng-ký-hoặc-liên-kết-bị-nhầm).
+
+Đăng ký lần đầu vẫn **tự duyệt** khi số điện thoại khớp duy nhất Workload và không xung đột. Việc tự duyệt không chứng minh quyền sở hữu số điện thoại; Admin cần xác minh người thực tế trước khi sửa danh tính.
 
 ## 5. Hội thoại & Ghi nhớ
 

@@ -15,7 +15,7 @@ import time
 from .commands import normalized
 from .registration import RegistrationError
 from .tickets.service import ACTIVE, digest, password_hash
-from .workload import WorkloadError
+from .workload import WorkloadError, normalize_phone
 
 
 class AdminMemberError(ValueError):
@@ -23,9 +23,11 @@ class AdminMemberError(ValueError):
 
 
 class MemberAdmin:
-    def __init__(self, work, *, clock=time.time):
+    def __init__(self, work, *, clock=time.time, conversations=None):
         self.work, self.clock = work, clock
+        self.conversations = conversations
         self._previews = {}
+        self._registration_previews = {}
 
     @property
     def flow(self):
@@ -288,6 +290,144 @@ class MemberAdmin:
                     return dict(ok=True, member_id=record.member_id, revision=store.member_control(record.member_id)['revision'],
                                 message='Đã cập nhật liên kết Tickets; lịch thật không thay đổi.')
         return await asyncio.to_thread(apply)
+
+    async def _correction_person(self, phone):
+        try:
+            person = await self.flow.directory.lookup(normalize_phone(phone))
+            self.flow.store._person(person)
+        except (RegistrationError, WorkloadError) as error:
+            raise AdminMemberError(str(error)) from None
+        if person.source_key != self.flow.directory.source_key:
+            raise AdminMemberError('Nguồn Workload đã thay đổi; tải lại trước khi sửa đăng ký.')
+        if not person.name_unique:
+            raise AdminMemberError('Tên trùng trong Workload; cần bổ sung mã phân biệt trước khi sửa đăng ký.')
+        return person
+
+    async def _correction_schedule(self, chat, person):
+        if chat is None:
+            if (str(getattr(self.work, '_tickets_values', {}).get('TICKETS_CHAT_MODE') or 'off').lower() != 'off' or
+                    getattr(self.work, '_tickets_error', False)):
+                raise AdminMemberError('Đổi ca đang bật nhưng chưa kiểm tra được liên kết. Thử lại sau.')
+            return None
+        if (chat.service.mode not in ('lab_live', 'lab_live_test') or not self.work.sheets or
+                chat.service.provider.settings.spreadsheet_id != self.work.sheets.settings.spreadsheet_id):
+            raise AdminMemberError('Nguồn Tickets chưa hỗ trợ sửa đăng ký từ Workload này.')
+        if chat.service.mode == 'lab_live_test' and person.name not in chat.service.test_members:
+            raise AdminMemberError('Người được chọn nằm ngoài phạm vi đổi ca đang thử nghiệm.')
+        try:
+            members = await asyncio.to_thread(chat.service.provider.inspect_members)
+        except Exception:
+            raise AdminMemberError('Chưa đọc được danh sách lịch; thử lại sau. Chưa sửa đăng ký.') from None
+        found = [row for row in members if row.get('member_name') == person.name]
+        if len(found) != 1 or not re.fullmatch(r'[A-Za-z0-9_.:-]{1,80}', str(found[0].get('member_id', ''))):
+            raise AdminMemberError('Tên chưa khớp duy nhất một mã trên lịch. Cần bổ sung ánh xạ trước khi sửa.')
+        return dict(member_id=found[0]['member_id'], name=person.name)
+
+    def _correction_tickets_snapshot(self, chat, record, schedule):
+        if chat is None:
+            return None
+        # Caller holds the Tickets lock, including through final registration
+        # commit. Never detach a different account's route or an admin binding.
+        rows = [dict(row) for row in chat.store.db.execute(
+            'SELECT * FROM ticket_zalo_bindings WHERE bot=? AND (user_id=? OR chat_id=? OR member_id=?) ORDER BY account',
+            (chat.bot_scope, record.user_id, record.chat_id, schedule['member_id']))]
+        if any(row['user_id'] != record.user_id or row['chat_id'] != record.chat_id for row in rows):
+            raise AdminMemberError('Liên kết lịch đích đã thuộc tài khoản Zalo khác; chưa ghi đè.')
+        if any(row['role'] != 'member' for row in rows):
+            raise AdminMemberError('Liên kết có quyền quản trị; cần người vận hành kiểm tra riêng.')
+        accounts = [dict(row) for row in chat.store.db.execute(
+            'SELECT id,name,role,member_id,active FROM ticket_accounts WHERE member_id=? ORDER BY id',
+            (schedule['member_id'],))]
+        if accounts and (len(accounts) != 1 or accounts[0]['active'] != 1 or
+                         accounts[0]['role'] != 'member' or accounts[0]['name'] != schedule['name']):
+            raise AdminMemberError('Tài khoản lịch đích bị khóa hoặc xung đột; cần kiểm tra trước khi sửa.')
+        old_accounts = [dict(row) for row in chat.store.db.execute(
+            'SELECT id,member_id FROM ticket_accounts WHERE name=?', (record.name,))]
+        member_ids = {row['member_id'] for row in rows + accounts + old_accounts} | {schedule['member_id']}
+        account_ids = {row['account'] for row in rows} | {row['id'] for row in accounts + old_accounts}
+        for ticket in chat.store.db.execute('SELECT creator,recipient,body FROM exchange_tickets WHERE status IN (?,?,?,?)', ACTIVE):
+            body = json.loads(ticket['body'])
+            if ticket['creator'] in account_ids or ticket['recipient'] in member_ids or any(
+                    body.get(side, {}).get('member_id') in member_ids for side in ('a', 'b')):
+                raise AdminMemberError('Còn yêu cầu đổi ca đang xử lý. Hoàn tất hoặc hủy yêu cầu trước khi sửa đăng ký.')
+        return dict(bindings=rows, accounts=accounts, old_accounts=old_accounts)
+
+    async def preview_registration(self, member_id, phone, reason, actor):
+        self._actor(actor)
+        record = self._record(member_id)
+        person = await self._correction_person(phone)
+        chat = await self._chat()
+        schedule = await self._correction_schedule(chat, person)
+        try:
+            reason = self.flow.store._correction_actor_reason(actor, reason)
+            with chat.store.lock if chat else nullcontext():
+                registration = self.flow.store.correction_snapshot(record, person)
+                tickets = self._correction_tickets_snapshot(chat, record, schedule)
+        except RegistrationError as error:
+            raise AdminMemberError(str(error)) from None
+        self._registration_previews = {key: value for key, value in self._registration_previews.items()
+                                       if value['expires'] > self.clock()}
+        if len(self._registration_previews) >= 100:
+            raise AdminMemberError('Có nhiều bản xem trước đang mở; thử lại sau ít phút.')
+        token = secrets.token_urlsafe(32)
+        self._registration_previews[hashlib.sha256(token.encode()).hexdigest()] = dict(
+            record=record, person=person, actor=actor, registration=registration, tickets=tickets,
+            schedule=schedule, reason=reason, expires=self.clock() + 300)
+        return dict(preview_token=token, expires=self.clock() + 300,
+                    before=self._basic(record),
+                    after=dict(name=person.name, phone_masked='******' + person.phone[-4:],
+                               member_id=registration.get('target_member_id'),
+                               zalo_user_id=record.user_id, private_chat_id=record.chat_id),
+                    message='Xác minh đúng chủ tài khoản trước khi lưu. Đăng ký cũ sẽ bị thu hồi và người đúng được duyệt. '
+                            'Ngữ cảnh cũ được làm mới, nhắc việc thủ công cũ được dừng; lịch sử và issue không chuyển sang người mới. '
+                            'Không sửa ô lịch trên Sheets. Liên kết đổi ca được tạo lại khi thành viên dùng bot.')
+
+    async def confirm_registration(self, preview_token, actor, *, authorize=None):
+        self._actor(actor)
+        if not isinstance(preview_token, str) or not 20 <= len(preview_token) <= 100:
+            raise AdminMemberError('Bản xem trước chưa hợp lệ.')
+        key = hashlib.sha256(preview_token.encode()).hexdigest()
+        preview = self._registration_previews.get(key)
+        if not preview or preview['actor'] != actor or preview['expires'] <= self.clock():
+            raise AdminMemberError('Bản xem trước hết hạn hoặc không thuộc quản trị này.')
+        person = await self._correction_person(preview['person'].phone)
+        if person != preview['person']:
+            raise AdminMemberError('Workload vừa thay đổi; tạo bản xem trước mới.')
+        chat = await self._chat()
+        schedule = await self._correction_schedule(chat, person)
+        record, store = preview['record'], self.flow.store
+        # No awaits once mutations start: ReminderStore belongs to the bot loop.
+        # Dependent cleanup only removes old capabilities. The new identity is
+        # activated by the final, atomic registration transaction, so interruption
+        # cannot grant the target identity before cleanup has succeeded.
+        with chat.store.lock if chat else nullcontext():
+            with store.lock:
+                if authorize:
+                    authorize()
+                if preview['expires'] <= self.clock() or self._registration_previews.get(key) is not preview:
+                    raise AdminMemberError('Bản xem trước hết hạn hoặc đã được sử dụng.')
+                try:
+                    if (store.correction_snapshot(record, person) != preview['registration'] or
+                            schedule != preview['schedule'] or
+                            self._correction_tickets_snapshot(chat, record, schedule) != preview['tickets']):
+                        raise AdminMemberError('Thông tin vừa thay đổi; tạo bản xem trước mới.')
+                    self._registration_previews.pop(key, None)
+                    self.work.reminders.detach_registration(record.user_id)
+                    self.work.issues.detach_registration(record.user_id)
+                    if self.conversations is not None:
+                        self.conversations.detach_registration_context(record.user_id, record.member_id, actor)
+                    if chat:
+                        with chat.store.transaction() as db:
+                            db.execute('DELETE FROM ticket_zalo_bindings WHERE bot=? AND user_id=? AND chat_id=?',
+                                       (chat.bot_scope, record.user_id, record.chat_id))
+                            if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='ticket_registration_links'").fetchone():
+                                db.execute('DELETE FROM ticket_registration_links WHERE bot=? AND member_id=?',
+                                           (chat.bot_scope, record.member_id))
+                    result = store.correct_registration(actor, record, person, preview['registration'], preview['reason'])
+                except RegistrationError as error:
+                    raise AdminMemberError(str(error)) from None
+        return self._basic(result) | dict(ok=True, message='Đã sửa đăng ký thành công: ' + result.name +
+                '. Thành viên có thể gửi /dangky trangthai, /lichcuatoi hoặc /doica; không cần đăng ký lại.')
 
     async def audit(self, member_id, page=1, limit=20):
         self._record(member_id)

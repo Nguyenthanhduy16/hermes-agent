@@ -53,7 +53,7 @@ def boundary(value, *, end=False):
 class AdminApplication:
     def __init__(self, work, conversations, auth, *, mode='local'):
         self.work, self.conversations, self.auth, self.mode = work, conversations, auth, mode
-        self.members = MemberAdmin(work)
+        self.members = MemberAdmin(work, conversations=conversations)
         self.tickets = TicketAdmin(work, auth)
 
     def _context_view(self, result, session):
@@ -175,6 +175,17 @@ class AdminApplication:
                 if data.get('confirm') is not True:
                     raise AdminError('Cần xác nhận thay đổi liên kết.')
                 return await self.members.confirm_link(data.get('token'), actor)
+            if method == 'POST' and path == '/api/member/registration/preview':
+                if query or set(data) != {'member_id', 'phone', 'reason'}:
+                    raise AdminError('Thông tin sửa đăng ký chưa hợp lệ.')
+                result = await self.members.preview_registration(data['member_id'], data['phone'], data['reason'], actor)
+                self.auth.user(session, 'members')
+                return result
+            if method == 'POST' and path == '/api/member/registration/confirm':
+                if query or set(data) != {'preview_token', 'confirm'} or data['confirm'] is not True:
+                    raise AdminError('Cần xác nhận đã kiểm tra đúng chủ tài khoản.')
+                return await self.members.confirm_registration(data['preview_token'], actor,
+                    authorize=lambda: self.auth.user(session, 'members'))
         if path in ('/api/sessions', '/api/history', '/api/context', '/api/context/reset', '/api/context/rebuild'):
             self.auth.user(session, 'conversations')
             if method == 'GET' and path == '/api/sessions':

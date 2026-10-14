@@ -113,6 +113,36 @@ class AdminHttpTests(unittest.TestCase):
             self.assertEqual(200, status)
         return client
 
+    def test_registration_correction_requires_members_csrf_and_exact_payload(self):
+        preview = '/api/member/registration/preview'
+        confirm = '/api/member/registration/confirm'
+        payload = dict(member_id=self.member.member_id, phone='0900000002', reason='Xác minh đúng chủ tài khoản')
+        self.members.preview_registration = AsyncMock(return_value={'preview_token': 'p' * 32})
+        self.members.confirm_registration = AsyncMock(return_value={'ok': True})
+        anonymous = self.client()
+        reader = self.client(['conversations'], 'reader')
+        operator = self.client(['members'])
+        for path, data in ((preview, payload), (confirm, {'preview_token': 'p' * 32, 'confirm': True})):
+            for client, status in ((anonymous, 401), (reader, 403)):
+                self.assertEqual(status, self.request('POST', path, client=client, data=data)[0])
+            self.assertEqual(403, self.request('POST', path, client=operator, data=data, csrf=False)[0])
+            self.assertEqual(403, self.request('POST', path, client=operator, data=data, origin='https://untrusted.invalid')[0])
+            self.assertEqual(400, self.request('POST', path + '?extra=1', client=operator, data=data)[0])
+            self.assertEqual(400, self.request('POST', path, client=operator, data=dict(data, role='faculty'))[0])
+        self.members.preview_registration.assert_not_awaited()
+        self.members.confirm_registration.assert_not_awaited()
+        self.assertEqual(200, self.request('POST', preview, client=operator, data=payload)[0])
+        self.members.preview_registration.assert_awaited_once_with(self.member.member_id, '0900000002',
+                                                                  payload['reason'], 'web:operator')
+        self.assertEqual(400, self.request('POST', confirm, client=operator,
+            data={'preview_token': 'p' * 32, 'confirm': False})[0])
+        self.assertEqual(200, self.request('POST', confirm, client=operator,
+            data={'preview_token': 'p' * 32, 'confirm': True})[0])
+        guard = self.members.confirm_registration.await_args.kwargs['authorize']
+        self.auth.create_account('operator', self.PASSWORD, [], replace=True)
+        with self.assertRaises(AdminError):
+            guard()
+
     def test_password_change_checks_session_origin_csrf_and_clears_cookie(self):
         client = self.client([])
         payload = dict(current_password=self.PASSWORD, new_password='Synthetic-new-password-123',

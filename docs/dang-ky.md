@@ -110,15 +110,20 @@ Giữ `REGISTRATION_AUTO_APPROVE=true`: thành viên mới có số khớp duy n
 
 **Đúng người đã đăng ký nhưng liên kết Tickets sai:** Admin có quyền `members` mở **Thành viên** → tìm người → xem chi tiết → chọn liên kết hệ thống đã đối chiếu → xem trước → xác nhận. Có thể khóa quyền trong lúc kiểm tra, rồi mở lại sau khi xử lý. Thao tác này chỉ sửa liên kết nội bộ; không đổi danh tính đăng ký hoặc ô lịch thật. Tên trùng, tài khoản đích thuộc người khác hoặc còn yêu cầu đổi ca liên quan thì hệ thống chặn; xử lý đúng nguyên nhân trước, không ghi đè.
 
-**Đã đăng ký nhầm sang người khác:** trang Admin chưa có chức năng chuyển chủ tài khoản hoặc sửa tùy ý số điện thoại, tên và Zalo ID. Thực hiện theo thứ tự:
+**Đã đăng ký nhầm sang người khác:** Admin có quyền `members` có thể xử lý ngay trên trang Admin:
 
-1. Trong **Thành viên**, xác định đúng hồ sơ bị nhầm và khóa quyền tạm thời. Kiểm tra tên, mã thành viên và Zalo ID; chỉ bốn số điện thoại cuối được hiển thị.
-2. Quản trị đăng ký đã cấu hình trong `REGISTRATION_ADMIN_USERS` và `ZALO_ALLOWED_USERS` nhắn riêng bot: `/thuhoidangky MÃ_THÀNH_VIÊN`. Tài khoản web có quyền `members` không tự có quyền dùng lệnh này.
-3. Sau khi xác minh đúng người và nguồn Workload, Admin bỏ khóa hồ sơ cũ. **Bỏ khóa không khôi phục đăng ký đã thu hồi.** Thành viên nhắn riêng lại `/dangky SỐ_ĐIỆN_THOẠI_ĐÚNG`.
-4. Đăng ký sau thu hồi vẫn **chờ duyệt**, dù đang bật tự duyệt. Quản trị dùng `/dangkychoduyet`, đối chiếu tài khoản thực tế rồi `/duyetdangky DK-MÃ_YÊU_CẦU`.
-5. Nếu còn báo xung đột Tickets, dùng phần sửa liên kết ở trên. Khi tài khoản đích thuộc chat khác, nhờ người vận hành kiểm tra và thu hồi đúng liên kết cũ; không nhập ID hoặc sửa SQLite tùy ý.
+1. **Thành viên** → tìm và mở đúng hồ sơ → **Sửa đăng ký nhầm**.
+2. Nhập **số điện thoại đúng hiện có trên Workload** và lý do sửa ngắn gọn. Không ghi số điện thoại trong ô lý do.
+3. Bấm **Xem trước thay đổi**. Đối chiếu tên trước/sau, tài khoản Zalo và chat riêng; xác minh đúng người thực tế. Số điện thoại được che, chỉ hiện bốn số cuối.
+4. Chọn xác nhận đã kiểm tra đúng chủ tài khoản, rồi **Xác nhận sửa đăng ký**. Thành viên gửi `/dangky trangthai` để kiểm tra tên đúng và tiếp tục dùng `/lichcuatoi` hoặc `/doica`; **không cần đăng ký lại**.
 
-Mã thành viên gắn với hồ sơ đã lưu; sửa liên kết không đổi mã hoặc chuyển lịch sử của người cũ sang người mới. Các quyết định duyệt/thu hồi, khóa/mở và sửa liên kết đều có lịch sử thao tác. Nếu thông tin Workload đã đổi khiến không thể mở khóa hoặc đối chiếu, nhờ người vận hành xử lý nguồn/ánh xạ trước; không tắt kiểm tra để đi tiếp.
+Hệ thống thu hồi đăng ký nhầm và duyệt hồ sơ đúng trên cùng tài khoản Zalo/chat riêng. Mã thành viên cũ được giữ; người đúng dùng mã cố định đã có hoặc được cấp mã mới. Lịch sử, issue và ghi nhớ cá nhân không tự chuyển giữa hai người. Ngữ cảnh cũ được làm mới, ghi nhớ theo phiên cũ ngừng dùng, nhắc việc thủ công cũ không tiếp tục gửi hoặc xuất hiện trong lịch sử nhắc của người mới. Liên kết Tickets cũ được gỡ và đối chiếu lại khi dùng bot; lịch thật không bị sửa.
+
+Chỉ sửa đăng ký đang chờ/đã duyệt và không bị khóa. Nếu cần khóa trong lúc xác minh, xử lý xong nguyên nhân rồi mở quyền trước khi sửa. Số không tìm thấy, số/tên trùng, người đích đã đăng ký ở tài khoản khác, liên kết đích bị khóa/xung đột hoặc còn yêu cầu đổi ca liên quan đều bị chặn. Không nhập tùy ý tên hoặc Zalo ID để chuyển quyền. Nếu báo lỗi hoặc mất kết nối khi xác nhận, tải lại hồ sơ để kiểm tra kết quả trước khi thử lại.
+
+Hồ sơ đã bị thu hồi/từ chối tiếp tục dùng quy trình đăng ký lại và duyệt thủ công: thành viên gửi `/dangky SỐ_ĐIỆN_THOẠI_ĐÚNG`; quản trị đăng ký dùng `/dangkychoduyet` rồi `/duyetdangky DK-MÃ_YÊU_CẦU` sau khi xác minh. Các lệnh này vẫn cần ID thuộc cả `REGISTRATION_ADMIN_USERS` và `ZALO_ALLOWED_USERS`; quyền web `members` không tự cấp quyền lệnh Zalo.
+
+Các thay đổi đều có lịch sử người thực hiện, thời gian và lý do. Nếu thông tin Workload đã đổi khiến không thể mở khóa hoặc đối chiếu, nhờ người vận hành xử lý nguồn/ánh xạ trước; không tắt kiểm tra để đi tiếp.
 
 ## Duyệt xong được dùng những gì?
 

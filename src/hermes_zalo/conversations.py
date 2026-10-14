@@ -437,6 +437,56 @@ class ConversationStore:
         result['payload'] = self._payload(result['summary'], result['messages'], result['memories'])
         return result
 
+    def detach_registration_context(self, user_id, old_member_id, actor):
+        """Discard usable route context before an authorized identity correction.
+
+        The caller must hold the registration/route mutation guards until its
+        own change completes. This operation only removes context grants; it
+        never attaches the proposed replacement identity. A failed correction
+        may therefore lose usable context, but cannot disclose another member's
+        memories. Historical messages and personal memories keep their original
+        member IDs. A later admitted message establishes the current identity.
+        """
+        user_id = _bounded(user_id, 'Tài khoản Zalo')
+        old_member_id = _bounded(old_member_id, 'Mã thành viên')
+        actor = _bounded(actor, 'Người thực hiện')
+        if ':' in user_id:
+            raise ConversationError('Tài khoản Zalo không hợp lệ.')
+        changed_sessions, stopped_memories = 0, 0
+        with self._write():
+            sessions = self.db.execute('SELECT * FROM conversation_sessions WHERE user_id=?', (user_id,)).fetchall()
+            # A third identity is not evidence that it belongs to this repair.
+            # Validate all sessions before changing any of them.
+            if any(row['member_id'] not in (None, old_member_id) for row in sessions):
+                raise ConversationConflict('Cuộc trò chuyện còn gắn với danh tính khác; cần kiểm tra trước khi sửa đăng ký.')
+            for row in sessions:
+                key = row['session_key']
+                memories = self.db.execute("SELECT * FROM conversation_memories WHERE scope='session' AND session_key=? "
+                                           'AND active=1 AND (member_id IS NULL OR member_id=?)',
+                                           (key, old_member_id)).fetchall()
+                cutoff = self.db.execute('SELECT COALESCE(MAX(id),0) FROM conversation_messages WHERE session_key=?', (key,)).fetchone()[0]
+                usage = self.db.execute('SELECT 1 FROM conversation_context_usage WHERE session_key=?', (key,)).fetchone()
+                if (row['member_id'] is None and row['cutoff'] >= cutoff and not row['summary']
+                        and row['summary_ids'] == '[]' and not usage and not memories):
+                    continue
+                for memory in memories:
+                    self.db.execute('UPDATE conversation_memories SET active=0,revision=revision+1,updated=? WHERE id=?',
+                                    (self.clock(), memory['id']))
+                    after = dict(self.db.execute('SELECT * FROM conversation_memories WHERE id=?', (memory['id'],)).fetchone())
+                    self._version(after, actor)
+                    self._audit(actor, 'memory_stopped_registration_correction', member_id=memory['member_id'],
+                                session_key=key, target_id=memory['id'],
+                                details={'before': self._memory_snapshot(memory), 'after': self._memory_snapshot(after)})
+                self.db.execute("UPDATE conversation_sessions SET member_id=NULL,cutoff=?,summary='',summary_ids='[]',"
+                                'revision=revision+1,updated=? WHERE session_key=?', (max(row['cutoff'], cutoff), self.clock(), key))
+                self.db.execute('DELETE FROM conversation_context_usage WHERE session_key=?', (key,))
+                self._audit(actor, 'registration_context_detached', member_id=old_member_id, session_key=key,
+                            details={'before_revision': row['revision'], 'after_revision': row['revision'] + 1,
+                                     'cutoff': cutoff, 'stopped_memories': len(memories)})
+                changed_sessions += 1
+                stopped_memories += len(memories)
+        return {'sessions': changed_sessions, 'stopped_memories': stopped_memories}
+
     def _current_revision(self, key, expected_revision):
         row = self.db.execute('SELECT * FROM conversation_sessions WHERE session_key=?', (key,)).fetchone()
         if not row:

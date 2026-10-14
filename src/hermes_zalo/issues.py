@@ -20,6 +20,8 @@ class IssueStore:
             title TEXT NOT NULL, body TEXT NOT NULL, target TEXT NOT NULL,
             created REAL NOT NULL, expires REAL NOT NULL, status TEXT NOT NULL)""")
         self.db.commit()
+        with self.db:
+            self.db.execute('CREATE TABLE IF NOT EXISTS issue_detached_registrations (id TEXT PRIMARY KEY)')
 
     def recover(self):
         with self.db:
@@ -36,6 +38,8 @@ class IssueStore:
         with self.db:
             previous = self.db.execute("SELECT * FROM drafts WHERE request_key=?", (message.key,)).fetchone()
             if previous:
+                if self.db.execute('SELECT 1 FROM issue_detached_registrations WHERE id=?', (previous['id'],)).fetchone():
+                    raise ValueError('Bản nháp thuộc đăng ký cũ; hãy tạo yêu cầu mới.')
                 return dict(previous)
             count = self.db.execute("SELECT COUNT(*) FROM drafts WHERE user_id=? AND status='draft' AND expires>?",
                                     (message.user_id, now)).fetchone()[0]
@@ -48,9 +52,15 @@ class IssueStore:
         return dict(self.db.execute("SELECT * FROM drafts WHERE id=?", (identity,)).fetchone())
 
     def scoped(self, identity, message):
-        row = self.db.execute("SELECT * FROM drafts WHERE id=? AND user_id=? AND chat_id=? AND chat_type=?",
+        row = self.db.execute("SELECT * FROM drafts WHERE id=? AND user_id=? AND chat_id=? AND chat_type=? "
+                              'AND id NOT IN (SELECT id FROM issue_detached_registrations)',
                               (identity, message.user_id, message.chat_id, message.chat_type)).fetchone()
         return dict(row) if row else None
+
+    def detach_registration(self, user_id):
+        with self.db:
+            self.db.execute('INSERT OR IGNORE INTO issue_detached_registrations SELECT id FROM drafts WHERE user_id=?', (user_id,))
+            self.db.execute("UPDATE drafts SET status='cancelled' WHERE user_id=? AND status='draft'", (user_id,))
 
     def cancel(self, identity, message):
         with self.db:

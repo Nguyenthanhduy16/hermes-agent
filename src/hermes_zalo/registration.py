@@ -274,6 +274,116 @@ class RegistrationStore:
                    'VALUES (?,?,?,?,?,?)', (member_id, actor, action, self.clock(),
                                            json.dumps(before, ensure_ascii=False), json.dumps(after, ensure_ascii=False)))
 
+    @staticmethod
+    def _correction_actor_reason(actor, reason):
+        # The web caller checks the current members capability. This label is
+        # only audit attribution, never a way to grant registration-admin ACLs.
+        if not isinstance(actor, str) or not re.fullmatch(r'web:[A-Za-z0-9_.@-]{1,100}', actor):
+            raise RegistrationError('Phiên quản trị chưa hợp lệ.')
+        if (not isinstance(reason, str) or not 5 <= len(reason.strip()) <= 300
+                or any(ord(char) < 32 for char in reason)
+                or re.search(r'(?:\d[\s().+\-]*){9,}', reason)):
+            raise RegistrationError('Nhập lý do từ 5–300 ký tự, không ghi số điện thoại vào lý do.')
+        return reason.strip()
+
+    def _correction_snapshot(self, db, record, person):
+        if not isinstance(record, RegistrationRecord):
+            raise RegistrationError('Thông tin đăng ký cần sửa chưa hợp lệ.')
+        current = self._record(db.execute('SELECT * FROM registration_requests WHERE id=?', (record.id,)).fetchone())
+        if current != record or record.status not in ('pending', 'approved'):
+            raise RegistrationError('Đăng ký đã thay đổi hoặc không còn hiệu lực; tải lại trước khi sửa.')
+        for key in ('member_id', 'user_id', 'chat_id'):
+            latest = db.execute(f'SELECT id FROM registration_requests WHERE {key}=? '
+                                'ORDER BY created DESC,rowid DESC LIMIT 1', (getattr(record, key),)).fetchone()
+            if latest is None or latest['id'] != record.id:
+                raise RegistrationError('Tài khoản hoặc chat đã có đăng ký mới hơn; chưa thay đổi liên kết.')
+        if person['source_key'] != record.source_key:
+            raise RegistrationError('Nguồn Workload đã thay đổi; cần xác minh nguồn trước khi sửa đăng ký.')
+        if not person['name_unique']:
+            raise RegistrationError('Tên trùng trong Workload; cần mã phân biệt và ánh xạ lịch trước khi sửa đăng ký.')
+        if person['phone'] == record.phone:
+            raise RegistrationError('Số điện thoại này đã thuộc đăng ký đang xem; không cần chuyển danh tính.')
+        if self._locked_route(db, record.user_id, record.chat_id):
+            raise RegistrationError('Tài khoản đang bị khóa; cần quản trị kiểm tra và mở khóa trước khi sửa đăng ký.')
+        source_control = self.member_control(record.member_id)
+        target = db.execute('SELECT member_id FROM registration_members WHERE source_key=? AND phone=?',
+                            (person['source_key'], person['phone'])).fetchone()
+        target_id = target['member_id'] if target else None
+        target_control = self.member_control(target_id) if target_id else {'locked': False, 'revision': 0, 'updated': 0}
+        if target_control['locked']:
+            raise RegistrationError('Thành viên đúng đang bị khóa; cần quản trị kiểm tra và mở khóa trước khi sửa đăng ký.')
+        if db.execute("SELECT 1 FROM registration_requests WHERE id<>? AND status IN ('pending','approved') "
+                      'AND (user_id=? OR chat_id=? OR member_id=?)',
+                      (record.id, record.user_id, record.chat_id, target_id)).fetchone():
+            raise RegistrationError('Người được chọn đang có đăng ký khác; chưa ghi đè hoặc chuyển tài khoản của người khác.')
+        target_latest = self._record(db.execute('SELECT * FROM registration_requests WHERE member_id=? '
+                                               'ORDER BY created DESC,rowid DESC LIMIT 1', (target_id,)).fetchone()) if target_id else None
+        # The preview is private process state. Keep full phones out of it too:
+        # fingerprints bind all input fields, and only masked data is audited.
+        digest = lambda value: hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+        return dict(source_request_id=record.id, source_member_id=record.member_id,
+                    source_control=source_control, target_member_id=target_id, target_control=target_control,
+                    source_digest=digest(vars(record)), person_digest=digest(person),
+                    target_digest=digest(vars(target_latest)) if target_latest else None)
+
+    def correction_snapshot(self, record, person):
+        """Validate a web correction without writes; caller must freshly read Workload.
+
+        The source is an immutable request captured by the administrator's
+        preview. A correction keeps its observed user/chat route, and transfers
+        no history, identity keys, administrator rights or group grants.
+        """
+        person = self._person(person)
+        with self.lock:
+            return self._correction_snapshot(self.db, record, person)
+
+    def correct_registration(self, actor, record, person, expected_snapshot, reason):
+        """Atomically revoke a wrong identity and approve a new request for its route.
+
+        HTTP authentication, current members permission, fresh roster lookup
+        and ancillary Tickets/context removal are the caller's responsibility.
+        The caller must hold the bot's runtime locks during those removals and
+        call this transaction last. Old records/member IDs remain immutable.
+        """
+        reason = self._correction_actor_reason(actor, reason)
+        person = self._person(person)
+        if not isinstance(expected_snapshot, dict):
+            raise RegistrationError('Cần xem trước thay đổi đăng ký trước khi xác nhận.')
+        with self._transaction() as db:
+            if self._correction_snapshot(db, record, person) != expected_snapshot:
+                raise RegistrationError('Thông tin vừa được cập nhật; tạo bản xem trước mới trước khi sửa đăng ký.')
+            target_id = expected_snapshot['target_member_id'] or 'member-' + uuid.uuid4().hex
+            if expected_snapshot['target_member_id'] is None:
+                db.execute('INSERT INTO registration_members VALUES (?,?,?)',
+                           (target_id, person['source_key'], person['phone']))
+            for _ in range(64):
+                request_id = 'DK-' + secrets.token_hex(4).upper()
+                if not db.execute('SELECT 1 FROM registration_requests WHERE id=?', (request_id,)).fetchone():
+                    break
+            else:
+                raise RegistrationError('Chưa cấp được mã đăng ký; vui lòng thử lại sau.')
+            # Preserve ordering even when the host clock moves backwards.
+            latest_created = db.execute('SELECT MAX(created) FROM registration_requests WHERE member_id=?',
+                                        (target_id,)).fetchone()[0] or 0
+            now = max(self.clock(), record.created, latest_created)
+            request_key = 'admin-correction:' + uuid.uuid4().hex
+            db.execute("UPDATE registration_requests SET status='revoked',updated=? WHERE id=?", (now, record.id))
+            db.execute('INSERT INTO registration_requests VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)',
+                       (request_id, target_id, record.user_id, record.chat_id, person['phone'], person['name'],
+                        person['source_key'], person['fingerprint'], int(person['name_unique']), 'approved', now, now, request_key))
+            db.execute('INSERT INTO registration_receipts VALUES (?,?)', (request_key, request_id))
+            for item_id, member_id, action in ((record.id, record.member_id, 'identity_corrected_from'),
+                                              (request_id, target_id, 'identity_corrected_to')):
+                db.execute('INSERT INTO registration_events(request_id,actor,action,at) VALUES (?,?,?,?)',
+                           (item_id, actor, action, now))
+                self._bump_revision(db, member_id)
+                self._audit_admin(db, member_id, actor, action,
+                                  {'request_id': record.id, 'member_id': record.member_id,
+                                   'phone_masked': '******' + record.phone[-4:], 'status': record.status},
+                                  {'request_id': request_id, 'member_id': target_id,
+                                   'phone_masked': '******' + person['phone'][-4:], 'status': 'approved', 'reason': reason})
+            return self._record(db.execute('SELECT * FROM registration_requests WHERE id=?', (request_id,)).fetchone())
+
     def user_state(self, user_id):
         """Local admission lookup; caller must enforce the returned DM route."""
         if not isinstance(user_id, str) or not 1 <= len(user_id) <= 200:

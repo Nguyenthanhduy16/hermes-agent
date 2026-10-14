@@ -42,6 +42,32 @@ class AdminAdapterTests(unittest.IsolatedAsyncioTestCase):
     def acknowledge_notice(self, event):
         self.archive.mark_notice(parse_update(event))
 
+    async def test_identity_changed_while_model_waited_cannot_send_old_context(self):
+        event = contract.update('identity-corrected-during-chat')
+        self.acknowledge_notice(event)
+        async def corrected_reply(message, context):
+            self.archive.detach_registration_context('u1', 'member-a', 'web:operator')
+            self.identities['u1'] = SimpleNamespace(member_id='member-c', chat_id='dm1')
+            return 'Nội dung thuộc danh tính cũ không được gửi.'
+        self.ai.reply.side_effect = corrected_reply
+        await self.adapter._dispatch(event)
+        self.adapter.client.send_text_chunk.assert_not_awaited()
+        self.ai.reply.side_effect = None
+        await self.adapter._dispatch(contract.update('after-identity-corrected'))
+        self.adapter.client.send_text_chunk.assert_awaited_once()
+        self.assertEqual([], self.ai.reply.await_args.args[1]['payload']['messages'])
+
+    async def test_identity_change_stops_remaining_reply_chunks(self):
+        event = contract.update('identity-corrected-mid-reply')
+        self.acknowledge_notice(event)
+        self.ai.reply.return_value = 'a' * 4500
+        async def first_chunk(*args):
+            self.identities['u1'] = SimpleNamespace(member_id='member-c', chat_id='dm1')
+            return {'message_id': 'first'}
+        self.adapter.client.send_text_chunk.side_effect = first_chunk
+        await self.adapter._dispatch(event)
+        self.assertEqual(1, self.adapter.client.send_text_chunk.await_count)
+
     async def test_commands_and_ai_are_archived_deduplicated_and_never_legacy_history(self):
         command = contract.update('menu', text='/menu')
         await self.adapter._dispatch(command)

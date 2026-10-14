@@ -185,6 +185,7 @@ class ReminderStore:
         """)
         self.connection.execute("CREATE INDEX IF NOT EXISTS reminders_due ON reminders(status,due_at)")
         self.connection.execute("CREATE INDEX IF NOT EXISTS reminders_owner ON reminders(user_id,chat_id,chat_type)")
+        self.connection.execute('CREATE TABLE IF NOT EXISTS reminder_detached_registrations (id TEXT PRIMARY KEY)')
         self.connection.commit()
 
     @staticmethod
@@ -206,6 +207,9 @@ class ReminderStore:
                 "SELECT * FROM reminders WHERE request_key=?", (request_key,),
             ).fetchone()
             if existing is not None:
+                if self.connection.execute('SELECT 1 FROM reminder_detached_registrations WHERE id=?',
+                                           (existing['id'],)).fetchone():
+                    raise ValueError('Nhắc việc thuộc đăng ký cũ; hãy tạo yêu cầu mới.')
                 if (existing["user_id"], existing["chat_id"], existing["chat_type"]) != (user_id, chat_id, chat_type):
                     raise ValueError("Mã yêu cầu không thuộc cuộc trò chuyện này.")
                 # A duplicate event must preserve its first content/time/status,
@@ -234,11 +238,27 @@ class ReminderStore:
         _validate_scope(user_id, chat_id, chat_type)
         rows = self.connection.execute(
             "SELECT * FROM reminders WHERE user_id=? AND chat_id=? AND chat_type=? "
+            "AND id NOT IN (SELECT id FROM reminder_detached_registrations) "
             "ORDER BY CASE WHEN status IN ('pending','claimed') THEN 0 ELSE 1 END, "
             "CASE WHEN status IN ('pending','claimed') THEN due_at END ASC, created_at DESC LIMIT 50",
             (user_id, chat_id, chat_type),
         ).fetchall()
         return [self._record(row) for row in rows]
+
+    def detach_registration(self, user_id: str) -> int:
+        """Keep historical rows without exposing them to a corrected identity."""
+        _validate_scope(user_id, 'registration-repair', 'PRIVATE')
+        with self.connection:
+            self.connection.execute('BEGIN IMMEDIATE')
+            self.connection.execute('INSERT OR IGNORE INTO reminder_detached_registrations '
+                                    'SELECT id FROM reminders WHERE user_id=?', (user_id,))
+            result = self.connection.execute("UPDATE reminders SET status='blocked' WHERE user_id=? "
+                                             "AND status IN ('pending','claimed')", (user_id,))
+        return result.rowcount
+
+    def delivery_current(self, reminder_id: str) -> bool:
+        return bool(self.connection.execute("SELECT 1 FROM reminders WHERE id=? AND status='claimed' "
+                    'AND id NOT IN (SELECT id FROM reminder_detached_registrations)', (reminder_id,)).fetchone())
 
     def cancel(self, id: str, user_id: str, chat_id: str, chat_type: str) -> bool:
         """Only the creator in the original chat may cancel a still-pending row.

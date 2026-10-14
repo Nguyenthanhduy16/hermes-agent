@@ -23,6 +23,7 @@ from hermes_constants import get_hermes_home
 
 from .api import AuthenticationError, DeliveryBlocked, DeliveryUncertain, WebhookInspectionUnavailable, ZaloAPIError, ZaloClient
 from .config import ConfigError, Settings
+from .commands import route
 from .events import is_allowed, parse_update, split_text
 from .mentions import strip_bot_mention
 from .logging_utils import protect_logs
@@ -237,6 +238,15 @@ class ZaloAdapter(BasePlatformAdapter):
             return record.member_id
         return None
 
+    def _registration_turn_identity(self, message):
+        registration = getattr(self.work, 'registration', None)
+        record = registration.identity(message.user_id) if registration else None
+        return (getattr(record, 'member_id', None), getattr(record, 'id', None))
+
+    def _registration_turn_changed(self, permit):
+        return bool('identity' in permit and self._current_message and
+                    permit['identity'] != self._registration_turn_identity(self._current_message))
+
     def _archive_outgoing(self, text, status, key):
         if (self.conversations and self._current_message and
                 not (self._send_permit.get() or {}).get('registration_only')):
@@ -292,6 +302,8 @@ class ZaloAdapter(BasePlatformAdapter):
             try:
                 # Preserve full Unicode content; never replay a partially sent reminder.
                 for chunk in split_text(text):
+                    if not self.work.reminders.delivery_current(reminder.id):
+                        break
                     await self.client.send_text_chunk(reminder.chat_id, chunk)
                 status = "sent"
             except AuthenticationError:
@@ -621,6 +633,10 @@ class ZaloAdapter(BasePlatformAdapter):
         self._delivery_failed = False
         permit = {"active": True, "chat_id": message.chat_id, "message_id": message.message_id,
                   "registration_only": group_guide is not None}
+        # Enrollment commands may legitimately change the grant during this
+        # turn. All other replies stay tied to the identity at admission.
+        if route(message.text)[0] not in ('/dangky', '/trangthaidangky', '/duyetdangky', '/thuhoidangky', '/tuchoidangky'):
+            permit['identity'] = self._registration_turn_identity(message)
         permit_token = self._send_permit.set(permit)
         started = time.monotonic()
         try:
@@ -737,6 +753,8 @@ class ZaloAdapter(BasePlatformAdapter):
             return SendResult(success=False, error="ZALO_SEND_DENIED", retryable=False)
         if not content or self._reply_budget <= 0:
             return SendResult(success=False, error="ZALO_REPLY_LIMIT", retryable=False)
+        if self._registration_turn_changed(permit):
+            return SendResult(success=False, error='ZALO_ACCESS_CHANGED', retryable=False)
         if self.work and self._current_message and getattr(self.work, 'member_admin_locked', lambda *args: False)(
                 self._current_message.user_id, self._current_message.chat_id):
             return SendResult(success=False, error='ZALO_ACCESS_CHANGED', retryable=False)
@@ -750,6 +768,8 @@ class ZaloAdapter(BasePlatformAdapter):
         chunk = ''
         try:
             for chunk in split_text(text):
+                if self._registration_turn_changed(permit):
+                    return SendResult(success=False, error='ZALO_ACCESS_CHANGED', retryable=False)
                 if self.work and self._current_message and getattr(self.work, 'member_admin_locked', lambda *args: False)(
                         self._current_message.user_id, self._current_message.chat_id):
                     return SendResult(success=False, error='ZALO_ACCESS_CHANGED', retryable=False)
