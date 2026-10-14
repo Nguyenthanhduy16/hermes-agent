@@ -4,7 +4,7 @@ No metadata is provisioned. A global structure fingerprint makes any non-D
 edit invalidate assignment IDs instead of guessing where a shifted row went.
 Atomic Sheets batches do not replace an exclusive-writer operating agreement.
 """
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, time, timedelta, timezone
 import hashlib
 import json
@@ -13,6 +13,7 @@ import re
 import unicodedata
 
 from ..lab_calendar import parse_sheet, MAX_ROWS
+from ..workload import WorkloadDirectory, WorkloadError, WorkloadSettings
 from .providers import (GoogleSheetsAssignments, TicketsAccessDenied, TicketsSourceError,
                         TicketsWriteUncertain, require_ticket_access)
 
@@ -40,7 +41,7 @@ def _name(value):
 
 
 def _member(name):
-    # Exact NFC spelling only: no accent/case/space folding or partial matches.
+    # Keep persisted IDs. Resolve case variants through Workload BEFORE hashing.
     return 'lab-' + hashlib.sha256(name.encode('utf-8')).hexdigest()[:24]
 
 
@@ -54,6 +55,7 @@ class LabSheetsSettings:
     exclusive_writer: bool = False
     test_mode: bool = False
     test_members: tuple[str, ...] = ()
+    workload: WorkloadSettings | None = None
 
     def __post_init__(self):
         try:
@@ -64,6 +66,9 @@ class LabSheetsSettings:
                                    or any(_name(name) != name or name in ('', '-') for name in self.test_members)):
                 raise ValueError()
             if not self.test_mode and self.test_members:
+                raise ValueError()
+            if self.workload is not None and (not isinstance(self.workload, WorkloadSettings)
+                                             or self.workload.spreadsheet_id != self.spreadsheet_id):
                 raise ValueError()
         except (ValueError, TypeError):
             raise TicketsSourceError('Chế độ thử lịch thật cần đúng hai tên thành viên NFC rõ ràng, khác nhau.') from None
@@ -97,9 +102,12 @@ class LabSheetsSettings:
                     raise ValueError()
             if flags[0] == 'true' and flags[1] != 'true':
                 raise ValueError()
-            return cls(sid, Path(key).resolve(), tuple(tabs), periods, flags[0] == 'true', flags[1] == 'true',
-                       test_mode, tuple(test_members))
-        except (TypeError, ValueError):
+            result = cls(sid, Path(key).resolve(), tuple(tabs), periods, flags[0] == 'true', flags[1] == 'true',
+                         test_mode, tuple(test_members))
+            if not test_mode:
+                result = replace(result, workload=WorkloadSettings.from_mapping(values, result))
+            return result
+        except (TypeError, ValueError, WorkloadError):
             raise TicketsSourceError('Cấu hình lịch lab chưa hợp lệ: cần bảng/tab lab rõ ràng, khóa Google, '
                                      'giờ buổi dạng start/end HH:MM và xác nhận ghi độc quyền khi bật ghi.') from None
 
@@ -111,9 +119,45 @@ class GoogleLabAssignments(GoogleSheetsAssignments):
 
     @property
     def source_key(self):
+        # The destination is unchanged. Keep historical reconciliation possible;
+        # each preview/write still compares fresh canonical owners in full.
         return f'lab:{self.settings.spreadsheet_id}:' + _hash(
             {'tabs': list(self.settings.tabs), 'periods': self.settings.periods,
              'test_mode': self.settings.test_mode, 'test_members': self.settings.test_members})
+
+    def _name_resolver(self):
+        """Fresh, case-only aliases to unique roster names; never grant access.
+
+        Includes rows with invalid phones in collision checks. Unknown names
+        remain exact, and ambiguous roster names fail closed when encountered.
+        No global member-ID migration or accent/space/fuzzy matching is used.
+        """
+        if self.settings.workload is None or self.settings.test_mode:
+            return lambda name: name
+        directory = WorkloadDirectory(self.settings.workload, self)
+        try:
+            rows = directory.parse_rows(self._request('GET', params=directory.read_params()))
+        except WorkloadError:
+            raise TicketsSourceError('Chưa đối chiếu được tên với Workload; kiểm tra cấu trúc danh sách rồi thử lại.') from None
+        names = {}
+        for name, _ in rows:
+            if name:
+                names.setdefault(name.casefold(), []).append(name)
+
+        def resolve(name):
+            candidates = names.get(name.casefold(), [])
+            if len(candidates) > 1:
+                raise TicketsSourceError('Tên trên lịch trùng nhiều người trong Workload; cần quản trị bổ sung ánh xạ trước khi đổi ca.')
+            if not candidates:
+                return name
+            try:
+                canonical = _name(candidates[0])
+                if canonical is None:
+                    raise ValueError()
+            except ValueError:
+                raise TicketsSourceError('Tên chuẩn trong Workload chưa rõ; cần quản trị kiểm tra trước khi đổi ca.') from None
+            return canonical
+        return resolve
 
     def _request(self, method, **kwargs):
         try:
@@ -126,6 +170,7 @@ class GoogleLabAssignments(GoogleSheetsAssignments):
             raise TicketsSourceError('Chưa truy cập được lịch lab; kiểm tra kết nối, quyền Google và cấu hình trên máy.') from None
 
     def _read_lab(self):
+        resolve_name = self._name_resolver()
         data = self._request('GET', params=[
             *[('ranges', f"'{tab}'!A1:J1001") for tab in self.settings.tabs],
             ('fields', 'spreadsheetId,sheets(properties(sheetId,title,gridProperties(rowCount)),merges,'
@@ -180,6 +225,7 @@ class GoogleLabAssignments(GoogleSheetsAssignments):
                             raise ValueError('D is not a literal name.')
                         name = _name(formatted)
                         if name:
+                            name = resolve_name(name)
                             names.add(name)
                             records.append({'sheet_id': schedule.sheet_id, 'tab': title, 'row': row,
                                             'event': event, 'name': name, 'incomplete': incomplete})
@@ -194,7 +240,7 @@ class GoogleLabAssignments(GoogleSheetsAssignments):
                             break
                     key_raw = matrix[key_row][4].get('formattedValue', '')
                     if key_raw not in ('', '-'):
-                        key_records.append({'raw_name': key_raw, 'event': event})
+                        key_records.append({'raw_name': key_raw, 'event': event, 'resolve_name': resolve_name})
                 # An unnumbered, unmerged name row must not silently disappear
                 # from the conflict roster merely because the display parser
                 # treated it as a separator/title.
@@ -271,7 +317,7 @@ class GoogleLabAssignments(GoogleSheetsAssignments):
             if self.settings.test_mode:
                 break  # Explicit two-person real-write test bypasses time conflicts.
             try:
-                name = _name(record['raw_name'])
+                name = record['resolve_name'](_name(record['raw_name']))
                 start, end = self._times(record['event'])
             except (ValueError, TicketsSourceError):
                 if record['event'].day < today:
@@ -327,7 +373,7 @@ class GoogleLabAssignments(GoogleSheetsAssignments):
                 self._occupancy(expected, current, key_shifts)
 
     def reconciliation_snapshot(self, item):
-        """Read-only compatibility for old test-mode date placeholders.
+        """Read-only compatibility for old owner spelling/date snapshots.
 
         Older test snapshots stored an entire calendar day even when the exact
         period hours were present. Only that exact representation is converted;
@@ -336,6 +382,12 @@ class GoogleLabAssignments(GoogleSheetsAssignments):
         """
         result = dict(item)
         if not self.settings.test_mode:
+            # Only recognize this provider's historical exact-name ID. This is
+            # for read-back of an earlier write, never preview/approval/retry.
+            name = _name(item['member_name'])
+            if name and item['member_id'] == _member(name):
+                canonical = self._name_resolver()(name)
+                result.update(member_name=canonical, member_id=_member(canonical))
             return result
         match = EXPLICIT_PERIOD.fullmatch(item['period'])
         if not match:

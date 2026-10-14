@@ -203,21 +203,30 @@ class WorkloadDirectory:
                 raise ValueError()
         return header_end - header_start
 
-    async def _read(self):
+    def read_params(self):
         cfg = self.settings
         # Escape a literal apostrophe inside a quoted sheet title. No range or
         # sheet selection is accepted from the registering user.
         title = cfg.tab.replace("'", "''")
         columns = (cfg.name_column, cfg.phone_column)
         ranges = [f"'{title}'!{column}{cfg.header_row}:{column}{cfg.header_row + MAX_RECORDS}" for column in columns]
+        return {'ranges': ranges,
+                'fields': 'spreadsheetId,sheets(properties(sheetId,title,gridProperties(rowCount,columnCount)),'
+                          'merges,data(startRow,startColumn,rowData(values(formattedValue,userEnteredValue,effectiveValue))))'}
+
+    async def _read(self):
+        cfg = self.settings
         try:
             data = await self.client._request('GET',
                 'https://sheets.googleapis.com/v4/spreadsheets/' + cfg.spreadsheet_id,
-                params={'ranges': ranges,
-                        'fields': 'spreadsheetId,sheets(properties(sheetId,title,gridProperties(rowCount,columnCount)),'
-                                  'merges,data(startRow,startColumn,rowData(values(formattedValue,userEnteredValue,effectiveValue))))'})
+                params=self.read_params())
         except Exception:
             raise WorkloadError(READ_ERROR) from None
+        return self.parse_rows(data)
+
+    def parse_rows(self, data):
+        """Share the same bounded schema checks with the synchronous Tickets reader."""
+        cfg = self.settings
         try:
             if not isinstance(data, dict) or data.get('spreadsheetId') != cfg.spreadsheet_id:
                 raise ValueError()

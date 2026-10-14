@@ -10,6 +10,16 @@
 
 Yêu cầu vẫn hết hạn theo thời hạn hiện có, không muộn hơn lúc ca bắt đầu. Hiện chưa có thông báo tự động riêng cho A/B sau quyết định của Admin; thành viên xem kết quả bằng `/yeucau`.
 
+### Tên khác chữ hoa/thường trên lịch
+
+Trong chế độ `lab_live` có đăng ký qua Workload, bot đối chiếu tên không phân biệt chữ hoa/thường với **một dòng duy nhất trong Workload**. Ví dụ `Trần Văn Tài`, `TRẦN VĂN TÀI` và `trần văn tài` trên lịch cùng trỏ về tên chuẩn trong Workload. Thành viên đã liên kết đúng không cần đăng ký lại; mã và liên kết đang lưu được giữ nguyên. Kiểm tra trùng giờ áp dụng cùng cách đối chiếu cho cả Lab Coach và Key Coach.
+
+Bot chỉ bỏ qua khác biệt hoa/thường, không tự bỏ dấu, sửa tên sai hoặc ghép gần đúng. Hai dòng Workload trùng tên, kể cả khác hoa/thường hoặc một dòng thiếu số điện thoại, cần quản trị làm rõ; bot không tự chọn. Tên chưa có trong Workload không được tự cấp quyền. Giữ cách viết tên chuẩn trong Workload ổn định; nếu đổi tên chuẩn, quản trị cần kiểm tra lại đăng ký và liên kết hiện có.
+
+Không cần biến môi trường mới: dùng `REGISTRATION_WORKLOAD_*` đang cấu hình. Workload được đọc lại khi kiểm tra nguồn và trước khi ghi; lỗi đọc hoặc cấu trúc không hợp lệ sẽ chặn đổi ca. Chế độ thử hai người `lab_live_test` và cài đặt không bật đăng ký giữ cách đối chiếu chính xác cũ.
+
+Sau khi cập nhật, gửi `thoát` rồi `/doica` để lấy danh sách mới. Bản xem trước/yêu cầu đang chờ theo cấu hình nguồn cũ cần tạo lại nếu bot báo lịch hoặc nguồn đã thay đổi. Khi đổi thành công, hai ô Lab Coach được ghi theo tên chuẩn Workload; không tự sửa các ô khác.
+
 ## Admin
 
 1. Đăng nhập [trang Admin](https://hermes-zalo-bot-vercel-admin.vercel.app/), mở **Duyệt đổi ca**.
