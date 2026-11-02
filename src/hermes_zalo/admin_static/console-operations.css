@@ -1,0 +1,37 @@
+/* System page (console-operations.js). Colours come from the console.css tokens. */
+.ops-grid { margin-bottom: 18px; }
+.ops-grid + .panel { margin-top: 0; }
+.ops-status { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; margin-bottom: 10px; font-size: 13.5px; }
+.ops-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 16px 0 8px; }
+.ops-off { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--border); }
+.ops-off h3, .ops-restore h3, .ops-chart h3 { margin: 0 0 6px; font-size: 14px; color: var(--text); }
+.ops-off p, .ops-restore p { margin: 8px 0; font-size: 13px; }
+.ops-commands { display: grid; gap: 6px; margin: 6px 0 10px; min-width: 0; }
+.ops-command-label { margin: 6px 0 0; font-size: 12.5px; color: var(--muted); }
+.ops-command { display: flex; align-items: flex-start; gap: 8px; min-width: 0; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-2); }
+.ops-command code { flex: 1 1 auto; min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text-2); }
+.ops-command .text-button { flex: none; padding: 0 4px; font-size: 12.5px; }
+.ops-meter-high::-webkit-progress-value { background: var(--bad); }
+.ops-meter-high::-moz-progress-bar { background: var(--bad); }
+.ops-meter-high { accent-color: var(--bad); }
+.resource + .resource { margin-top: 14px; }
+.resource + .definition { margin-top: 14px; }
+.ops-charts { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+.ops-chart { min-width: 0; }
+.ops-checks { list-style: none; margin: 0; padding: 0; }
+.ops-check { display: grid; grid-template-columns: 84px minmax(0, 1fr); align-items: start; gap: 12px; padding: 12px 20px; border-top: 1px solid var(--border); font-size: 13.5px; }
+.ops-check .badge { justify-self: start; }
+.ops-check div { display: grid; gap: 2px; min-width: 0; }
+.ops-check strong { color: var(--text); font-weight: 600; }
+.ops-check span { overflow-wrap: anywhere; }
+.ops-hint { color: var(--text-2); font-size: 12.5px; }
+.ops-restore { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--border); }
+.ops-update { display: flex; align-items: flex-start; gap: 10px; margin: 12px 0; font-size: 13.5px; }
+.ops-update .badge { flex: none; }
+@media (max-width: 860px) {
+  .ops-charts { grid-template-columns: 1fr; }
+}
+@media (max-width: 640px) {
+  .ops-check { grid-template-columns: 1fr; gap: 6px; padding: 12px 16px; }
+  .ops-actions .button { flex: 1 1 auto; }
+}
