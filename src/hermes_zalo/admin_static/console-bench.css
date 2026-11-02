@@ -1,0 +1,21 @@
+/* Styles for the Experiments and Benchmarks pages. Tokens come from console.css. */
+.bench-select { display: inline-flex; align-items: center; justify-content: center; min-width: 28px; min-height: 28px; cursor: pointer; }
+.bench-select input { width: 16px; height: 16px; accent-color: var(--accent); cursor: pointer; }
+.bench-compare-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 14px; }
+.bench-compare-bar > span { flex: 1 1 220px; font-size: 13px; }
+.bench-value.best { color: var(--good); font-weight: 650; }
+.bench-checks { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; max-width: 420px; }
+.bench-checks small { color: var(--text-2); overflow-wrap: anywhere; }
+.bench-checks small.muted { color: var(--muted); }
+.bench-reply summary, .bench-settings summary { cursor: pointer; color: var(--accent-text); font-size: 12.5px; }
+.bench-reply p { margin: 6px 0 0; padding: 8px 10px; border-radius: var(--radius-sm); background: var(--surface-2); color: var(--text-2); font-size: 12.5px; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 220px; overflow: auto; }
+.bench-settings { margin-top: 16px; }
+.bench-settings .table-scroll { margin-top: 8px; }
+.bench-row-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; }
+.bench-row-actions .card-actions { margin-top: 0; }
+.bench-steps { margin: 0 0 12px; padding-left: 20px; color: var(--text-2); font-size: 13.5px; line-height: 1.6; }
+.bench-footnote { margin: 10px 0 0; font-size: 12.5px; }
+@media (max-width: 640px) {
+  .bench-compare-bar .button { flex: 1 1 auto; }
+  .bench-checks { max-width: 240px; }
+}

@@ -1,0 +1,166 @@
+# Everyday assistant tasks in Vietnamese and English, mixed difficulty.
+# L1: one-shot answer a cheap model should handle. L2: several constraints or
+# steps in one reply. L3: longer reasoning/planning where a strong model
+# should matter. Use it to compare model routing settings (SCER-AH B1-B3).
+# Checks are deliberately loose: they catch wrong or missing answers, not style.
+name: assistant-basics
+description: Everyday Vietnamese and English assistant tasks, L1-L3, no tools required.
+tasks:
+  - id: vi-greeting
+    level: L1
+    category: chat
+    timeout_s: 60
+    prompt: "Chào bạn! Hãy giới thiệu ngắn gọn bạn có thể giúp tôi những việc gì, trong tối đa 3 câu."
+    checks:
+      - {type: min_length, value: 40}
+      - {type: max_latency_s, value: 45}
+
+  - id: vi-arithmetic
+    level: L1
+    category: math
+    timeout_s: 60
+    prompt: "Một cuốn sách giá 85.000 đồng, mua 3 cuốn được giảm 10% trên tổng tiền. Tôi phải trả bao nhiêu? Chỉ trả lời con số cuối cùng kèm đơn vị."
+    checks:
+      - {type: contains, value: ["229.500", "229,500", "229500"]}
+
+  - id: en-unit-conversion
+    level: L1
+    category: math
+    timeout_s: 60
+    prompt: "Convert 72 degrees Fahrenheit to Celsius. Give the answer rounded to one decimal place."
+    checks:
+      - {type: contains, value: "22.2"}
+
+  - id: vi-translate
+    level: L1
+    category: language
+    timeout_s: 60
+    prompt: "Dịch sang tiếng Anh, chỉ trả về bản dịch: \"Cuộc họp được dời sang 3 giờ chiều thứ Năm vì phòng họp đang sửa.\""
+    checks:
+      - {type: contains, value: "thursday"}
+      - {type: contains, value: ["3 pm", "3pm", "3:00", "three"]}
+      - {type: not_contains, value: "cuộc họp"}
+
+  - id: en-rewrite-polite
+    level: L1
+    category: writing
+    timeout_s: 60
+    prompt: "Rewrite this message to be polite and professional, under 60 words: \"Send me the report now, it's late again.\""
+    checks:
+      - {type: contains, value: "report"}
+      - {type: min_length, value: 30}
+
+  - id: vi-email-reply
+    level: L2
+    category: writing
+    timeout_s: 90
+    prompt: >-
+      Viết email trả lời ngắn (dưới 120 từ) cho chị Lan: cảm ơn lời mời dự hội thảo ngày 15/11,
+      xác nhận tham dự, hỏi địa điểm gửi xe và đề nghị gửi trước chương trình. Có lời chào và ký tên "Duy".
+    checks:
+      - {type: contains, value: "Lan"}
+      - {type: contains, value: "15/11"}
+      - {type: contains, value: ["gửi xe", "đỗ xe", "để xe"]}
+      - {type: contains, value: "Duy"}
+
+  - id: en-extract-json
+    level: L2
+    category: extraction
+    timeout_s: 90
+    prompt: >-
+      Extract the people and their roles from this note as a JSON array of objects with keys
+      "name" and "role". Return only the JSON.
+      Note: "Minh will chair the review, Hoa takes notes, and Peter presents the budget."
+    checks:
+      - {type: json_valid}
+      - {type: contains, value: "Minh"}
+      - {type: contains, value: "Peter"}
+
+  - id: vi-schedule-plan
+    level: L2
+    category: planning
+    timeout_s: 120
+    prompt: >-
+      Tôi có 3 việc trong buổi sáng 8:00–12:00: viết báo cáo (90 phút), họp nhóm cố định lúc 10:00 (45 phút),
+      trả lời email (30 phút). Lập lịch theo từng mốc giờ, không chồng chéo, và cho biết còn trống bao nhiêu phút.
+    checks:
+      - {type: contains, value: "10:00"}
+      - {type: contains, value: ["75 phút", "75 minutes", "1 giờ 15", "1h15"]}
+      - {type: regex, value: "8[:h]00"}
+
+  - id: en-compare-options
+    level: L2
+    category: reasoning
+    timeout_s: 120
+    prompt: >-
+      Plan A costs $40/month with 150 GB included. Plan B costs $25/month plus $0.20 per GB over 50 GB.
+      I use 120 GB per month. Which plan is cheaper and by how much per month? Show the calculation briefly.
+    checks:
+      - {type: contains, value: "Plan B"}
+      - {type: contains, value: ["$39", "39"]}
+
+  - id: vi-summarize-bullets
+    level: L2
+    category: summarize
+    timeout_s: 90
+    prompt: >-
+      Tóm tắt đoạn sau thành đúng 3 gạch đầu dòng tiếng Việt:
+      "Nhóm đã hoàn thành bản thử nghiệm đầu tiên của ứng dụng đặt lịch. Người dùng thử phản hồi giao diện dễ dùng
+      nhưng thông báo nhắc lịch đến trễ. Tuần tới nhóm sẽ sửa lỗi thông báo, thêm chế độ tối và chuẩn bị bản phát hành
+      cho 50 người dùng đầu tiên."
+    checks:
+      - {type: contains, value: ["thông báo", "nhắc lịch"]}
+      - {type: contains, value: "50"}
+      - {type: regex, value: "(?m)^\\s*[-*•]"}
+
+  - id: en-logic-puzzle
+    level: L3
+    category: reasoning
+    timeout_s: 180
+    prompt: >-
+      Three friends — An, Binh and Chi — each own exactly one pet: a cat, a dog or a fish.
+      An does not own the dog. Binh's pet cannot swim and does not bark. Who owns which pet?
+      Explain the reasoning step by step, then give the final mapping on the last line.
+    checks:
+      - {type: regex, value: "(?i)\\ban\\W+(owns\\W+)?(the\\W+)?fish|fish\\W+(is\\W+)?(owned\\W+by\\W+)?an\\b"}
+      - {type: regex, value: "(?i)\\bbinh\\W+(owns\\W+)?(the\\W+)?cat|cat\\W+(is\\W+)?(owned\\W+by\\W+)?binh"}
+      - {type: regex, value: "(?i)\\bchi\\W+(owns\\W+)?(the\\W+)?dog|dog\\W+(is\\W+)?(owned\\W+by\\W+)?chi"}
+
+  - id: vi-trip-budget
+    level: L3
+    category: planning
+    timeout_s: 240
+    prompt: >-
+      Lập kế hoạch chuyến đi Đà Lạt 3 ngày 2 đêm cho 2 người, ngân sách tổng 6 triệu đồng (đã gồm vé xe khách
+      khứ hồi 500.000 đồng/người). Chia lịch theo từng ngày (sáng/chiều/tối), có bảng chi phí ước tính theo hạng mục
+      và tổng chi phí không vượt ngân sách. Cuối cùng nêu 2 phương án dự phòng nếu trời mưa.
+    checks:
+      - {type: contains, value: ["Ngày 1", "ngày 1"]}
+      - {type: contains, value: ["Ngày 3", "ngày 3"]}
+      - {type: contains, value: "mưa"}
+      - {type: min_length, value: 600}
+
+  - id: en-multi-step-analysis
+    level: L3
+    category: reasoning
+    timeout_s: 240
+    prompt: >-
+      A small cafe sells 120 cups per day at $3.50. Ingredients cost $1.10 per cup, rent is $2,400 per month,
+      and staff cost $4,500 per month (30-day month). (1) Compute monthly profit. (2) Compute the break-even
+      number of cups per day. (3) If the price rises to $4.00 and sales drop 15%, is profit higher or lower?
+      Answer each part separately with numbers.
+    checks:
+      - {type: contains, value: ["1,740", "1740"]}
+      - {type: contains, value: ["96", "95.8"]}
+      - {type: contains, value: ["higher", "increase", "more profit"]}
+
+  - id: vi-explain-concept
+    level: L3
+    category: teaching
+    timeout_s: 180
+    prompt: >-
+      Giải thích cho học sinh lớp 10 vì sao lãi kép làm tiền tăng nhanh hơn lãi đơn. Có một ví dụ bằng số
+      (gửi 10 triệu đồng, lãi 8%/năm trong 3 năm) so sánh cả hai cách, và một câu tóm tắt cuối.
+    checks:
+      - {type: contains, value: ["12.400.000", "12,400,000", "12,4 triệu", "12.4 triệu", "12 400 000"]}
+      - {type: contains, value: ["12.597", "12,597", "12,6 triệu", "12.6 triệu", "12 597"]}

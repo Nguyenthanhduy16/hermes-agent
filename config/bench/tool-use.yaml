@@ -1,0 +1,87 @@
+# Tasks that need tools: web search/extract, code execution and planning.
+# Run it only when the target Hermes home enables those toolsets (web,
+# code_execution, todo). Answers about the live web change over time, so the
+# checks look for structure (sources, numbers, files) rather than exact facts.
+name: tool-use
+description: Web search, code execution and multi-step tool tasks (needs the web and code_execution toolsets).
+tasks:
+  - id: web-current-fact
+    level: L1
+    category: web
+    timeout_s: 180
+    prompt: "Search the web: what is the latest stable Python 3 release version right now? Answer with the version number and the source URL."
+    checks:
+      - {type: regex, value: "3\\.\\d{1,2}\\.\\d{1,2}"}
+      - {type: regex, value: "https?://"}
+
+  - id: vi-web-news-summary
+    level: L2
+    category: web
+    timeout_s: 240
+    prompt: "Tìm trên web 3 tin công nghệ nổi bật trong tuần này và tóm tắt mỗi tin trong 1-2 câu tiếng Việt, kèm đường link nguồn."
+    checks:
+      - {type: regex, value: "https?://"}
+      - {type: min_length, value: 200}
+
+  - id: web-compare-sources
+    level: L3
+    category: web
+    timeout_s: 300
+    prompt: >-
+      Find two independent sources on the population of Ho Chi Minh City. Report each figure with its year and
+      source URL, explain why they differ, and give a single best estimate.
+    checks:
+      - {type: regex, value: "https?://.+[\\s\\S]*https?://"}
+      - {type: regex, value: "(19|20)\\d{2}"}
+      - {type: contains, value: ["million", "triệu"]}
+
+  - id: code-statistics
+    level: L1
+    category: code
+    timeout_s: 180
+    prompt: "Use code execution to compute the mean, median and sample standard deviation of: 12, 15, 11, 19, 23, 15, 17. Report each value rounded to 2 decimals."
+    checks:
+      - {type: contains, value: "16.00"}
+      - {type: contains, value: "15"}
+      - {type: contains, value: "4.12"}
+
+  - id: code-csv-analysis
+    level: L2
+    category: code
+    timeout_s: 240
+    prompt: >-
+      Use code execution. Create this CSV in memory and analyse it:
+      month,revenue,cost
+      Jan,1200,800
+      Feb,1450,900
+      Mar,1800,1100
+      Apr,1650,1000
+      Report total profit, the month with the highest profit margin (profit/revenue) and the margin as a percentage.
+    checks:
+      - {type: contains, value: ["2,300", "2300"]}
+      - {type: contains, value: ["Apr", "April"]}
+      - {type: contains, value: ["39.4", "39.39"]}
+
+  - id: vi-code-chart
+    level: L3
+    category: code
+    timeout_s: 300
+    prompt: >-
+      Dùng chạy code để vẽ biểu đồ cột doanh thu 4 tháng (T1: 1200, T2: 1450, T3: 1800, T4: 1650) và đường xu hướng,
+      lưu thành file PNG. Cho biết tên file đã lưu và nhận xét xu hướng trong 2 câu.
+    checks:
+      - {type: contains, value: ".png"}
+      - {type: contains, value: ["tăng", "giảm", "xu hướng"]}
+
+  - id: plan-and-research
+    level: L3
+    category: multi-step
+    timeout_s: 360
+    prompt: >-
+      I want to buy a laptop for data analysis under 25 million VND in Vietnam. Make a short plan, search the web
+      for 3 current models that fit, compare them in a table (CPU, RAM, price, source link) and recommend one with reasons.
+    checks:
+      - {type: regex, value: "https?://"}
+      - {type: contains, value: ["RAM", "ram"]}
+      - {type: regex, value: "\\|.*\\|"}
+      - {type: min_length, value: 400}
