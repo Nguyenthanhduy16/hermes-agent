@@ -16,7 +16,7 @@ def main(argv=None):
     parser.add_argument('--runtime', action='store_true', help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     if not args.runtime:
-        hermes = ROOT / '.runtime/hermes-agent'
+        hermes = Path(os.environ.get('HERMES_SRC') or ROOT / '.runtime/hermes-agent')
         if not (hermes / 'hermes_cli/_launchers.py').is_file():
             print('Thiếu Hermes native. Trong container dùng: /opt/hermes/venv/bin/python /app/scripts/nlu_check.py --runtime')
             return 2

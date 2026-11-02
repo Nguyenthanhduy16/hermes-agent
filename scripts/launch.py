@@ -17,17 +17,32 @@ def main():
     hermes_home = ROOT / ".runtime" / "hermes-home"
     # A UTF-8 .cmd wrapper loses accented paths on legacy Windows code pages.
     # Native launchers pass Unicode paths directly to Windows process creation.
-    launchers = [hermes_home / "bin" / "hermes.exe",
-                 ROOT / ".runtime" / "hermes-agent" / ".hermes" / "bin" / "hermes.exe"]
+    # HERMES_SRC chọn mã Hermes (scripts/run.sh mặc định là bản cài ~/.hermes/hermes-agent).
+    sources = [Path(os.environ["HERMES_SRC"])] if os.environ.get("HERMES_SRC") else []
+    sources.append(ROOT / ".runtime" / "hermes-agent")
+    if os.name == "nt":
+        launchers = [hermes_home / "bin" / "hermes.exe",
+                     *(src / ".hermes" / "bin" / "hermes.exe" for src in sources)]
+        installer = "scripts/install-hermes.ps1"
+    else:
+        # Bản cài chính thức có .hermes/bin/hermes; bản install-hermes.sh có venv/bin/hermes.
+        launchers = [*(path for src in sources for path in (src / ".hermes" / "bin" / "hermes",
+                                                           src / "venv" / "bin" / "hermes")),
+                     hermes_home / "bin" / "hermes"]
+        installer = "scripts/install-hermes.sh hoặc đặt HERMES_SRC"
     launcher = next((path for path in launchers if path.is_file()), launchers[0])
     if not launcher.is_file():
-        print("Thiếu launcher Hermes native (hermes.exe). Chạy scripts/install-hermes.ps1 để hoàn tất hoặc sửa cài đặt.")
+        print(f"Thiếu launcher Hermes ({launcher.name}). Chạy {installer} để hoàn tất hoặc sửa cài đặt.")
         return 2
     if sys.argv[1:] not in (["model"], ["gateway", "run"]):
         print("Chỉ hỗ trợ model, gateway run hoặc tickets demo|sheets_test.")
         return 2
     if sys.argv[1] == "gateway":
-        Settings.from_env()
+        if not os.environ.get("ZALO_BOT_TOKEN") and not os.environ.get("TELEGRAM_BOT_TOKEN"):
+            print("Chưa có kênh nào: điền TELEGRAM_BOT_TOKEN hoặc ZALO_BOT_TOKEN trong .env.")
+            return 2
+        if os.environ.get("ZALO_BOT_TOKEN"):
+            Settings.from_env()
     child_env = os.environ.copy()
     child_env["HERMES_HOME"] = str(hermes_home)
     child_env["ZALO_STATE_DIR"] = str(hermes_home / "data" / "zalo")
