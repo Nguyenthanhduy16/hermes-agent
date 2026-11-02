@@ -119,7 +119,53 @@ test('route/method/query allowlist rejects open proxy, unknown endpoints and dup
   const { res, requests } = await call(incoming('/api/member/lock'));
   assert.equal(res.statusCode, 405);
   assert.equal(requests.length, 0);
-  assert.equal(Object.keys(ROUTES).length, 33);
+  assert.equal(Object.keys(ROUTES).length, 78);
+  // Feature sections: owner GET snapshots with fixed filters and confirmed POST actions only.
+  assert.deepEqual(ROUTES['/api/assistant/activity'].query, ['days', 'platform', 'model', 'status', 'session', 'page', 'turn']);
+  assert.deepEqual(ROUTES['/api/assistant/benchmarks'].query, ['compare', 'run']);
+  assert.deepEqual(ROUTES['/api/assistant/reports'].query, ['job', 'file']);
+  assert.deepEqual(ROUTES['/api/assistant/briefing'], { method: 'GET', query: [] });
+  for (const section of ['benchmarks', 'connectors', 'reports', 'operations', 'briefing']) {
+    assert.deepEqual(ROUTES['/api/assistant/' + section + '/action'], { method: 'POST', query: [] });
+  }
+  assert.equal(ROUTES['/api/assistant/activity/action'], undefined, 'read-only sections have no action route');
+  for (const section of ['overview', 'runtime', 'skills', 'routines', 'usage', 'users',
+    'models', 'plugins', 'mcp', 'channels', 'webhooks', 'pairing', 'profiles', 'config', 'keys', 'documentation']) {
+    assert.deepEqual(ROUTES['/api/assistant/' + section], { method: 'GET', query: [] });
+  }
+});
+
+test('workspace routes keep fixed destinations, filters and CSRF-protected writes', async () => {
+  for (const path of ['/api/assistant/files?path=reports%2Fsales.csv',
+    '/api/assistant/logs?q=timeout&level=warning', '/api/assistant/chat', '/api/assistant/kanban']) {
+    const { res, requests } = await call(incoming(path, { headers: { cookie: COOKIE } }));
+    assert.equal(res.statusCode, 200);
+    assert.equal(requests.length, 1);
+    assert.equal(requests[0].url, ENV.LABCOACH_API_URL + path);
+  }
+  for (const [path, data] of [
+    ['/api/assistant/chat', { message: 'Hello', history: [] }],
+    ['/api/assistant/kanban', { action: 'create', title: 'Review report', confirm: true }],
+  ]) {
+    const { res, requests } = await call(incoming(path, { method: 'POST', data, headers: { cookie: COOKIE } }));
+    assert.equal(res.statusCode, 200);
+    assert.equal(requests.length, 1);
+    assert.equal(requests[0].options.headers['X-CSRF-Token'], CSRF);
+    assert.deepEqual(JSON.parse(requests[0].options.body.toString('utf8')), data);
+    const denied = await call(incoming(path, { method: 'POST', data, headers: { 'x-csrf-token': undefined } }));
+    assert.equal(denied.res.statusCode, 403);
+    assert.equal(denied.requests.length, 0);
+  }
+  for (const req of [incoming('/api/assistant/files?path=a&path=b'),
+    incoming('/api/assistant/files?url=https://outside.test'),
+    incoming('/api/assistant/chat?model=override'),
+    incoming('/api/assistant/kanban?actor=owner'),
+    incoming('/api/assistant/keys', { method: 'POST', data: {} }),
+    incoming('/api/assistant/files', { method: 'POST', data: {} })]) {
+    const denied = await call(req);
+    assert.ok(denied.res.statusCode >= 400);
+    assert.equal(denied.requests.length, 0);
+  }
 });
 
 test('registration repair stays on fixed POST routes with CSRF and no phone query', async () => {

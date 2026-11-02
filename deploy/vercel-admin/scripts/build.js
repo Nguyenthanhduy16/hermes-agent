@@ -6,9 +6,14 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const project = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const sourceDirectory = resolve(project, '../../src/hermes_zalo/admin_static');
 const files = Object.freeze([
-  ['index.html', 'index.html'],
+  ['console.html', 'index.html'],
+  ['index.html', 'legacy.html'],
   ['admin.css', 'static/admin.css'],
   ['admin.js', 'static/admin.js'],
+  ['console.css', 'static/console.css'],
+  ['console.js', 'static/console.js'],
+  ...['observe', 'bench', 'integrations', 'operations', 'briefing'].flatMap(name => [
+    [`console-${name}.js`, `static/console-${name}.js`], [`console-${name}.css`, `static/console-${name}.css`]]),
 ]);
 
 async function inspectOutput(root, relative = '') {
@@ -48,6 +53,6 @@ export async function build({ source = sourceDirectory, output = join(project, '
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
-  build().then(() => process.stdout.write('Built 3 Admin assets; no environment values or runtime data copied.\n'))
+  build().then(() => process.stdout.write('Built ' + files.length + ' Admin assets; no environment values or runtime data copied.\n'))
     .catch(error => { process.stderr.write(error.message + '\n'); process.exitCode = 1; });
 }

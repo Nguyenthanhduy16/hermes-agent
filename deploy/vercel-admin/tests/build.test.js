@@ -11,7 +11,7 @@ async function fixture(t) {
   const source = join(root, 'source');
   const output = join(root, 'public');
   await mkdir(source);
-  for (const name of ['index.html', 'admin.css', 'admin.js']) await writeFile(join(source, name), 'synthetic ' + name);
+  for (const name of ['index.html', 'admin.css', 'admin.js', 'console.html', 'console.css', 'console.js', ...['observe', 'bench', 'integrations', 'operations', 'briefing'].flatMap(n => ['console-' + n + '.js', 'console-' + n + '.css'])]) await writeFile(join(source, name), 'synthetic ' + name);
   t.after(async () => {
     const checked = await realpath(root);
     assert.ok(checked.startsWith(base + sep) && checked === resolve(root));
@@ -20,14 +20,18 @@ async function fixture(t) {
   return { root, source, output };
 }
 
-test('build copies exactly three shared assets, with no env expansion or extra source files', async t => {
+test('build copies the console and retained legacy assets, with no env expansion or private files', async t => {
   const { source, output } = await fixture(t);
   await writeFile(join(source, '.env'), 'LABCOACH_PROXY_SECRET=synthetic-do-not-copy');
   await writeFile(join(source, 'private.sqlite3'), 'synthetic-private-data');
   await writeFile(join(source, 'admin.js'), 'const untouched = "${LABCOACH_PROXY_SECRET}";');
-  assert.deepEqual(await build({ source, output }), ['index.html', 'static/admin.css', 'static/admin.js']);
-  assert.deepEqual((await readdir(output)).sort(), ['index.html', 'static']);
-  assert.deepEqual((await readdir(join(output, 'static'))).sort(), ['admin.css', 'admin.js']);
+  assert.deepEqual(await build({ source, output }), ['index.html', 'legacy.html', 'static/admin.css', 'static/admin.js', 'static/console.css', 'static/console.js',
+    ...['observe', 'bench', 'integrations', 'operations', 'briefing'].flatMap(n => ['static/console-' + n + '.js', 'static/console-' + n + '.css'])]);
+  assert.deepEqual((await readdir(output)).sort(), ['index.html', 'legacy.html', 'static']);
+  assert.deepEqual((await readdir(join(output, 'static'))).sort(), ['admin.css', 'admin.js', 'console.css', 'console.js',
+    ...['observe', 'bench', 'integrations', 'operations', 'briefing'].flatMap(n => ['console-' + n + '.js', 'console-' + n + '.css'])].sort());
+  assert.equal(await readFile(join(output, 'index.html'), 'utf8'), 'synthetic console.html');
+  assert.equal(await readFile(join(output, 'legacy.html'), 'utf8'), 'synthetic index.html');
   assert.equal(await readFile(join(output, 'static/admin.js'), 'utf8'), 'const untouched = "${LABCOACH_PROXY_SECRET}";');
   await build({ source, output });
 });

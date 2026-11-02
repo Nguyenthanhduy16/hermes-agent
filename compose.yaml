@@ -19,7 +19,13 @@ services:
       options:
         max-size: 10m
         max-file: '3'
-    # Long polling needs no host port or public domain.
+    # Long polling needs no host port or public domain. The image HEALTHCHECK
+    # probes /healthz only when ZALO_ADMIN_ENABLED=true (see docs/production.md).
+    # Optional console behind a reverse proxy on this host: set ZALO_ADMIN_ENABLED,
+    # ZALO_CONVERSATIONS_ENABLED, ZALO_ADMIN_HOST=0.0.0.0 and the HTTPS
+    # ZALO_ADMIN_PUBLIC_URL in .env.docker, then publish to loopback only:
+    # ports:
+    #   - "127.0.0.1:8787:8787"
 
 volumes:
   bot-data:

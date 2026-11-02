@@ -12,6 +12,10 @@ restartPolicyMaxRetries = 10
 overlapSeconds = 0
 drainingSeconds = 60
 # Create and attach a /data Volume in Railway before the first deployment.
-# Keep the Docker entrypoint/start command. No automatic HTTP healthcheck.
+# Keep the Docker entrypoint/start command. No automatic HTTP healthcheck by
+# default: Admin is opt-in, so a required path would fail standby deployments.
+# With ZALO_ADMIN_ENABLED=true and BOT_START_ENABLED=true you may add:
+# healthcheckPath = "/healthz"   (no login, Host or proxy key; body {"status":"ok"})
+# healthcheckTimeout = 300
 # Optional Admin HTTPS uses a matching domain target port and server proxy key.
 # BOT_START_ENABLED defaults to false; activate only after migration/cutover.

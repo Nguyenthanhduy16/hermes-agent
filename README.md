@@ -4,6 +4,12 @@ Bot hỗ trợ công việc trên **Zalo Bot Platform chính thức**: **tin Zal
 
 Bot đã triển khai trên Railway, giao diện Admin trên Vercel; người dùng đã xác nhận nhận/gửi Zalo và tra lịch. Có đăng ký Workload, tài liệu có nguồn, lịch, đổi ca có duyệt, nhắc lịch và Issue theo quyền. Phần đọc lịch hỗ trợ bảng mẫu và các tab **Lịch lab có ô gộp**; xem [cấu hình lịch hiện có](docs/huong-dan-tinh-nang.md#đọc-bảng-lịch-lab-hiện-có). Mỗi bản cập nhật vẫn cần phân biệt kiểm thử mô phỏng với thử nhận/gửi thật.
 
+**Chế độ trợ lý (Đồ án 2):** đặt `ZALO_BOT_MODE=assistant` để câu tự nhiên và ảnh chạy qua vòng lặp Hermes Agent đầy đủ (web, đọc ảnh, chạy code trong sandbox, gửi biểu đồ); lệnh Lab vẫn chạy trực tiếp. Mặc định `lab` giữ nguyên hành vi cũ. Xem [chế độ trợ lý](docs/tro-ly-zalo.md), [nghiên cứu Grok Bot/Dots/Muse](docs/nghien-cuu-tro-ly.md) và [chạy trên Linux](docs/linux.md).
+
+**Telegram trước + lõi dùng chung:** điền `TELEGRAM_BOT_TOKEN` để chạy trợ lý trên Telegram qua adapter có sẵn của Hermes; plugin `assistant-core` (hạn mức theo người, chặn tool chưa tách dữ liệu, telemetry từng lần gọi model) áp dụng cho mọi kênh. Xem [chạy trên Telegram](docs/telegram.md).
+
+**Agent Console:** trang quản lý trợ lý chạy độc lập, không cần token Zalo, mặc định chỉ nghe 127.0.0.1. Dùng thật: `scripts/run.sh Setup` một lần, rồi `scripts/run.sh Console` (lần đầu hỏi tài khoản chủ hệ thống). Xem [vận hành thật: HTTPS, Docker, sao lưu, cập nhật](docs/production.md) và [hướng dẫn Agent Console](docs/admin.md).
+
 **Bot đã chạy được?** Xem [hướng dẫn tính năng mới theo từng bước](docs/huong-dan-tinh-nang.md). Bản tài liệu hiện tìm trích đoạn `.md`/`.txt` theo từ khóa, chưa có PDF/Word hoặc hỏi đáp ngữ nghĩa.
 
 **Issue và đội hỗ trợ:** đã có chế độ quản lý trên Admin với vai trò **Giảng viên – Admin – Thành viên**: nhận việc, bàn giao, phản hồi Zalo, ghi chú nội bộ và estimate. Mặc định giữ nguồn Sheets cũ; chỉ chuyển sang `ZALO_ISSUES_MODE=managed` sau đối soát dữ liệu. Xem [lệnh thành viên, quyền, tạo Giảng viên và triển khai](docs/ISSUES.md). Quyền hội thoại/ghi nhớ vẫn cấp riêng.

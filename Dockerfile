@@ -87,6 +87,9 @@ COPY src/ ./src/
 RUN python -m pip install --no-cache-dir '.[sheets,backup]'
 COPY plugin/ ./plugin/
 COPY config/hermes.config.example.yaml ./config/hermes.config.example.yaml
+# Bundled benchmark suites for the console and `python -m assistant_core.bench`.
+COPY config/bench/ ./config/bench/
+ENV HERMES_BENCH_BUNDLED_DIR=/app/config/bench
 COPY scripts/nlu_check.py ./scripts/nlu_check.py
 
 # PyYAML belongs to the system-Python bootstrap installed above; Hermes uses
@@ -172,6 +175,11 @@ ENV PYTHONUTF8=1 \
     HERMES_RUNTIME_DIR=/opt/hermes/tools \
     HERMES_DISABLE_LAZY_INSTALLS=1
 STOPSIGNAL SIGTERM
+# Docker/Compose liveness probe (Railway ignores it). It passes in standby or
+# while the console is off, otherwise GETs http://127.0.0.1:<port>/healthz,
+# which returns only {"status": "ok"} and needs no login, Host or proxy key.
+HEALTHCHECK --interval=60s --timeout=10s --start-period=120s --retries=3 \
+    CMD ["python", "-m", "hermes_zalo.admin_cli", "healthcheck"]
 # Reap orphaned children and forward shutdown to the whole worker process group.
 ENTRYPOINT ["/usr/bin/tini", "-g", "--", "python", "-m", "hermes_zalo.container_runtime"]
 CMD ["gateway", "run"]
