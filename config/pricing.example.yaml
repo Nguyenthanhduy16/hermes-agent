@@ -1,0 +1,30 @@
+# Model prices for the Agent Console (Observe → Analytics, Agent activity).
+#
+# Copy to <assistant data dir>/pricing.yaml, next to telemetry.sqlite3
+# (default: $HERMES_HOME/assistant-core/pricing.yaml, or $ASSISTANT_DATA_DIR/pricing.yaml).
+# The console only reads this file; without it costs show "Pricing unavailable", never $0.
+#
+# Rates are USD per 1 million tokens. Keys are the model names recorded in telemetry
+# (the "model" column, e.g. "openai/gpt-4.1-mini"); matching ignores case, and a bare
+# name ("gpt-4.1-mini") also matches "provider/gpt-4.1-mini" when it is unambiguous.
+#
+#   input        uncached prompt tokens               (required)
+#   output       completion tokens, incl. reasoning   (required)
+#   cache_read   prompt tokens served from cache      (optional, defaults to input)
+#   cache_write  prompt tokens written to cache       (optional, defaults to input)
+#
+# Example values only: check your provider's current price list before relying on them.
+models:
+  google/gemini-2.5-flash:
+    input: 0.30
+    output: 2.50
+    cache_read: 0.075
+  openai/gpt-4.1-mini:
+    input: 0.40
+    output: 1.60
+    cache_read: 0.10
+  anthropic/claude-sonnet-4.5:
+    input: 3.00
+    output: 15.00
+    cache_read: 0.30
+    cache_write: 3.75
