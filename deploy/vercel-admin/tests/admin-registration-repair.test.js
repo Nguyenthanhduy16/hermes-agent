@@ -49,7 +49,7 @@ test('button and dialog require members permission for both admin and faculty', 
   for (const role of ['admin', 'faculty']) {
     instance.state.user = { role, permissions: ['issues'] };
     instance.renderProfile();
-    assert.equal(walk(instance.node('member-profile')).some(node => node.textContent === 'Sửa đăng ký nhầm'), false);
+    assert.equal(walk(instance.node('member-profile')).some(node => node.textContent === 'Correct registration'), false);
     instance.openRegistrationRepair();
     assert.equal(instance.node('registration-repair-dialog').open, false);
     await instance.submit();
@@ -57,7 +57,7 @@ test('button and dialog require members permission for both admin and faculty', 
   }
   instance.state.user.permissions.push('members');
   instance.renderProfile();
-  assert.equal(walk(instance.node('member-profile')).some(node => node.textContent === 'Sửa đăng ký nhầm'), true);
+  assert.equal(walk(instance.node('member-profile')).some(node => node.textContent === 'Correct registration'), true);
 });
 
 test('preview is read before confirmation, only masked identity is displayed and phone is cleared', async () => {
@@ -78,7 +78,7 @@ test('preview is read before confirmation, only masked identity is displayed and
   assert.equal(instance.node('registration-repair-verified').required, true);
   await instance.submit();
   assert.equal(instance.calls.length, 1, 'unchecked identity verification must not confirm');
-  assert.match(instance.node('registration-repair-error').textContent, /kiểm tra đúng chủ tài khoản/);
+  assert.match(instance.node('registration-repair-error').textContent, /verified the Zalo account owner/);
 });
 
 test('confirmation sends token only once and reloads corrected member after success', async () => {
@@ -119,7 +119,7 @@ test('confirmation timeout is not retried and requires reloading the profile', a
   await instance.submit();
   assert.equal(instance.node('registration-repair-submit').hidden, true);
   assert.equal(instance.node('registration-repair-reload').hidden, false);
-  assert.match(instance.node('registration-repair-error').textContent, /Tải lại hồ sơ/);
+  assert.match(instance.node('registration-repair-error').textContent, /Reload the profile/);
   assert.equal(instance.node('registration-repair-error').textContent.includes('private network'), false);
   await instance.submit();
   assert.equal(instance.calls.length, 2);
@@ -139,7 +139,7 @@ test('closing while preview is pending cannot repopulate sensitive dialog', asyn
 });
 
 test('session revocation clears pending phone, reason and identity preview', async () => {
-  const instance = app(() => response({ error: 'Đăng nhập lại.' }, 401));
+  const instance = app(() => response({ error: 'Please sign in again.' }, 401));
   instance.open(); await instance.submit();
   assert.equal(instance.state.user, null);
   assert.equal(instance.node('registration-repair-dialog').open, false);

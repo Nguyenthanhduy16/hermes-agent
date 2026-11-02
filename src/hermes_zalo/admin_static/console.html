@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="description" content="Hermes assistant management: conversations, memory, skills and operations.">
+  <title>Hermes · Agent Console</title>
+  <link rel="stylesheet" href="/static/console.css">
+  <link rel="stylesheet" href="/static/console-observe.css">
+  <link rel="stylesheet" href="/static/console-bench.css">
+  <link rel="stylesheet" href="/static/console-integrations.css">
+  <link rel="stylesheet" href="/static/console-operations.css">
+  <link rel="stylesheet" href="/static/console-briefing.css">
+  <script src="/static/console.js" defer></script>
+  <!-- Feature pages; each registers itself through window.HermesConsole.register. -->
+  <script src="/static/console-observe.js" defer></script>
+  <script src="/static/console-bench.js" defer></script>
+  <script src="/static/console-integrations.js" defer></script>
+  <script src="/static/console-operations.js" defer></script>
+  <script src="/static/console-briefing.js" defer></script>
+</head>
+<body>
+  <svg class="sprite" aria-hidden="true" focusable="false">
+    <symbol id="i-home" viewBox="0 0 24 24"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9v12h14V9"/><path d="M10 21v-6h4v6"/></symbol>
+    <symbol id="i-chat" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></symbol>
+    <symbol id="i-history" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l3 2"/></symbol>
+    <symbol id="i-memory" viewBox="0 0 24 24"><path d="M19 21l-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></symbol>
+    <symbol id="i-sparkles" viewBox="0 0 24 24"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/><path d="M19 3v4M17 5h4M5 17v4M3 19h4"/></symbol>
+    <symbol id="i-calendar" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M16 2v4M8 2v4M3 10h18M8 14h2M14 14h2M8 17h2"/></symbol>
+    <symbol id="i-cpu" viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" rx="2"/><rect x="9" y="9" width="6" height="6" rx="1"/><path d="M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3"/></symbol>
+    <symbol id="i-send" viewBox="0 0 24 24"><path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4z"/></symbol>
+    <symbol id="i-plug" viewBox="0 0 24 24"><path d="M9 2v6M15 2v6"/><path d="M6 8h12v4a6 6 0 0 1-12 0z"/><path d="M12 18v4"/></symbol>
+    <symbol id="i-users" viewBox="0 0 24 24"><circle cx="9" cy="8" r="4"/><path d="M2 21a7 7 0 0 1 14 0"/><path d="M16 4.1a4 4 0 0 1 0 7.8M22 21a7 7 0 0 0-4-6.3"/></symbol>
+    <symbol id="i-chart" viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="M8 17v-5M13 17V8M18 17v-8"/></symbol>
+    <symbol id="i-key" viewBox="0 0 24 24"><circle cx="7.5" cy="15.5" r="4.5"/><path d="M10.7 12.3 21 2M17 6l3 3M14 9l2 2"/></symbol>
+    <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 6h9M17 6h3M4 12h3M11 12h9M4 18h11M19 18h1"/><circle cx="15" cy="6" r="2"/><circle cx="9" cy="12" r="2"/><circle cx="17" cy="18" r="2"/></symbol>
+    <symbol id="i-list" viewBox="0 0 24 24"><path d="M8 6h13M8 12h13M8 18h13M3.5 6h.01M3.5 12h.01M3.5 18h.01"/></symbol>
+    <symbol id="i-server" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="8" rx="2"/><rect x="3" y="13" width="18" height="8" rx="2"/><path d="M7 7h.01M7 17h.01"/></symbol>
+    <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 6a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></symbol>
+    <symbol id="i-file" viewBox="0 0 24 24"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/></symbol>
+    <symbol id="i-box" viewBox="0 0 24 24"><path d="M21 8 12 3 3 8v8l9 5 9-5z"/><path d="m3 8 9 5 9-5M12 13v8"/></symbol>
+    <symbol id="i-zap" viewBox="0 0 24 24"><path d="M13 2 4 14h7l-1 8 9-12h-7z"/></symbol>
+    <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3 4 6v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V6z"/></symbol>
+    <symbol id="i-book" viewBox="0 0 24 24"><path d="M4 19V5a2 2 0 0 1 2-2h14v16H6a2 2 0 0 0-2 2z"/><path d="M4 19a2 2 0 0 0 2 2h14"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.6-6.4L21 8"/><path d="M21 3v5h-5"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></symbol>
+    <symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></symbol>
+    <symbol id="i-logout" viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5M21 12H9"/></symbol>
+    <symbol id="i-lock" viewBox="0 0 24 24"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></symbol>
+    <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></symbol>
+    <symbol id="i-moon" viewBox="0 0 24 24"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></symbol>
+    <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 9v4M12 17h.01"/><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></symbol>
+    <symbol id="i-pin" viewBox="0 0 24 24"><path d="M9 4h6l-1 6 4 4H6l4-4z"/><path d="M12 14v7"/></symbol>
+    <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></symbol>
+    <symbol id="i-minus" viewBox="0 0 24 24"><path d="M6 12h12"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M7 17 17 7M8 7h9v9"/></symbol>
+    <symbol id="i-dollar" viewBox="0 0 24 24"><path d="M12 2v20M17 6H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></symbol>
+    <symbol id="i-activity" viewBox="0 0 24 24"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></symbol>
+    <symbol id="i-hash" viewBox="0 0 24 24"><path d="M4 9h16M4 15h16M10 3 8 21M16 3l-2 18"/></symbol>
+    <symbol id="i-bot" viewBox="0 0 24 24"><rect x="4" y="8" width="16" height="12" rx="3"/><path d="M12 8V4M9 4h6M9 13v2M15 13v2"/></symbol>
+  </svg>
+  <a class="skip-link" href="#main">Skip to main content</a>
+  <div id="demo-banner" class="demo-banner" hidden><strong>Demo data</strong> <span>No live Zalo, VPS, Google or model connections.</span></div>
+  <div id="boot" class="boot" role="status">Opening Hermes…</div>
+
+  <section id="login" class="login" hidden>
+    <form id="login-form" class="login-card">
+      <div class="login-brand"><span class="logo" aria-hidden="true">h</span><div><strong>Hermes</strong><small>Agent Console</small></div></div>
+      <p class="login-eyebrow">YOUR ASSISTANT, AT A GLANCE</p>
+      <h1>Welcome back</h1>
+      <p class="muted">Know what needs you. Keep work moving.</p>
+      <label>Username<input id="username" autocomplete="username" required maxlength="48" placeholder="Administrator username"></label>
+      <label>Password<input id="password" type="password" autocomplete="current-password" required maxlength="256" placeholder="Your password"></label>
+      <p id="login-error" class="notice error" role="alert" hidden></p>
+      <button class="button primary block" type="submit">Sign in</button>
+      <p class="login-help">Accounts are created on the server. Access to conversations and memory is granted separately.</p>
+    </form>
+  </section>
+
+  <div id="app" class="shell" hidden>
+    <aside id="sidebar" class="sidebar" aria-label="Sidebar">
+      <a class="brand" href="#overview"><span class="logo" aria-hidden="true">h</span><span><strong>Hermes</strong><small id="workspace-mode">Personal assistant</small></span></a>
+      <nav id="navigation" aria-label="Main navigation">
+        <!-- Essentials: what a CEO uses every day. Pages registered with `essential: true` join this group. -->
+        <div class="nav-group nav-essentials" data-nav-group="main">
+          <button id="nav-home" data-view="overview"><svg class="icon"><use href="#i-home"/></svg>Home</button>
+          <button data-view="chat"><svg class="icon"><use href="#i-chat"/></svg>Chat</button>
+          <button data-view="routines"><svg class="icon"><use href="#i-calendar"/></svg>Automations</button>
+          <button data-view="channels"><svg class="icon"><use href="#i-send"/></svg>Channels</button>
+          <button data-view="memories"><svg class="icon"><use href="#i-memory"/></svg>Memory</button>
+        </div>
+        <!-- Advanced: configuration, observability and developer tools. Collapsed by default. -->
+        <div class="nav-group nav-advanced-area">
+          <button id="advanced-toggle" class="nav-toggle" type="button" aria-expanded="false" aria-controls="advanced-nav"><svg class="icon"><use href="#i-sliders"/></svg><span>Advanced</span><svg class="icon chevron"><use href="#i-chevron"/></svg></button>
+          <div id="advanced-nav" class="nav-advanced" hidden>
+            <div class="nav-group nav-subgroup" data-nav-group="agent">
+              <p class="nav-label">Agent</p>
+              <button data-view="models"><svg class="icon"><use href="#i-cpu"/></svg>Models</button>
+              <button data-view="skills"><svg class="icon"><use href="#i-sparkles"/></svg>Skills</button>
+              <button data-view="mcp"><svg class="icon"><use href="#i-plug"/></svg>Tools (MCP)</button>
+            </div>
+            <div class="nav-group nav-subgroup" data-nav-group="integrations" hidden>
+              <p class="nav-label">Integrations</p>
+            </div>
+            <div class="nav-group nav-subgroup" data-nav-group="observe">
+              <p class="nav-label">Observe</p>
+              <button data-view="system-overview"><svg class="icon"><use href="#i-activity"/></svg>System overview</button>
+              <button data-view="sessions"><svg class="icon"><use href="#i-history"/></svg>Conversations</button>
+            </div>
+            <div class="nav-group nav-subgroup" data-nav-group="people">
+              <p class="nav-label">People &amp; usage</p>
+              <button data-view="users"><svg class="icon"><use href="#i-users"/></svg>Users</button>
+              <button data-view="usage"><svg class="icon"><use href="#i-chart"/></svg>Usage &amp; cost</button>
+            </div>
+            <div class="nav-group nav-subgroup" data-nav-group="advanced">
+              <p class="nav-label">System</p>
+              <button data-view="keys"><svg class="icon"><use href="#i-key"/></svg>API keys</button>
+              <button data-view="config"><svg class="icon"><use href="#i-sliders"/></svg>Settings</button>
+              <button data-view="logs"><svg class="icon"><use href="#i-list"/></svg>Logs</button>
+              <button data-view="files"><svg class="icon"><use href="#i-folder"/></svg>Files</button>
+              <button data-view="plugins"><svg class="icon"><use href="#i-box"/></svg>Plugins</button>
+              <button data-view="webhooks"><svg class="icon"><use href="#i-zap"/></svg>Webhooks</button>
+              <button data-view="access"><svg class="icon"><use href="#i-shield"/></svg>Admin accounts</button>
+              <button data-view="documentation"><svg class="icon"><use href="#i-book"/></svg>Help</button>
+            </div>
+          </div>
+        </div>
+      </nav>
+      <button id="customize-open" class="nav-customize" type="button" aria-haspopup="dialog" aria-controls="customize-dialog"><svg class="icon"><use href="#i-pin"/></svg>Customize sidebar</button>
+      <div class="sidebar-bottom">
+        <div class="user-card">
+          <span id="user-avatar" class="avatar" aria-hidden="true">A</span>
+          <div class="user-info"><strong id="user-name">Administrator</strong><small id="user-role">Signed in</small></div>
+          <button id="password-open" class="icon-button ghost" type="button" title="Change password" aria-label="Change password"><svg class="icon"><use href="#i-lock"/></svg></button>
+          <button id="logout" class="icon-button ghost" type="button" title="Sign out" aria-label="Sign out"><svg class="icon"><use href="#i-logout"/></svg></button>
+        </div>
+        <a href="/legacy.html" class="legacy-link">Legacy administration <svg class="icon"><use href="#i-arrow"/></svg></a>
+      </div>
+    </aside>
+    <div id="scrim" class="scrim" hidden></div>
+    <div class="main-shell">
+      <header class="topbar">
+        <button id="menu-toggle" class="icon-button mobile-only" type="button" aria-label="Open navigation" aria-expanded="false"><svg class="icon"><use href="#i-menu"/></svg></button>
+        <button id="palette-open" class="palette-trigger" type="button" aria-haspopup="dialog" aria-controls="palette" aria-keyshortcuts="Control+K Meta+K"><svg class="icon"><use href="#i-search"/></svg><span class="palette-trigger-label">Search or jump to…</span><kbd id="search-shortcut">Ctrl K</kbd></button>
+        <div class="topbar-right">
+          <span id="connection" class="status-pill"><span class="status-dot"></span><span id="environment">Connected</span></span>
+          <button id="theme-toggle" class="icon-button ghost" type="button" aria-label="Switch colour theme" title="Switch colour theme"><svg class="icon"><use id="theme-icon" href="#i-moon"/></svg></button>
+        </div>
+      </header>
+      <main id="main" tabindex="-1">
+        <div class="page-heading">
+          <div><h1 id="page-title">Home</h1><p id="page-description" class="muted">How your assistant is doing today.</p></div>
+          <div class="heading-actions"><label id="search-box" class="search page-filter"><svg class="icon"><use href="#i-search"/></svg><input id="search" type="search" placeholder="Filter this page" aria-label="Filter records on the current page" aria-keyshortcuts="/"><kbd class="page-filter-key" aria-hidden="true">/</kbd></label><span id="updated" class="updated"></span><button id="refresh" class="button secondary" type="button"><svg class="icon"><use href="#i-refresh"/></svg>Refresh</button></div>
+        </div>
+        <div id="page-error" class="notice error" role="alert" hidden></div>
+        <div id="content" aria-live="polite"></div>
+        <p class="page-meta"><span id="source-label"></span></p>
+      </main>
+    </div>
+  </div>
+
+  <dialog id="memory-dialog"><form id="memory-form"><div class="dialog-heading"><h2 id="memory-title">Add memory</h2><button type="button" class="icon-button ghost" data-close="memory-dialog" aria-label="Close"><svg class="icon"><use href="#i-x"/></svg></button></div><p class="muted">Saved to the managed memory store. Whether the assistant uses it depends on the core configuration.</p><label>Content<textarea id="memory-content" required maxlength="2000" rows="5"></textarea></label><label>Member ID<input id="memory-member" maxlength="120" required placeholder="Stable member ID"></label><p id="memory-owner-note" class="muted"></p><p id="memory-error" class="notice error" role="alert" hidden></p><div class="dialog-actions"><button type="button" class="button secondary" data-close="memory-dialog">Cancel</button><button class="button primary" type="submit">Save memory</button></div></form></dialog>
+  <dialog id="password-dialog"><form id="password-form"><div class="dialog-heading"><h2>Change password</h2><button type="button" class="icon-button ghost" data-close="password-dialog" aria-label="Close"><svg class="icon"><use href="#i-x"/></svg></button></div><label>Current password<input id="current-password" type="password" autocomplete="current-password" required maxlength="256"></label><label>New password<input id="new-password" type="password" autocomplete="new-password" required minlength="12" maxlength="256"></label><label>Confirm new password<input id="confirm-password" type="password" autocomplete="new-password" required minlength="12" maxlength="256"></label><p class="muted">Changing your password signs this account out everywhere.</p><p id="password-error" class="notice error" role="alert" hidden></p><div class="dialog-actions"><button type="button" class="button secondary" data-close="password-dialog">Cancel</button><button type="submit" class="button primary">Change password</button></div></form></dialog>
+  <dialog id="confirm-dialog"><form method="dialog"><div class="dialog-heading"><h2 id="confirm-title">Confirm</h2></div><p id="confirm-text"></p><div class="dialog-actions"><button value="cancel" class="button secondary">Cancel</button><button value="accept" class="button danger">Confirm</button></div></form></dialog>
+  <dialog id="action-dialog" aria-labelledby="action-title">
+    <form id="action-form" autocomplete="off">
+      <div class="dialog-heading"><h2 id="action-title">Manage</h2><button type="button" class="icon-button ghost" data-close="action-dialog" aria-label="Close"><svg class="icon"><use href="#i-x"/></svg></button></div>
+      <p id="action-description" class="muted" hidden></p>
+      <p id="action-flow-state" class="muted" aria-live="polite" hidden></p>
+      <div id="action-fields" class="action-fields"></div>
+      <p class="muted">You will confirm before the change is saved. Failed changes are never retried automatically.</p>
+      <p id="action-error" class="notice error" role="alert" hidden></p>
+      <div class="dialog-actions"><button id="action-back" type="button" class="button secondary" hidden>Back</button><button type="button" class="button secondary" data-close="action-dialog">Cancel</button><button id="action-next" type="button" class="button primary" hidden>Continue</button><button id="action-submit" class="button primary" type="submit">Apply change</button></div>
+    </form>
+  </dialog>
+  <dialog id="palette" class="palette" aria-label="Command palette">
+    <div class="palette-box">
+      <div class="palette-search">
+        <svg class="icon"><use href="#i-search"/></svg>
+        <input id="palette-input" type="text" role="combobox" aria-expanded="true" aria-controls="palette-list" aria-autocomplete="list" aria-label="Search pages and actions" placeholder="Search pages and actions…" autocomplete="off" spellcheck="false" maxlength="120">
+        <button type="button" class="icon-button ghost palette-close" data-close="palette" aria-label="Close command palette"><svg class="icon"><use href="#i-x"/></svg></button>
+      </div>
+      <ul id="palette-list" class="palette-list" role="listbox" aria-label="Results"></ul>
+      <p id="palette-empty" class="palette-empty" hidden>No matching pages or actions.</p>
+      <div class="palette-footer" aria-hidden="true"><span><kbd>↑</kbd><kbd>↓</kbd> move</span><span><kbd>Enter</kbd> open</span><span><kbd>Esc</kbd> close</span></div>
+    </div>
+  </dialog>
+  <dialog id="customize-dialog" class="customize" aria-labelledby="customize-title">
+    <form method="dialog">
+      <div class="dialog-heading"><h2 id="customize-title">Customize sidebar</h2><button type="button" class="icon-button ghost" data-close="customize-dialog" aria-label="Close"><svg class="icon"><use href="#i-x"/></svg></button></div>
+      <p class="muted">Ticked pages appear in your daily sidebar; the rest stay under Advanced. Saved in this browser only. Home is always shown.</p>
+      <div id="customize-list" class="customize-list" role="group" aria-label="Pages in the sidebar"></div>
+      <div class="dialog-actions"><button id="customize-reset" type="button" class="button secondary">Reset to default</button><button value="done" class="button primary">Done</button></div>
+    </form>
+  </dialog>
+  <div id="toast" class="toast" role="status" hidden></div>
+</body>
+</html>

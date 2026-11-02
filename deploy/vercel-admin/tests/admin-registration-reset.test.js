@@ -39,7 +39,7 @@ function app(fetchImpl = url => response(url.startsWith('/api/members') ? { item
   api.state.user = { username: 'admin-synthetic', permissions: ['members'] };
   api.state.member = { ...member }; api.state.csrf = 'synthetic-csrf';
   const node = id => document.getElementById(id);
-  const open = () => { api.openRegistrationReset(); node('registration-reset-reason').value = 'Thành viên muốn đăng ký lại.'; node('registration-reset-verified').checked = true; };
+  const open = () => { api.openRegistrationReset(); node('registration-reset-reason').value = 'Member muốn đăng ký lại.'; node('registration-reset-verified').checked = true; };
   const submit = () => node('registration-reset-form').listeners.submit({ preventDefault() {} });
   return { ...api, node, calls, open, submit };
 }
@@ -49,7 +49,7 @@ test('reset button and action require members permission even for faculty', asyn
   for (const role of ['admin', 'faculty']) {
     instance.state.user = { role, permissions: ['issues'] };
     instance.renderProfile(); instance.open(); await instance.submit();
-    assert.equal(walk(instance.node('member-profile')).some(node => node.textContent === 'Xóa đăng ký'), false);
+    assert.equal(walk(instance.node('member-profile')).some(node => node.textContent === 'Reset registration'), false);
     assert.equal(instance.node('registration-reset-dialog').open, false);
     assert.equal(instance.calls.length, 0);
   }
@@ -60,7 +60,7 @@ test('locked, already reset, or incomplete member snapshot cannot reset', async 
   for (const patch of [{ locked: true }, { status: 'reset' }, { request_id: '' }, { revision: undefined }]) {
     instance.state.member = { ...member, ...patch };
     instance.renderProfile(); instance.open(); await instance.submit();
-    assert.equal(walk(instance.node('member-profile')).find(node => node.textContent === 'Xóa đăng ký').disabled, true);
+    assert.equal(walk(instance.node('member-profile')).find(node => node.textContent === 'Reset registration').disabled, true);
     assert.equal(instance.node('registration-reset-dialog').open, false);
     assert.equal(instance.calls.length, 0);
   }
@@ -76,7 +76,7 @@ test('confirmation displays only masked identity, requires reason and checkbox',
   instance.node('registration-reset-reason').value = 'Cho đăng ký lại đúng.';
   instance.node('registration-reset-verified').checked = false; await instance.submit();
   assert.equal(instance.calls.length, 0);
-  assert.match(instance.node('registration-reset-error').textContent, /Cần xác nhận/);
+  assert.match(instance.node('registration-reset-error').textContent, /Confirm that/);
 });
 
 test('reset sends exact snapshot once with CSRF, then refreshes server list and detail', async () => {
@@ -90,14 +90,14 @@ test('reset sends exact snapshot once with CSRF, then refreshes server list and 
   const call = instance.calls[0];
   assert.equal(call.url, '/api/member/registration/reset');
   assert.equal(call.options.headers['X-CSRF-Token'], 'synthetic-csrf');
-  assert.deepEqual(JSON.parse(call.options.body), { member_id: member.member_id, request_id: member.request_id, expected_revision: 4, reason: 'Thành viên muốn đăng ký lại.', confirm: true });
+  assert.deepEqual(JSON.parse(call.options.body), { member_id: member.member_id, request_id: member.request_id, expected_revision: 4, reason: 'Member muốn đăng ký lại.', confirm: true });
   finish(response({ ok: true })); await pending;
   assert.equal(instance.node('registration-reset-dialog').open, false);
   assert.equal(instance.node('registration-reset-reason').value, '');
   assert.equal(instance.state.member.status, 'reset');
   assert.ok(instance.calls.some(call => call.url.startsWith('/api/members?')));
   assert.ok(instance.calls.some(call => call.url.startsWith('/api/member?id=')));
-  assert.equal(walk(instance.node('member-profile')).find(node => node.textContent === 'Xóa đăng ký').disabled, true);
+  assert.equal(walk(instance.node('member-profile')).find(node => node.textContent === 'Reset registration').disabled, true);
 });
 
 test('stale snapshot and network failure need reload with no automatic retry', async () => {
@@ -107,7 +107,7 @@ test('stale snapshot and network failure need reload with no automatic retry', a
     assert.equal(instance.state.member.status, 'approved');
     assert.equal(instance.node('registration-reset-submit').hidden, true);
     assert.equal(instance.node('registration-reset-reload').hidden, false);
-    assert.match(instance.node('registration-reset-error').textContent, /Tải lại hồ sơ/);
+    assert.match(instance.node('registration-reset-error').textContent, /Reload the profile/);
     assert.equal(instance.node('registration-reset-error').textContent.includes('secret network'), false);
   }
 });
@@ -125,7 +125,7 @@ test('closing a pending reset cannot repaint another profile or open a second re
 });
 
 test('session expiry clears the reset reason and member preview', async () => {
-  const instance = app(() => response({ error: 'Đăng nhập lại.' }, 401));
+  const instance = app(() => response({ error: 'Please sign in again.' }, 401));
   instance.open(); await instance.submit();
   assert.equal(instance.state.user, null);
   assert.equal(instance.node('registration-reset-dialog').open, false);
@@ -134,8 +134,8 @@ test('session expiry clears the reset reason and member preview', async () => {
 });
 
 test('markup exposes reset status and makes scope plus re-registration explicit', () => {
-  assert.match(html, /<option value="reset">Đã xóa đăng ký<\/option>/);
-  assert.match(html, /<option value="approved">Đã duyệt<\/option>/);
-  assert.match(html, /Workload và lịch trên Sheets không thay đổi/);
+  assert.match(html, /<option value="reset">Registration reset<\/option>/);
+  assert.match(html, /<option value="approved">Approved<\/option>/);
+  assert.match(html, /Workload and the Sheets schedule are unchanged/);
   assert.match(html, /id="registration-reset-verified" type="checkbox" required/);
 });

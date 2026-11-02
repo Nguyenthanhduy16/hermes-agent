@@ -87,7 +87,7 @@ class AdminRegistrationResetTests(unittest.IsolatedAsyncioTestCase):
         self.add_account(route=('member', 'dm-member'))
         for status in ('pending_peer', 'pending_manager', 'applying', 'uncertain'):
             self.active_exchange(status)
-            with self.assertRaisesRegex(AdminMemberError, 'Còn yêu cầu'):
+            with self.assertRaisesRegex(AdminMemberError, 'shift exchange request'):
                 await self.reset()
         self.active_exchange('completed')
         await self.admin.set_locked(self.record.member_id, True, self.actor,
@@ -98,14 +98,14 @@ class AdminRegistrationResetTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_other_users_routes_and_admin_bindings_are_not_detached(self):
         self.add_account(route=('member', 'other-dm'))
-        with self.assertRaisesRegex(AdminMemberError, 'xung đột'):
+        with self.assertRaisesRegex(AdminMemberError, 'conflicts'):
             await self.reset()
         self.assertIsNotNone(self.identities.resolve(self.chat.bot_scope, 'member', 'other-dm'))
         self.identities.revoke(self.chat.bot_scope, 'member', 'other-dm')
         with self.ticket_store.transaction() as db:
             db.execute("UPDATE ticket_accounts SET role='manager' WHERE id='alpha-account'")
         self.identities.bind(self.chat.bot_scope, 'member', 'dm-member', 'alpha-account')
-        with self.assertRaisesRegex(AdminMemberError, 'quyền quản trị'):
+        with self.assertRaisesRegex(AdminMemberError, 'administrative privileges'):
             await self.reset()
         self.assertEqual(self.record, self.store.approved(self.message))
 
@@ -124,7 +124,7 @@ class AdminRegistrationResetTests(unittest.IsolatedAsyncioTestCase):
                 self.store._bump_revision(db, self.record.member_id)
             return self.chat
         with patch.object(self.admin, '_chat', side_effect=changed):
-            with self.assertRaisesRegex(AdminMemberError, 'vừa được cập nhật'):
+            with self.assertRaisesRegex(AdminMemberError, 'have been updated'):
                 await self.reset()
         self.assertEqual(self.record, self.store.approved(self.message))
 
@@ -160,7 +160,7 @@ class AdminRegistrationResetTests(unittest.IsolatedAsyncioTestCase):
     async def test_disabled_tickets_can_reset_but_broken_enabled_runtime_cannot(self):
         with patch.object(self.admin,'_chat',new=AsyncMock(return_value=None)):
             self.work._tickets_values['TICKETS_CHAT_MODE']='lab_live'
-            with self.assertRaisesRegex(AdminMemberError,'chưa kiểm tra được'):
+            with self.assertRaisesRegex(AdminMemberError,'could not be verified'):
                 await self.reset()
             self.work._tickets_values['TICKETS_CHAT_MODE']='off'
             self.assertTrue((await self.reset())['ok'])

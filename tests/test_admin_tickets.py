@@ -170,10 +170,10 @@ class AdminTicketsTests(unittest.IsolatedAsyncioTestCase):
             self.identities.bind(self.scope, 'alpha', 'private-alpha', 'demo-a')
         self.work._check_registered_ticket_peers = AsyncMock(side_effect=rebind)
         with patch.object(self.provider, 'swap', wraps=self.provider.swap) as swap:
-            with self.assertRaisesRegex(AdminError, 'vừa thay đổi'):
+            with self.assertRaisesRegex(AdminError, 'changed'):
                 await self.admin.action(self.session, self.payload())
             self.work.settings = replace(self.work.settings, allowed_users=frozenset({'beta'}))
-            with self.assertRaisesRegex(AdminError, 'thu hồi'):
+            with self.assertRaisesRegex(AdminError, 'revoked'):
                 await self.admin.action(self.session, self.payload())
         swap.assert_not_called()
 

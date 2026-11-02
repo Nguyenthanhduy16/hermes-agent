@@ -81,7 +81,7 @@ test('detail uses backend actions and permits only reconciliation for an uncerta
   instance.state.ticket = fixtureTicket({ status: 'uncertain', actions: ['approve', 'reject', 'reconcile'] });
   instance.renderTicket();
   const buttons = instance.nodes().filter(node => node.tagName === 'button');
-  assert.deepEqual(buttons.map(node => node.textContent), ['Đối soát kết quả']);
+  assert.deepEqual(buttons.map(node => node.textContent), ['Reconcile outcome']);
 });
 
 test('approval waits for confirmation, disables competing actions and sends one versioned CSRF write', async () => {
@@ -91,7 +91,7 @@ test('approval waits for confirmation, disables competing actions and sends one 
     : response({ summary: { pending_manager: 0 } }));
   const pending = instance.ticketMutation('approve');
   assert.equal(instance.calls.length, 0);
-  assert.ok(instance.document.getElementById('confirmation-description').textContent.includes('lịch thật trên Google Sheets'));
+  assert.ok(instance.document.getElementById('confirmation-description').textContent.includes('real Google Sheets schedule'));
   assert.ok(instance.nodes().filter(node => node.dataset.ticketControl).every(node => node.disabled));
   instance.finishConfirmation(true);
   await nextTurn();
@@ -103,20 +103,20 @@ test('approval waits for confirmation, disables competing actions and sends one 
   assert.deepEqual(JSON.parse(sent.options.body), { id: 'DC-SYNTHETIC', action: 'approve', expected_version: 2, reason: '', confirm: true });
   finishWrite(response({ ticket: fixtureTicket({ version: 4, status: 'uncertain', actions: ['reconcile'] }) }));
   await pending;
-  assert.deepEqual(instance.nodes().filter(node => node.tagName === 'button').map(node => node.textContent), ['Đối soát kết quả']);
+  assert.deepEqual(instance.nodes().filter(node => node.tagName === 'button').map(node => node.textContent), ['Reconcile outcome']);
   assert.equal(instance.calls.filter(call => call.options.method === 'POST').length, 1);
 });
 
 test('a version conflict blocks repeat writes until a successful explicit refresh', async () => {
   const instance = app(async (url, options) => options.method === 'POST'
-    ? response({ error: 'Phiên bản đã thay đổi.' }, 409)
+    ? response({ error: 'Revision has changed.' }, 409)
     : url.startsWith('/api/ticket?') ? response({ ticket: fixtureTicket({ version: 3 }) })
     : response({ summary: { pending_manager: 1 } }));
   const pending = instance.ticketMutation('approve');
   instance.finishConfirmation(true);
   await pending;
   assert.equal(instance.state.ticketRefreshRequired, 'DC-SYNTHETIC');
-  assert.ok(walk(instance.document.getElementById('ticket-action-error')).some(node => node.textContent?.includes('Tải lại phiên bản mới')));
+  assert.ok(walk(instance.document.getElementById('ticket-action-error')).some(node => node.textContent?.includes('Reload the latest version')));
   await instance.ticketMutation('approve');
   assert.equal(instance.calls.filter(call => call.options.method === 'POST').length, 1);
   await instance.loadTicket('DC-SYNTHETIC');
@@ -136,7 +136,7 @@ test('canceling confirmation does not write, and rejection requires a nonblank r
   assert.equal(textarea.required, true);
   textarea.value = '   ';
   form.listeners.submit({ preventDefault() {} });
-  assert.equal(textarea.validationMessage, 'Vui lòng nhập lý do từ chối.');
+  assert.equal(textarea.validationMessage, 'Enter a rejection reason.');
   assert.equal(instance.document.getElementById('confirmation-dialog').open, false);
   assert.equal(instance.calls.length, 0);
 });

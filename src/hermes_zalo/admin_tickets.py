@@ -43,19 +43,19 @@ class TicketAdmin:
 
     @staticmethod
     def _disabled():
-        return dict(enabled=False, message='Đổi ca chưa bật hoặc chưa sẵn sàng. Kiểm tra cấu hình Tickets trên bot.')
+        return dict(enabled=False, message='Shift exchange is disabled or not ready. Check the bot Tickets configuration.')
 
     @staticmethod
     def _identity(ticket_id):
         if not isinstance(ticket_id, str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.:-]{0,79}', ticket_id):
-            raise AdminError('Mã yêu cầu đổi ca chưa hợp lệ.')
+            raise AdminError('Invalid shift exchange request ID.')
         return ticket_id
 
     async def list_tickets(self, session, *, query='', status='', page=1):
         self.auth.user(session, 'tickets')
         if (not isinstance(query, str) or len(query) > 160 or not isinstance(status, str)
                 or status and status not in LABELS or type(page) is not int or not 1 <= page <= 10000):
-            raise AdminError('Bộ lọc yêu cầu đổi ca chưa hợp lệ.')
+            raise AdminError('Invalid shift exchange request filters.')
         chat = await self._chat(session)
         if chat is None:
             return self._disabled() | dict(items=[], page=page, pages=1, total=0,
@@ -89,14 +89,14 @@ class TicketAdmin:
     async def action(self, session, data):
         self.auth.user(session, 'tickets')
         if not isinstance(data, dict) or set(data) - {'id', 'action', 'expected_version', 'reason', 'confirm'}:
-            raise AdminError('Tham số duyệt đổi ca chưa hợp lệ.')
+            raise AdminError('Invalid shift exchange approval parameters.')
         ticket_id = self._identity(data.get('id'))
         action, version, reason = data.get('action'), data.get('expected_version'), data.get('reason', '')
         if (data.get('confirm') is not True or action not in ('approve', 'reject', 'reconcile')
                 or type(version) is not int or version < 1):
-            raise AdminError('Cần xác nhận thao tác và phiên bản yêu cầu đang xem.')
+            raise AdminError('Confirm the action and provide the displayed request revision.')
         if not isinstance(reason, str) or len(reason) > 600 or action == 'reject' and not reason.strip():
-            raise AdminError('Khi từ chối cần lý do, tối đa 600 ký tự.')
+            raise AdminError('A rejection reason is required and must not exceed 600 characters.')
         chat = await self._chat(session)
         if chat is None:
             raise AdminError(self._disabled()['message'], 503)
@@ -114,7 +114,7 @@ class TicketAdmin:
                         rows = chat.store.db.execute('SELECT id FROM ticket_accounts WHERE member_id=? AND active=1',
                                                     (detail[side]['member_id'],)).fetchall()
                         if len(rows) != 1:
-                            raise AdminError('Liên kết người tham gia đã thay đổi; cần kiểm tra trước khi duyệt.', 409)
+                            raise AdminError('A participant link has changed. Review it before approval.', 409)
                         ids.append(rows[0]['id'])
                     return tuple(dict.fromkeys(ids))
             account_ids = await asyncio.to_thread(participants)
@@ -123,15 +123,15 @@ class TicketAdmin:
                     return self.work._ticket_participant_snapshot(chat, account_ids)
             baseline = await asyncio.to_thread(snapshot)
             if baseline is None:
-                raise AdminError('Thành viên hoặc liên kết đổi ca đã bị khóa, thu hồi hoặc thay đổi.', 409)
+                raise AdminError('The member or shift exchange link has been locked, revoked or changed.', 409)
             try:
                 await self.work._check_registered_ticket_peers(chat, account_ids)
             except RegistrationError as error:
                 raise AdminError(str(error), 409) from None
             except WorkloadError:
-                raise AdminError('Chưa đối chiếu được người tham gia với Workload. Thử lại sau.', 503) from None
+                raise AdminError('The participants could not be verified against Workload. Try again later.', 503) from None
             if await asyncio.to_thread(snapshot) != baseline:
-                raise AdminError('Danh tính hoặc quyền thành viên vừa thay đổi. Tải lại trước khi xác nhận.', 409)
+                raise AdminError('The member identity or permissions have changed. Reload them before confirming.', 409)
 
         def participant_guard():
             return (baseline is None or
@@ -145,7 +145,7 @@ class TicketAdmin:
             with chat.store.lock, registration_store.lock if registration_store else nullcontext():
                 self.auth.user(session, 'tickets')
                 if not participant_guard():
-                    raise AdminError('Quyền đổi ca vừa thay đổi. Tải lại trước khi xác nhận.', 409)
+                    raise AdminError('Shift exchange permissions have changed. Reload them before confirming.', 409)
                 with ticket_access_scope(actor.authorize):
                     return chat.service.admin_action(actor, ticket_id, action, version, reason.strip())
         begin_change = getattr(self.work, 'begin_schedule_change', None)

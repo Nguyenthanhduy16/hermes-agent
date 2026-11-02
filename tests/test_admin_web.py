@@ -3,9 +3,12 @@ import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from datetime import datetime
+import gzip
+import hashlib
 from http.client import HTTPConnection
 from http.cookies import SimpleCookie
 import json
+import os
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import threading
@@ -196,7 +199,7 @@ class AdminHttpTests(unittest.TestCase):
             data=dict(current_password='Wrong-current-password', new_password='Synthetic-new-password-123',
                       confirm_password='Synthetic-new-password-123'))
         self.assertEqual(400, status)
-        self.assertEqual('Mật khẩu hiện tại chưa đúng.', result['error'])
+        self.assertEqual('Your current password is incorrect.', result['error'])
         self.assertIsNotNone(self.request('GET', '/api/session', client=client)[1]['user'])
 
     def test_no_data_before_login_static_page_is_safe_and_cookie_is_protected(self):
@@ -214,6 +217,181 @@ class AdminHttpTests(unittest.TestCase):
         self.assertIn('HttpOnly', headers['Set-Cookie'])
         self.assertIn('SameSite=Strict', headers['Set-Cookie'])
         self.members.list_members.assert_not_awaited()
+
+    def test_console_operations_require_owner_role_and_cannot_mutate(self):
+        anonymous = self.client()
+        reader = self.client(['conversations'], 'reader')
+        self.auth.create_account('owner', self.PASSWORD, [], role='faculty')
+        owner = self.client()
+        self.assertEqual(200, self.request('POST', '/api/login', client=owner,
+            data={'username': 'owner', 'password': self.PASSWORD})[0])
+        snapshots = []
+        self.app._assistant = SimpleNamespace(snapshot=lambda section: snapshots.append(section) or
+            {'section': section, 'available': False, 'items': [], 'source': 'synthetic'})
+        self.app._controls = self.app._assistant
+        for section in ('overview', 'runtime', 'skills', 'routines', 'usage', 'users'):
+            path = '/api/assistant/' + section
+            self.assertEqual(401, self.request('GET', path, client=anonymous)[0])
+            self.assertEqual(403, self.request('GET', path, client=reader)[0])
+            self.assertEqual(200, self.request('GET', path, client=owner)[0])
+            self.assertEqual(405, self.request('POST', path, client=owner, data={})[0])
+            self.assertEqual(400, self.request('GET', path + '?home=/other', client=owner)[0])
+        self.assertEqual(6, len(snapshots))
+        # Owner status never implicitly grants access to conversation contents.
+        self.assertEqual(403, self.request('GET', '/api/assistant/sessions', client=owner)[0])
+        self.assertEqual(403, self.request('GET', '/api/history', client=owner)[0])
+
+    def test_standalone_console_keeps_conversation_permission_and_static_boundary(self):
+        self.app.work = None
+        self.app.runtime_home = Path(self.temp.name) / 'missing-runtime'
+        self.assertTrue(self.request('GET', '/api/session', client={})[1]['runtime_history'])
+        reader = self.client(['conversations'], 'runtime-reader')
+        status, body, _ = self.request('GET', '/api/assistant/sessions', client=reader)
+        self.assertEqual(200, status)
+        self.assertFalse(body['available'])
+        self.assertFalse(self.app.runtime_home.exists())
+        for path in ('/api/assistant/history', '/api/assistant/sessions?home=/other'):
+            self.assertEqual(400, self.request('GET', path, client=reader)[0])
+        self.assertEqual(405, self.request('POST', '/api/assistant/sessions', client=reader, data={})[0])
+        self.assertEqual(503, self.request('GET', '/api/memories', client=reader)[0])
+        for path, text in (('/', 'Agent Console'), ('/legacy.html', 'LabCoach'),
+                           ('/static/console.js', 'runtime_history'), ('/static/console.css', '.sidebar')):
+            status, content, headers = self.request('GET', path)
+            self.assertEqual(200, status)
+            self.assertIn(text, content)
+            self.assertEqual('no-store' if path in ('/', '/legacy.html') else 'no-cache', headers['Cache-Control'])
+        self.assertEqual(404, self.request('GET', '/static/../console-admin.sqlite3')[0])
+
+    def test_management_workspace_routes_enforce_owner_filters_and_csrf(self):
+        from hermes_zalo.admin_workspace import WorkspaceAdmin
+        self.app.mode = 'demo'
+        home = Path(self.temp.name) / 'untouched-home'
+        self.app._workspace = WorkspaceAdmin(home, mode='demo', environ={})
+        self.auth.create_account('owner', self.PASSWORD, [], role='faculty')
+        owner = self.client()
+        self.assertEqual(200, self.request('POST', '/api/login', client=owner,
+            data={'username': 'owner', 'password': self.PASSWORD})[0])
+        reader = self.client(['conversations'], 'reader')
+        for section in ('models', 'logs', 'plugins', 'mcp', 'channels', 'webhooks', 'pairing',
+                        'profiles', 'config', 'keys', 'documentation', 'files', 'chat', 'kanban'):
+            path = '/api/assistant/' + section
+            self.assertEqual(403, self.request('GET', path, client=reader)[0], section)
+            self.assertEqual(200, self.request('GET', path, client=owner)[0], section)
+            self.assertEqual(400, self.request('GET', path + '?home=/other', client=owner)[0], section)
+            if section not in ('chat', 'kanban'):
+                self.assertEqual(405, self.request('POST', path, client=owner, data={})[0], section)
+        for section, data in (
+            ('kanban', {'action': 'create', 'title': 'Review report', 'confirm': True}),
+            ('chat', {'message': 'Xin chào', 'history': []}),
+        ):
+            path = '/api/assistant/' + section
+            self.assertEqual(403, self.request('POST', path, client=reader, data=data)[0])
+            self.assertEqual(403, self.request('POST', path, client=owner, data=data, csrf=False)[0])
+            self.assertEqual(200, self.request('POST', path, client=owner, data=data)[0])
+        self.assertFalse(home.exists())
+        self.assertEqual(403, self.request('GET', '/api/history', client=owner)[0])
+
+    def test_console_kanban_persists_and_conflicts_through_http(self):
+        from hermes_zalo.admin_workspace import WorkspaceAdmin
+        home = Path(self.temp.name) / 'console-home'
+        self.app._workspace = WorkspaceAdmin(home, environ={})
+        self.auth.create_account('owner', self.PASSWORD, [], role='faculty')
+        owner = self.client()
+        self.request('POST', '/api/login', client=owner,
+            data={'username': 'owner', 'password': self.PASSWORD})
+        path = '/api/assistant/kanban'
+        status, body, _ = self.request('POST', path, client=owner,
+            data={'action': 'create', 'title': 'Nghiên cứu', 'confirm': True})
+        self.assertEqual(200, status)
+        item = body['item']
+        self.assertEqual('Nghiên cứu', item['title'])
+        change = {'action': 'update', 'id': item['id'], 'expected_revision': item['revision'],
+                  'status': 'review', 'confirm': True}
+        self.assertEqual(200, self.request('POST', path, client=owner, data=change)[0])
+        self.assertEqual(409, self.request('POST', path, client=owner, data=change)[0])
+        self.app._workspace = WorkspaceAdmin(home, environ={})
+        status, board, _ = self.request('GET', path, client=owner)
+        self.assertEqual(200, status)
+        self.assertEqual('review', board['items'][0]['status'])
+        self.assertEqual(2, board['items'][0]['revision'])
+
+    def test_management_actions_require_owner_csrf_revision_and_secret_free_audit(self):
+        from hermes_zalo.admin_controls import ControlsAdmin
+        self.app._controls = ControlsAdmin(Path(self.temp.name) / 'controls-home', environ={})
+        self.auth.create_account('owner', self.PASSWORD, [], role='faculty')
+        owner = self.client()
+        self.request('POST', '/api/login', client=owner, data={'username': 'owner', 'password': self.PASSWORD})
+        reader = self.client(['conversations'], 'reader')
+        status, snapshot, _ = self.request('GET', '/api/assistant/models', client=owner)
+        self.assertEqual(200, status)
+        descriptor = next(item for item in snapshot['actions'] if item['id'] == 'save_main')
+        payload = dict(action='save_main', expected_revision=descriptor['revision'], confirm=True,
+                       values={'model': 'vendor/synthetic-model', 'provider': 'auto'})
+        path = '/api/assistant/models/action'
+        self.assertEqual(403, self.request('POST', path, client=reader, data=payload)[0])
+        self.assertEqual(403, self.request('POST', path, client=owner, data=payload, csrf=False)[0])
+        self.assertEqual(405, self.request('GET', path, client=owner)[0])
+        self.assertEqual(400, self.request('POST', path + '?home=/other', client=owner, data=payload)[0])
+        self.assertEqual(200, self.request('POST', path, client=owner, data=payload)[0])
+        self.assertEqual(409, self.request('POST', path, client=owner, data=payload)[0])
+        status, snapshot, _ = self.request('GET', '/api/assistant/keys', client=owner)
+        self.assertEqual(200, status)
+        descriptor = next(item for item in snapshot['actions'] if item['id'] == 'set_key' and item['target'] == 'OPENAI_API_KEY')
+        secret = 'synthetic-private-key-never-in-response-123456'
+        status, result, _ = self.request('POST', '/api/assistant/keys/action', client=owner, data=dict(
+            action='set_key', expected_revision=descriptor['revision'], confirm=True,
+            values=dict(variable='OPENAI_API_KEY', value=secret)))
+        self.assertEqual(200, status)
+        self.assertNotIn(secret, json.dumps(result))
+        snapshot = self.request('GET', '/api/assistant/keys', client=owner)[1]
+        self.assertNotIn(secret, json.dumps(snapshot))
+        audit = '\n'.join(str(tuple(row)) for row in self.auth.db.execute('SELECT * FROM admin_auth_audit'))
+        self.assertNotIn(secret, audit)
+        self.assertNotIn('vendor/synthetic-model', audit)
+        self.assertIn('console_management_changed', audit)
+
+    def test_automation_management_actions_work_through_http(self):
+        from hermes_zalo.admin_controls import ControlsAdmin
+        self.app._controls = ControlsAdmin(Path(self.temp.name) / 'automation-home', environ={})
+        self.auth.create_account('owner', self.PASSWORD, [], role='faculty')
+        owner = self.client()
+        self.request('POST', '/api/login', client=owner, data={'username': 'owner', 'password': self.PASSWORD})
+        for section, id, values in (
+            ('skills', 'create_skill', dict(name='research-brief', description='Summarize sources',
+                category='', new_category='research', instructions='Read sources and produce a concise summary.')),
+            ('routines', 'create_routine', dict(name='Daily research', schedule='0 9 * * *',
+                prompt='Summarize new research.', skills='', repeat=None, paused=True)),
+        ):
+            status, snapshot, _ = self.request('GET', '/api/assistant/' + section, client=owner)
+            self.assertEqual(200, status)
+            descriptor = next(item for item in snapshot['actions'] if item['id'] == id)
+            status, result, _ = self.request('POST', '/api/assistant/' + section + '/action', client=owner,
+                data=dict(action=id, expected_revision=descriptor['revision'], confirm=True, values=values))
+            self.assertEqual(200, status, result)
+            self.assertTrue(result['ok'])
+
+    def test_demo_credentials_cannot_read_real_runtime_by_direct_api(self):
+        self.app.mode = 'demo'
+        reader = self.client(['conversations'], 'demo-reader')
+        with patch('hermes_zalo.admin_runtime_history.RuntimeHistory') as runtime:
+            for path in ('/api/assistant/sessions', '/api/assistant/history?session_id=real-session'):
+                status, body, _ = self.request('GET', path, client=reader)
+                self.assertEqual(200, status)
+                self.assertEqual('demo', body['source'])
+                self.assertEqual([], body['items'])
+            runtime.assert_not_called()
+
+    def test_revoked_sessions_cannot_receive_snapshots_that_finish_after_revocation(self):
+        self.auth.create_account('owner', self.PASSWORD, ['conversations'], role='faculty')
+        owner = self.client()
+        self.request('POST', '/api/login', client=owner,
+                     data={'username': 'owner', 'password': self.PASSWORD})
+        live, _ = self.auth.session(owner['cookie'])
+        self.app._assistant = SimpleNamespace(snapshot=lambda section:
+            self.auth.logout(live) or {'private': 'must not be returned'})
+        status, body, _ = self.request('GET', '/api/assistant/usage', client=owner)
+        self.assertEqual(401, status)
+        self.assertNotIn('private', body)
 
     def test_login_rotates_cookie_and_csrf_then_logout_invalidates_it(self):
         self.auth.create_account('operator', self.PASSWORD, {'members'})
@@ -274,7 +452,7 @@ class AdminHttpTests(unittest.TestCase):
         secret = 'synthetic-server-only-proxy-secret-123456'
         client = self.client({'members'})
         self.server.config = replace(self.server.config, proxy_secret=secret)
-        expected = {'error': 'Yêu cầu không được phép.'}
+        expected = {'error': 'Request not authorized.'}
         for method, path in (('GET', '/'), ('GET', '/static/admin.js'), ('GET', '/static/admin.css'),
                              ('GET', '/api/session'), ('POST', '/api/login'),
                              ('GET', '/api/members'), ('POST', '/api/member/lock')):
@@ -319,7 +497,7 @@ class AdminHttpTests(unittest.TestCase):
             connection.endheaders()
             response = connection.getresponse()
             self.assertEqual(403, response.status)
-            self.assertEqual({'error': 'Yêu cầu không được phép.'}, json.loads(response.read()))
+            self.assertEqual({'error': 'Request not authorized.'}, json.loads(response.read()))
             self.assertIsNone(response.getheader('Set-Cookie'))
         finally:
             connection.close()
@@ -510,6 +688,274 @@ class AdminHttpTests(unittest.TestCase):
             self.assertEqual(400, self.request('GET', path, client=reviewer)[0])
         self.auth.create_account('reviewer', self.PASSWORD, [], replace=True)
         self.assertEqual(401, self.request('GET', '/api/tickets', client=reviewer)[0])
+
+
+    def raw(self, method, path, headers=None):
+        connection = HTTPConnection('127.0.0.1', self.server.server_port, timeout=5)
+        try:
+            connection.request(method, path, headers=dict(headers or {}))
+            response = connection.getresponse()
+            return response.status, dict(response.getheaders()), response.read()
+        finally:
+            connection.close()
+
+    NAVIGATE = {'Sec-Fetch-Site': 'cross-site', 'Sec-Fetch-Mode': 'navigate', 'Sec-Fetch-Dest': 'document',
+                'Sec-Fetch-User': '?1', 'Accept': 'text/html,application/xhtml+xml'}
+
+    def test_cross_site_link_opens_page_but_api_and_writes_stay_strict(self):
+        # Regression: clicking the console link in e-mail/Zalo returned raw JSON 403.
+        for path, text in (('/', 'Agent Console'), ('/legacy.html', 'LabCoach')):
+            for headers in (self.NAVIGATE, {'Accept': 'text/html'}, {}):
+                status, response_headers, body = self.raw('GET', path, {**headers, 'Sec-Fetch-Site': 'cross-site'}
+                                                          if headers else headers)
+                self.assertEqual(200, status, (path, headers))
+                self.assertTrue(response_headers['Content-Type'].startswith('text/html'))
+                self.assertIn(text, body.decode())
+                self.assertNotIn('Set-Cookie', response_headers)
+        status, headers, _ = self.raw('HEAD', '/', self.NAVIGATE)
+        self.assertEqual(200, status)
+        # Cross-site embedding, subresource loads and every API call stay rejected.
+        client = self.client({'members'})
+        cookie = {'Cookie': f"{COOKIE}={client['cookie']}"}
+        for method, path, headers in (
+                ('GET', '/', {**self.NAVIGATE, 'Sec-Fetch-Dest': 'iframe'}),
+                ('GET', '/', {'Sec-Fetch-Site': 'cross-site', 'Sec-Fetch-Mode': 'no-cors', 'Sec-Fetch-Dest': 'script'}),
+                ('GET', '/static/console.js', {'Sec-Fetch-Site': 'cross-site', 'Sec-Fetch-Mode': 'no-cors',
+                                               'Sec-Fetch-Dest': 'script'}),
+                ('GET', '/api/session', self.NAVIGATE),
+                ('GET', '/api/members', {**self.NAVIGATE, **cookie}),
+                ('GET', '/', {**self.NAVIGATE, 'Origin': 'https://untrusted.invalid'}),
+                ('GET', '/', {**self.NAVIGATE, 'Host': 'untrusted.invalid'})):
+            with self.subTest(path=path, headers=headers):
+                status, response_headers, _ = self.raw(method, path, headers)
+                self.assertEqual(403, status)
+                self.assertNotIn('Set-Cookie', response_headers)
+        self.assertEqual(403, self.request('POST', '/api/logout', client=client,
+                                           headers={k: v for k, v in self.NAVIGATE.items()})[0])
+        self.assertEqual(403, self.request('POST', '/api/logout', client=client, origin='https://untrusted.invalid',
+                                           headers=dict(self.NAVIGATE))[0])
+        self.members.list_members.assert_not_awaited()
+        self.assertEqual(200, self.request('GET', '/api/members', client=client)[0])
+
+    def test_browser_navigation_errors_render_html_while_api_errors_stay_json(self):
+        status, headers, body = self.raw('GET', '/missing-page', self.NAVIGATE)
+        self.assertEqual(404, status)
+        self.assertTrue(headers['Content-Type'].startswith('text/html'))
+        self.assertIn('Open the Hermes Agent Console', body.decode())
+        self.assertNotIn('<script', body.decode())
+        self.assertIn("default-src 'self'", headers['Content-Security-Policy'])
+        status, headers, body = self.raw('GET', '/', {**self.NAVIGATE, 'Host': 'untrusted.invalid'})
+        self.assertEqual(403, status)
+        self.assertIn('This request host is not allowed.', body.decode())
+        for path, extra in (('/missing-page', {}), ('/api/missing', self.NAVIGATE)):
+            status, headers, body = self.raw('GET', path, extra)
+            self.assertEqual(404 if path == '/missing-page' else 403, status)
+            self.assertTrue(headers['Content-Type'].startswith('application/json'))
+            self.assertIn('error', json.loads(body))
+
+    def test_health_endpoint_is_minimal_unauthenticated_and_probe_friendly(self):
+        status, headers, body = self.raw('GET', '/healthz')
+        self.assertEqual((200, {'status': 'ok'}), (status, json.loads(body)))
+        self.assertEqual('no-store', headers['Cache-Control'])
+        self.assertNotIn('Set-Cookie', headers)
+        # Docker/Railway probes use their own Host; behind Vercel no proxy key exists.
+        secret = 'synthetic-server-only-proxy-secret-123456'
+        self.server.config = replace(self.server.config, proxy_secret=secret)
+        for extra in ({'Host': 'healthcheck.railway.app'}, {'Host': 'localhost'}, {}):
+            self.assertEqual(200, self.raw('GET', '/healthz?probe=1', extra)[0])
+        self.assertEqual(403, self.raw('GET', '/', {})[0])
+        status, _, body = self.raw('HEAD', '/healthz')
+        self.assertEqual((200, b''), (status, body))
+        self.assertEqual(405, self.request('POST', '/healthz', client={})[0])
+        with patch.object(self.auth, 'ping', side_effect=RuntimeError('database disk image is malformed')):
+            status, _, body = self.raw('GET', '/healthz')
+        self.assertEqual((503, {'status': 'unavailable'}), (status, json.loads(body)))
+        self.assertNotIn(b'malformed', body)
+
+    def test_static_assets_revalidate_with_etag_gzip_and_security_headers(self):
+        status, headers, plain = self.raw('GET', '/static/console.js')
+        self.assertEqual(200, status)
+        self.assertEqual('no-cache', headers['Cache-Control'])
+        self.assertEqual('Accept-Encoding', headers['Vary'])
+        self.assertNotIn('Content-Encoding', headers)
+        etag = headers['ETag']
+        self.assertRegex(etag, r'^"[0-9a-f]{32}"$')
+        for name, expected in (('Permissions-Policy', 'camera=()'), ('Cross-Origin-Opener-Policy', 'same-origin'),
+                               ('Content-Security-Policy', "object-src 'none'"), ('X-Robots-Tag', 'noindex'),
+                               ('X-Content-Type-Options', 'nosniff'), ('Referrer-Policy', 'no-referrer')):
+            self.assertIn(expected, headers[name])
+        self.assertNotIn('Strict-Transport-Security', headers)
+        status, headers, body = self.raw('GET', '/static/console.js', {'If-None-Match': etag})
+        self.assertEqual((304, b''), (status, body))
+        self.assertEqual(etag, headers['ETag'])
+        status, headers, body = self.raw('GET', '/static/console.js', {'Accept-Encoding': 'br, gzip;q=0.8'})
+        self.assertEqual('gzip', headers['Content-Encoding'])
+        self.assertEqual(plain, gzip.decompress(body))
+        self.assertLess(len(body), len(plain))
+        self.assertNotEqual(etag, headers['ETag'])
+        self.assertEqual(304, self.raw('GET', '/static/console.js', {'Accept-Encoding': 'gzip',
+                                                                      'If-None-Match': 'W/' + headers['ETag']})[0])
+        self.assertNotIn('Content-Encoding', self.raw('GET', '/static/console.js', {'Accept-Encoding': 'gzip;q=0'})[1])
+        status, headers, _ = self.raw('GET', '/', {'Accept-Encoding': 'gzip'})
+        self.assertEqual(('no-store', 'gzip'), (headers['Cache-Control'], headers['Content-Encoding']))
+        # API responses are never compressed or cached and HEAD is not an API verb.
+        _, headers, _ = self.raw('GET', '/api/session', {'Accept-Encoding': 'gzip'})
+        self.assertNotIn('Content-Encoding', headers)
+        self.assertEqual('no-store', headers['Cache-Control'])
+        status, headers, _ = self.raw('HEAD', '/api/session')
+        self.assertEqual(405, status)
+        self.assertNotIn('Set-Cookie', headers)
+
+    def test_served_html_versions_assets_and_versioned_urls_are_immutable(self):
+        import re
+        from hermes_zalo.admin_web import CONSOLE_EXTENSIONS
+        for page, expected in (('/', ['console.css', 'console.js']), ('/legacy.html', ['admin.css', 'admin.js'])):
+            _, headers, body = self.raw('GET', page)
+            html = body.decode()
+            self.assertEqual('no-store', headers['Cache-Control'])
+            self.assertNotRegex(html, r'(?:src|href)="/static/[^"?]+\.(?:js|css)"', 'every asset tag is versioned')
+            urls = re.findall(r'(?:src|href)="(/static/[^"]+\?v=[0-9a-f]{16})"', html)
+            for name in expected:
+                self.assertTrue(any(url.startswith('/static/' + name + '?v=') for url in urls), name)
+            for url in urls:
+                with self.subTest(url=url):
+                    status, asset_headers, content = self.raw('GET', url)
+                    self.assertEqual(200, status)
+                    self.assertEqual('public, max-age=31536000, immutable', asset_headers['Cache-Control'])
+                    self.assertEqual(url.rsplit('=', 1)[1], hashlib.sha256(content).hexdigest()[:16])
+                    gz = self.raw('GET', url, {'Accept-Encoding': 'gzip'})[1]
+                    self.assertEqual('public, max-age=31536000, immutable', gz['Cache-Control'])
+        # Every registered extension that ships a file is versioned in the console page.
+        html = self.raw('GET', '/')[2].decode()
+        for name in CONSOLE_EXTENSIONS:
+            self.assertRegex(html, r'/static/console-' + name + r'\.js\?v=[0-9a-f]{16}')
+        # A stale or forged version (e.g. a cached page from before an upgrade) must revalidate.
+        for url in ('/static/console.js?v=0000000000000000', '/static/console.js?v=', '/static/console.js'):
+            self.assertEqual('no-cache', self.raw('GET', url)[1]['Cache-Control'])
+        self.assertEqual(400, self.raw('GET', '/static/console.js?v=a&v=b')[0])
+
+    def test_https_deployment_sends_hsts_and_secure_cookie(self):
+        self.server.config = replace(self.server.config, public_url=self.origin.replace('http://', 'https://'))
+        _, headers, _ = self.raw('GET', '/healthz')
+        self.assertEqual('max-age=31536000', headers['Strict-Transport-Security'])
+
+
+class DefaultPasswordTests(unittest.TestCase):
+    DEMO = 'LabCoach-Demo-2026'
+
+    def setUp(self):
+        self.temp = TemporaryDirectory()
+        self.path = Path(self.temp.name) / 'admin.sqlite3'
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def test_live_store_rejects_setting_or_using_the_demo_password(self):
+        live = AdminAuth(self.path)
+        try:
+            for password in (self.DEMO, ' labcoach-demo-2026 '):
+                with self.assertRaises(AdminError):
+                    live.create_account('owner', password, ['members'], role='faculty')
+            live.create_account('owner', 'Synthetic-owner-password-1', ['members'], role='faculty')
+            self.assertTrue(live.has_account('faculty'))
+            self.assertEqual([], live.default_password_accounts())
+        finally:
+            live.close()
+        # A store written by the synthetic demo (or copied from it) stays unusable live.
+        demo = AdminAuth(self.path, allow_default_passwords=True)
+        try:
+            demo.create_account('copied', self.DEMO, ['members'])
+            self.assertEqual([], demo.default_password_accounts())
+            session, _ = demo.session('', create=True)
+            demo.login(session, 'copied', self.DEMO)
+        finally:
+            demo.close()
+        live = AdminAuth(self.path)
+        try:
+            self.assertEqual(['copied'], live.default_password_accounts())
+            session, _ = live.session('', create=True)
+            with self.assertRaises(AdminError) as raised:
+                live.login(session, 'copied', self.DEMO)
+            self.assertEqual(403, raised.exception.status)
+            session, _ = live.session('', create=True)
+            session, _ = live.login(session, 'owner', 'Synthetic-owner-password-1')
+            with self.assertRaises(AdminError):
+                live.change_password(session, dict(current_password='Synthetic-owner-password-1',
+                                                   new_password=self.DEMO, confirm_password=self.DEMO))
+        finally:
+            live.close()
+
+    def test_cli_refuses_live_start_with_demo_password_and_first_run_needs_a_terminal(self):
+        from hermes_zalo import admin_cli
+        with self.assertRaises(AdminError):
+            admin_cli.first_run_owner(self.path, interactive=False)
+        with self.assertRaises(AdminError):
+            admin_cli.live_preflight(self.path)
+        demo = AdminAuth(self.path, allow_default_passwords=True)
+        demo.create_account('owner', self.DEMO, ['members'], role='faculty')
+        demo.close()
+        self.assertFalse(admin_cli.first_run_owner(self.path, interactive=False))
+        with self.assertRaises(AdminError) as raised:
+            admin_cli.live_preflight(self.path)
+        self.assertIn('owner', str(raised.exception))
+        self.assertNotIn(self.DEMO, str(raised.exception))
+        # Never load the developer's real .env into this process (it leaks into later tests).
+        with patch('getpass.getpass', return_value='Synthetic-owner-password-2'), \
+                patch.object(admin_cli, 'load_env'), patch.dict(os.environ, clear=False):
+            self.assertEqual(0, admin_cli.main(['create-console-account', '--auth-db', str(self.path),
+                                                '--username', 'owner', '--replace']))
+        admin_cli.live_preflight(self.path)
+
+    def test_first_run_creates_full_owner_once(self):
+        from hermes_zalo import admin_cli
+        with patch('getpass.getpass', return_value='Synthetic-owner-password-3'), \
+                patch('builtins.input', return_value=''):
+            self.assertTrue(admin_cli.first_run_owner(self.path, interactive=True))
+        self.assertFalse(admin_cli.first_run_owner(self.path, interactive=False))
+        auth = AdminAuth(self.path)
+        try:
+            session, _ = auth.session('', create=True)
+            session, _ = auth.login(session, 'owner', 'Synthetic-owner-password-3')
+            user = auth.user(session)
+            self.assertEqual('faculty', user['role'])
+            self.assertIn('conversations', user['permissions'])
+        finally:
+            auth.close()
+        admin_cli.live_preflight(self.path)
+
+    def test_healthcheck_skips_when_console_is_off_and_probes_when_on(self):
+        from hermes_zalo import admin_cli
+        self.assertEqual(0, admin_cli.healthcheck({}))
+        self.assertEqual(0, admin_cli.healthcheck({'ZALO_ADMIN_ENABLED': 'true', 'ZALO_CONVERSATIONS_ENABLED': 'true',
+                                                   'BOT_START_ENABLED': 'false'}))
+        import socket
+        with socket.socket() as sock:
+            sock.bind(('127.0.0.1', 0))
+            free = sock.getsockname()[1]
+        self.assertEqual(1, admin_cli.healthcheck({'ZALO_ADMIN_ENABLED': 'true', 'ZALO_CONVERSATIONS_ENABLED': 'true',
+                                                   'ZALO_ADMIN_PORT': str(free)}, timeout=1))
+
+
+
+class GatewayRouteSyncTests(unittest.TestCase):
+    def test_vercel_gateway_allowlist_matches_registered_console_sections(self):
+        # The Vercel gateway forwards only allowlisted paths/filters; a new
+        # section must be added there or it silently 404s in production.
+        import re
+        from hermes_zalo import console_sections
+        source = (Path(__file__).resolve().parents[1] / 'deploy/vercel-admin/lib/gateway.js').read_text()
+        routes = {path: (method, re.findall(r"'([^']+)'", query)) for path, method, query in re.findall(
+            r"'(/api/assistant/[a-z0-9-]+(?:/action)?)': \{ method: '(GET|POST)'[^}]*?query: \[([^\]]*)\]", source)}
+        for name in console_sections.names():
+            section = console_sections.get(name)
+            with self.subTest(section=name):
+                self.assertIn('/api/assistant/' + name, routes)
+                method, query = routes['/api/assistant/' + name]
+                self.assertEqual(('GET', sorted(section.query_keys)), (method, sorted(query)))
+                if section.action is not None:
+                    self.assertEqual(('POST', []), routes.get('/api/assistant/' + name + '/action'))
+                else:
+                    self.assertNotIn('/api/assistant/' + name + '/action', routes)
 
 
 if __name__ == '__main__':

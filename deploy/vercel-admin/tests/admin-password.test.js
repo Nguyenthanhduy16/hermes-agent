@@ -60,7 +60,7 @@ test('own password change sends only password fields and CSRF then returns to lo
   assert.equal(instance.state.csrf, '');
   assert.equal(instance.node('password-dialog').open, false);
   assert.equal(instance.node('login-view').hidden, false);
-  assert.match(instance.node('toast').textContent, /Đã đổi mật khẩu/);
+  assert.match(instance.node('toast').textContent, /Password changed/);
   fieldsCleared(instance);
 });
 
@@ -69,22 +69,22 @@ test('mismatched repeat is explained without calling backend', async () => {
   instance.node('password-confirm').value = 'synthetic-other-password';
   await instance.submit();
   assert.equal(instance.calls.length, 0);
-  assert.match(instance.node('password-error').textContent, /chưa khớp/);
+  assert.match(instance.node('password-error').textContent, /do not match/);
   assert.ok(instance.state.user);
   fieldsCleared(instance);
 });
 
 test('rate limited change stays signed in and never repeats a write automatically', async () => {
-  const instance = app(() => response({ error: 'Thử lại sau 10 phút.' }, 429));
+  const instance = app(() => response({ error: 'Try again in 10 minutes.' }, 429));
   await instance.submit();
   assert.equal(instance.calls.length, 1);
   assert.ok(instance.state.user);
-  assert.match(instance.node('password-error').textContent, /10 phút/);
+  assert.match(instance.node('password-error').textContent, /10 minutes/);
   fieldsCleared(instance);
 });
 
 test('revoked session returns to login and clears all entered passwords', async () => {
-  const instance = app(() => response({ error: 'Vui lòng đăng nhập Admin.' }, 401));
+  const instance = app(() => response({ error: 'Please sign in to Admin.' }, 401));
   await instance.submit();
   assert.equal(instance.state.user, null);
   assert.equal(instance.node('login-error').hidden, false);

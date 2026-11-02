@@ -1,6 +1,224 @@
-# LabCoach Admin — Thành viên, Đổi ca, Issue & Hội thoại
+# Hermes Agent Console
 
-Trang riêng cho người quản trị; thành viên vẫn dùng Zalo như hiện tại. Giao diện chạy trên [Vercel](https://hermes-zalo-bot-vercel-admin.vercel.app/), API và dữ liệu chạy trên Railway. Cấu hình mẫu/local vẫn mặc định tắt Admin và lưu hội thoại.
+The main console manages the personal assistant in English. Existing login,
+cookies, CSRF checks and permissions remain in use. The English Lab interface
+is available at `/legacy.html` for the existing member and business workflows.
+
+> **Running it for real (not the demo)?** Follow [production.md](production.md):
+> one-command start with `scripts/run.sh Console`, the owner account, HTTPS
+> reverse proxy, Docker, backups and updates.
+
+## Management pages and connected actions
+
+Navigation is split into a short daily set and an **Advanced** area (details
+below). Pages read the selected bot home and show supported management
+actions. Missing or unsupported data is labeled unavailable. Every change needs
+owner access, confirmation and the revision returned by its snapshot. A conflict
+or uncertain network result requires refreshing; writes are never retried.
+
+The Hostinger-inspired implementation is split into three worker areas:
+connections/settings, automation/skills, and interface. The integrating agent owns
+persistence, HTTP authorization, proxy routes and end-to-end verification.
+
+The sidebar shows **Essentials** for daily use: Home (the briefing), Chat,
+Reports, Automations, Connectors, Channels and Memory. Everything else sits in a
+collapsible **Advanced** area: Agent (Models, Skills, Tools (MCP)), Integrations,
+Observe (System overview, Conversations, Agent activity, Analytics, Experiments,
+Benchmarks), People & usage (Users, Usage & cost) and System (API keys, Settings,
+Logs, Files, Plugins, Webhooks, Admin accounts, Help, System). **Customize
+sidebar** (bottom of the sidebar, or the command palette) pins any page into
+Essentials or removes one; the choice is saved in that browser only and can be
+reset. **Ctrl/Cmd+K** opens the command palette to jump to a page or run a quick
+action (New report, New automation, Open chat…); `/` focuses the page filter.
+The theme follows the system light/dark setting and can be switched from the
+top bar.
+
+Feature pages are self-contained extensions (guide: [console-extensions.md](console-extensions.md)):
+
+| Group | Page | Guide |
+| --- | --- | --- |
+| Observe | Agent activity (step-by-step turn traces), Analytics (latency, errors, tokens, cost) | [observe.md](observe.md) |
+| Observe | Experiments (compare runs and settings snapshots), Benchmarks (task suites, runs, comparison) | [benchmark.md](benchmark.md) |
+| Integrations | Connectors (MCP catalog incl. social platforms and Zalo OA), Reports (scheduled report jobs) | [integrations.md](integrations.md) |
+| More tools | System (gateway status/control, resources, health checks, backups, updates) | [operations.md](operations.md) |
+
+Connector "Test connection", benchmark runs and gateway control are explicit, owner-confirmed
+exceptions to the read-only defaults above; gateway control stays off unless
+`HERMES_CONSOLE_GATEWAY_CONTROL` is set.
+
+| Tab | Implemented controls | When changes apply |
+| --- | --- | --- |
+| Models | Change main model/provider and optional endpoint; assign nine auxiliary task slots | Next gateway start/new sessions |
+| Config | Edit reasoning, tool-call budget, timeouts, compression, time zone and approval mode | Next gateway start |
+| Keys | Add, replace or remove twenty known provider/tool/channel credentials in the bot home `.env`; presence and source only | Next gateway start |
+| Channels | Telegram/Discord/Slack automatic/on/off mode, reply threading and typing indicator; configure tokens in Keys | Next gateway start |
+| MCP | Add an HTTP server, toggle or remove it; optional token stored by reference in `.env` | Next gateway start |
+| Skills | Search/filter by category, enable/disable a skill or category, create a local `SKILL.md` | New sessions |
+| Automations | Create/edit/pause/resume/delete jobs, inspect runs and redacted output excerpts; deliver locally or to a configured Telegram/Zalo home chat; request a run when a scheduler heartbeat is fresh | Running Hermes scheduler's next tick |
+| Plugins | Toggle an installed optional plugin; policy/authentication plugins are protected | Next gateway start |
+| Webhooks | Create a paused signed subscription with local-log delivery, enable/pause/remove a route | Configured webhook gateway must be running |
+| Logs | Filter by file, component, severity, text and 50/100/200/500 lines | On Apply/Refresh |
+
+Memory/sandbox/toolset settings that enforce shared-bot isolation are displayed
+with an explanation and are not editable through generic Config. MCP enabling
+is rejected when chat platforms would receive its tools under their current
+toolset configuration; a server can still be saved disabled. Local stdio MCP
+processes, OAuth login, skill-hub installation, connection probes, gateway restart
+and updates remain operator workflows; the Console does not display working
+controls for unimplemented runtime integrations. Pairing approval, Hermes
+profiles and task boards are not part of the Console; use the Hermes CLI for them.
+
+Credential values are never returned, prefilled or recorded in audit events.
+An empty optional password field preserves the existing secret. Keys removal
+only removes the home `.env` entry; a value supplied by the process environment
+may remain effective. Zalo credentials stay in this repository's existing setup.
+YAML edits preserve unrelated settings but rewrite YAML formatting/comments.
+
+Cron accepts five-field cron expressions, intervals such as `every 2h`, supported
+weekday/time phrases, or an ISO one-shot time. New jobs save locally and cannot
+send to another person from this form. A missing next-run timestamp is explicitly
+pending until Hermes computes it. Deleting a job also deletes its saved output.
+Skill creation accepts up to 7,000 characters of Markdown instructions; it does
+not download or execute third-party code.
+
+- **Files** browses `HERMES_CONSOLE_WORKSPACE`, defaulting to `<home>/workspace`.
+  It lists up to 200 entries and previews supported text files up to 32 KiB and
+  200 lines. Hidden files, credential names, symlinks, databases and key files
+  are excluded. There are no upload, edit, delete or shell operations.
+- **Chat** uses an existing Hermes API configured on the server. Set
+  `HERMES_CONSOLE_CHAT_API_URL` to its origin, `/v1`, or `/v1/chat/completions`,
+  and `HERMES_CONSOLE_CHAT_API_KEY` to its key (`API_SERVER_KEY` is a fallback).
+  `HERMES_CONSOLE_CHAT_MODEL` defaults to `hermes`. HTTPS is required except
+  for loopback HTTP. The browser cannot choose an endpoint or supply a key.
+  Configuration status does not prove gateway health; the first message makes
+  the connection. Requests have a 30-second timeout and are never retried
+  automatically. Chat history stays in the current browser page and is cleared
+  on logout; the connected gateway may retain its own history.
+
+These management pages require the `faculty` role, displayed as **System owner**. Content
+permissions for Sessions and Memory remain separate. Every write also requires
+the existing same-origin session and CSRF token. Demo mode uses synthetic files,
+an in-memory configuration and an explicitly labeled sample chat reply, without contacting
+the real workspace or a model. Standalone mode can use management controls, Files and an
+explicitly configured Chat connection; it does not start the bot or API server.
+
+## Trang quản lý mới
+
+| Mục | Dữ liệu và thao tác hiện có |
+| --- | --- |
+| Tổng quan | Số phiên Hermes, các lần gọi model, token, hoạt động và khả năng có nguồn dữ liệu |
+| Người dùng trợ lý | Allowlist tường minh theo kênh và hạn mức hôm nay; chỉ đọc, không thay thế kiểm tra quyền nhóm/đăng ký của gateway |
+| Hội thoại | Xem danh sách và tin nhắn đã lưu; phân trang, tìm trong trang hiện tại. Chế độ độc lập đọc runtime Hermes; chế độ gắn bot dùng kho hội thoại quản lý cũ |
+| Bộ nhớ | Trong chế độ gắn bot: xem, thêm, sửa, ngừng dùng ghi nhớ quản lý, kiểm tra revision. **Kho này chưa được tiêm vào vòng lặp assistant** |
+| Kỹ năng | Tìm/lọc, bật/tắt skill hoặc nhóm và tạo skill cục bộ; áp dụng cho phiên mới |
+| Lịch tự động | Tạo/sửa/tạm dừng/tiếp tục/xóa lịch; xem lịch sử và trích đoạn kết quả. Lịch mới lưu kết quả cục bộ |
+| Sử dụng & chi phí | Các API attempt từ assistant-core, gồm retry; token, thời gian và lỗi. Chi phí lấy từ mọi phiên Hermes trong cùng home, có nhãn thực tế/ước tính; thiếu giá thì không suy đoán |
+| Máy chủ & sandbox | RAM, ổ đĩa, tải hệ thống, commit runtime và backend được cấu hình. Không cung cấp terminal hoặc nút restart |
+| Quyền truy cập | Danh sách tài khoản quản trị; dùng quy trình hiện có tại trang quản trị dữ liệu cũ để sửa tài khoản |
+
+Vai trò `faculty` được giao diện mới gọi là **Chủ hệ thống**, được đọc metadata
+vận hành. Quyền `conversations` vẫn bắt buộc để xem nội dung hội thoại; xem/sửa
+ghi nhớ quản lý cần cả `conversations` và `memories`. Vai trò cao không tự cấp
+các quyền nội dung này.
+
+Các snapshot runtime chỉ đọc, giới hạn số dòng và kiểm tra schema. Dữ liệu chưa
+có hiện trạng thái chưa kết nối hoặc dấu `—`, không biến thành số 0. Tìm kiếm
+trên giao diện lọc những bản ghi của trang đang mở, không phải tìm toàn bộ kho.
+Lượt xem nội dung phiên runtime được ghi vào nhật ký tài khoản (mã phiên,
+người xem và thời gian; không sao chép nội dung hội thoại vào nhật ký).
+
+Tài khoản `admin` thông thường chỉ thấy các trang nội dung đã được cấp quyền.
+Chủ hệ thống dùng role `faculty`; khi dùng Admin gắn bot, việc chỉ định role này
+thực hiện tường minh bằng lệnh `designate-faculty --username TEN` của công cụ
+quản trị. Console tự chọn trang đầu tiên mà tài khoản được phép mở.
+
+## Chạy thật (production)
+
+Toàn bộ hướng dẫn vận hành thật nằm ở [production.md](production.md): chạy bằng
+một lệnh `scripts/run.sh Console`, tạo tài khoản chủ hệ thống, HTTPS qua reverse
+proxy, Docker, sao lưu, cập nhật và kiểm tra bảo mật. Demo bên dưới chỉ để xem
+giao diện.
+
+## Xem demo trên Linux
+
+```bash
+PYTHONPATH=src .runtime/venv/bin/python -m hermes_zalo.admin_cli demo --port 8790
+```
+
+Mở `http://127.0.0.1:8790`, đăng nhập `admin` / `LabCoach-Demo-2026`. Đây là
+tài khoản dùng cho dữ liệu mô phỏng tạm thời, không dùng cho triển khai thật.
+Demo không gọi Zalo, Telegram, Google hay model. Dừng bằng Ctrl+C.
+
+## Chạy độc lập trên máy hoặc VPS, kể cả Telegram-only
+
+`--home` là **thư mục dữ liệu** của bot (`HERMES_HOME`), không phải thư mục mã
+Hermes (`HERMES_SRC`). Mặc định là `.runtime/hermes-home` của repo, không tự
+chuyển sang home Hermes cá nhân. Để sử dụng home khác, truyền cùng `--home`
+cho cả hai lệnh:
+
+```bash
+PYTHONPATH=src .runtime/venv/bin/python -m hermes_zalo.admin_cli create-console-account \
+  --home .runtime/hermes-home --username owner --permissions conversations
+
+PYTHONPATH=src .runtime/venv/bin/python -m hermes_zalo.admin_cli serve \
+  --home .runtime/hermes-home --port 8790
+```
+
+Mật khẩu nhập ẩn tại terminal. Tài khoản console độc lập lưu trong
+`<home>/console-admin.sqlite3`, tách với tài khoản Admin gắn bot. Có thể truyền
+`--auth-db` để chọn cơ sở tài khoản hiện có một cách tường minh. Không cần token
+Zalo để tạo tài khoản hoặc chạy console độc lập; lệnh `serve` không khởi động
+gateway, không nhận/gửi tin và không tự gọi model. Chat chỉ gọi API đã cấu hình
+khi chủ hệ thống chủ động gửi tin trong trang Chat.
+
+Chế độ độc lập đọc lịch sử runtime, có Files/Chat như mô tả ở trên,
+không bật kho ghi nhớ hoặc nghiệp vụ Lab.
+Nó chỉ trả tin nhắn user/assistant, ẩn system prompt, reasoning, tool call/result
+và payload ảnh. Hermes có thể lưu lịch sử riêng; console không thay thế cơ chế
+đồng ý lưu và thời hạn giữ dữ liệu của gateway.
+
+Mặc định chỉ lắng nghe loopback. Trên VPS có thể truy cập bằng SSH tunnel:
+
+```bash
+ssh -N -L 8790:127.0.0.1:8790 user@vps
+```
+
+Nếu triển khai sau HTTPS proxy, dùng cơ chế `ZALO_ADMIN_HOST`,
+`ZALO_ADMIN_PUBLIC_URL`, `ZALO_ADMIN_PROXY_SECRET` hiện có ở phần hướng dẫn bên
+dưới. Không chạy console độc lập và Admin gắn bot cùng một cổng.
+
+## Frontend Vercel và nguồn tham khảo
+
+`deploy/vercel-admin` đóng gói 6 asset: console mới ở `/`, giao diện cũ ở
+`/legacy.html` và hai cặp CSS/JS. Proxy đã có allowlist cho các endpoint mới;
+auth/Origin/CSRF vẫn do backend kiểm tra. Chỉ build local chưa cập nhật hệ thống
+đang triển khai. Cần phát hành frontend và backend tương thích cùng nhau.
+
+Các ý tưởng được tổng hợp, không chép hay cài mã nguồn dashboard bên ngoài:
+
+- [Hostinger Hermes VPS setup](https://www.hostinger.com/support/how-to-get-started-with-hermes-agent-on-hostinger-vps/): deployment context and operational workflow. The supplied screenshots inform model, cron, skills, keys and channel controls; the implementation keeps this repository's English interface and authorization model.
+
+- [Hermes dashboard chính thức](https://github.com/NousResearch/hermes-agent/blob/main/website/docs/user-guide/features/web-dashboard.md): tổ chức theo phiên, kỹ năng, cron, analytics và hệ thống.
+- [Hermes WebUI](https://github.com/nesquena/hermes-webui): duyệt phiên và thiết kế cho trình duyệt/điện thoại. Có ràng buộc phiên bản với Hermes; repo này không nạp thêm một runtime WebUI.
+- [Hermes Dashboard](https://github.com/Bichev/hermes-dashboard): góc nhìn token và chi phí.
+- [Cockpit](https://cockpit-project.org/): tổng quan tài nguyên VPS. Các thao tác quản trị hệ điều hành vẫn dành cho công cụ vận hành riêng.
+
+Các liên kết nhánh `main` mô tả phiên bản hiện hành của dự án tham khảo, có thể
+khác commit Hermes đang vận hành. Riêng Bichev chỉ tham khảo ý tưởng analytics;
+chưa xác nhận giấy phép để tái sử dụng mã nguồn của dự án đó.
+
+Xem thêm [nghiên cứu cloud của agent](nghien-cuu-quan-ly-cloud.md). Hướng tiếp
+theo là kho nhớ theo người, duyệt hành động và cron có quyền chủ sở hữu; những
+chức năng này chưa được tuyên bố hoàn tất bởi trang quản lý.
+
+---
+
+# Tài liệu quản trị Lab cũ
+
+Các thao tác nghiệp vụ bên dưới thực hiện ở `/legacy.html`, không phải trang console chính.
+
+
+Trang riêng cho người quản trị; thành viên vẫn dùng Zalo như hiện tại. Giao diện chạy trên [Vercel](https://hermes-zalo-bot-vercel-admin.vercel.app/legacy.html), API và dữ liệu chạy trên Railway. Cấu hình mẫu/local vẫn mặc định tắt Admin và lưu hội thoại.
 
 **Duyệt đổi ca:** A gửi → B đồng ý → Admin duyệt trên trang này → cập nhật Sheets. Cấp riêng quyền `tickets` để thấy mục **Duyệt đổi ca**; xem [hướng dẫn thành viên và Admin](duyet-doi-ca.md).
 
@@ -16,7 +234,7 @@ Tại thư mục repo, chạy:
 .\scripts\run.ps1 AdminDemo
 ```
 
-Mở [http://127.0.0.1:8787](http://127.0.0.1:8787). Nếu cổng đang được dùng, dừng bản demo trước hoặc chạy `.\.venv\Scripts\python.exe -m hermes_zalo.admin_cli demo --port 8788`.
+Mở [http://127.0.0.1:8787/legacy.html](http://127.0.0.1:8787/legacy.html). Nếu cổng đang được dùng, dừng bản demo trước hoặc chạy `.\.venv\Scripts\python.exe -m hermes_zalo.admin_cli demo --port 8788`.
 
 | Tài khoản demo | Quyền |
 | --- | --- |
@@ -56,7 +274,7 @@ Mật khẩu chung của **demo**: `LabCoach-Demo-2026`. Không dùng mật kh�
    .\scripts\run.ps1 Start
    ```
 
-4. Đăng nhập [http://127.0.0.1:8787](http://127.0.0.1:8787). Trang Admin mở trong cùng tiến trình bot sau khi bot kết nối thành công; dừng bot thì trang cũng dừng. Địa chỉ này chỉ truy cập được trên máy đang chạy.
+4. Đăng nhập [http://127.0.0.1:8787/legacy.html](http://127.0.0.1:8787/legacy.html). Trang Admin mở trong cùng tiến trình bot sau khi bot kết nối thành công; dừng bot thì trang cũng dừng. Địa chỉ này chỉ truy cập được trên máy đang chạy.
 
 Tắt trang bằng `ZALO_ADMIN_ENABLED=false`. Muốn dừng cả lưu hội thoại và sử dụng ghi nhớ được quản lý, đặt thêm `ZALO_CONVERSATIONS_ENABLED=false` rồi khởi động lại. Việc tắt cờ không tự xóa dữ liệu đã lưu.
 

@@ -140,7 +140,7 @@ class MemberAdminTests(unittest.IsolatedAsyncioTestCase):
         self.person = replace(self.person, name_unique=False)
         detail = await self.admin.detail(self.record.member_id)
         self.assertEqual([], detail['candidates'])
-        self.assertIn('Tên trùng', detail['source_reason'])
+        self.assertIn('duplicate names', detail['source_reason'])
         self.assertIsNone(self.identities.resolve(self.chat.bot_scope, 'member', 'dm-member'))
 
     async def test_preview_does_not_write_and_confirm_creates_verified_member_link(self):
@@ -210,7 +210,7 @@ class MemberAdminTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_never_steals_account_from_another_private_route(self):
         self.add_account(route=('different-user', 'dm-different'))
-        with self.assertRaisesRegex(AdminMemberError, 'thuộc người khác'):
+        with self.assertRaisesRegex(AdminMemberError, 'belongs to someone else'):
             await self.preview()
         self.assertEqual('alpha-account', self.identities.resolve(self.chat.bot_scope, 'different-user', 'dm-different')['id'])
 
@@ -218,11 +218,11 @@ class MemberAdminTests(unittest.IsolatedAsyncioTestCase):
         self.add_account(route=('member', 'dm-member'))
         preview = await self.preview()
         self.identities.bind(self.chat.bot_scope, 'member', 'dm-member', 'alpha-account')
-        with self.assertRaisesRegex(AdminMemberError, 'vừa thay đổi'):
+        with self.assertRaisesRegex(AdminMemberError, 'changed'):
             await self.admin.confirm_link(preview['preview_token'], self.actor)
         preview = await self.preview()
         await self.lock()
-        with self.assertRaisesRegex(AdminMemberError, 'vừa thay đổi'):
+        with self.assertRaisesRegex(AdminMemberError, 'changed'):
             await self.admin.confirm_link(preview['preview_token'], self.actor)
 
     async def test_active_exchange_prevents_repair_including_uncertain_write(self):
@@ -235,7 +235,7 @@ class MemberAdminTests(unittest.IsolatedAsyncioTestCase):
                                ('ticket-fixture', account, 'lab-beta', status, 1,
                                 json.dumps({'a': {'member_id': 'lab-alpha'}, 'b': {'member_id': 'lab-beta'}}),
                                 1, 9999999999, 'synthetic reason', 'idempotent-fixture', 'preview', 'fixture-source', 0))
-                with self.assertRaisesRegex(AdminMemberError, 'Còn yêu cầu'):
+                with self.assertRaisesRegex(AdminMemberError, 'shift exchange request'):
                     await self.preview()
         self.assertIsNone(self.identities.resolve(self.chat.bot_scope, 'member', 'dm-member'))
 
@@ -265,7 +265,7 @@ class MemberAdminTests(unittest.IsolatedAsyncioTestCase):
                        ('started-after-preview', 'alpha-account', 'lab-beta', 'applying', 1,
                         json.dumps({'a': {'member_id': 'lab-alpha'}, 'b': {'member_id': 'lab-beta'}}),
                         1, 9999999999, 'synthetic', 'new-idempotent', 'preview', 'fixture-source', 0))
-        with self.assertRaisesRegex(AdminMemberError, 'Còn yêu cầu'):
+        with self.assertRaisesRegex(AdminMemberError, 'shift exchange request'):
             await self.admin.confirm_link(preview['preview_token'], self.actor)
         self.assertIsNone(self.identities.resolve(self.chat.bot_scope, 'member', 'dm-member'))
 

@@ -18,7 +18,7 @@ class AdminRoleTests(unittest.TestCase):
         self.temp = TemporaryDirectory()
         self.path = Path(self.temp.name) / 'roles.sqlite3'
         self.auth = AdminAuth(self.path)
-        self.auth.create_account('teacher', self.PASSWORD, [], role='faculty', display_name='Giảng viên mẫu')
+        self.auth.create_account('teacher', self.PASSWORD, [], role='faculty', display_name='Demo owner')
         self.teacher = self.login('teacher')
 
     def tearDown(self):

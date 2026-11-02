@@ -33,25 +33,25 @@ class MemberAdmin:
     def flow(self):
         flow = self.work.registration
         if not flow.enabled or not flow.store:
-            raise AdminMemberError('Đăng ký thành viên chưa được cấu hình đầy đủ.')
+            raise AdminMemberError('Member registration is not fully configured.')
         return flow
 
     @staticmethod
     def _actor(actor):
         if not isinstance(actor, str) or not re.fullmatch(r'web:[A-Za-z0-9_.@-]{1,100}', actor):
-            raise AdminMemberError('Phiên quản trị chưa hợp lệ.')
+            raise AdminMemberError('Invalid administrator session.')
 
     @staticmethod
     def _page(page, limit):
         if type(page) is not int or not 1 <= page <= 10000 or type(limit) is not int or not 1 <= limit <= 100:
-            raise AdminMemberError('Trang hoặc số dòng mỗi trang chưa hợp lệ.')
+            raise AdminMemberError('Invalid page or page size.')
 
     def _record(self, member_id):
         if not isinstance(member_id, str) or not re.fullmatch(r'member-[a-f0-9]{32}', member_id):
-            raise AdminMemberError('Mã thành viên chưa hợp lệ.')
+            raise AdminMemberError('Invalid member ID.')
         record = self.flow.store.latest_member(member_id)
         if record is None:
-            raise AdminMemberError('Không tìm thấy thành viên.')
+            raise AdminMemberError('Member not found.')
         return record
 
     def _basic(self, record):
@@ -60,7 +60,7 @@ class MemberAdmin:
                     locked=control['locked'], revision=control['revision'],
                     phone_masked='******' + record.phone[-4:], request_id=record.id,
                     zalo_user_id=record.user_id, private_chat_id=record.chat_id,
-                    group_chat_ids=[], group_note='Quyền nhóm cấu hình riêng; không suy ra từ chat riêng.',
+                    group_chat_ids=[], group_note='Group access is configured separately and cannot be inferred from a private chat.',
                     schedule_name=record.name, name_unique=record.name_unique,
                     created=record.created, updated=max(record.updated, control['updated']))
 
@@ -70,25 +70,25 @@ class MemberAdmin:
 
     def _local_link(self, chat, record):
         if chat is None:
-            return dict(link_status='disabled', link_reason='Đổi ca chưa bật hoặc chưa sẵn sàng.', tickets_account=None)
+            return dict(link_status='disabled', link_reason='Shift exchange is disabled or not ready.', tickets_account=None)
         current = chat.identities.resolve(chat.bot_scope, record.user_id, record.chat_id)
         if not current:
-            return dict(link_status='missing', link_reason='Chưa có liên kết Tickets còn hiệu lực.', tickets_account=None)
+            return dict(link_status='missing', link_reason='No active Tickets link exists.', tickets_account=None)
         account = {key: current[key] for key in ('id', 'member_id', 'name', 'role')}
         if not record.name_unique:
-            state, reason = 'conflict', 'Tên trùng: cần mã phân biệt trong nguồn lịch; chưa thể xác nhận ánh xạ.'
+            state, reason = 'conflict', 'Duplicate name: a unique ID is required in the schedule source before the mapping can be confirmed.'
         elif current['name'] != record.name:
-            state, reason = 'conflict', 'Liên kết Tickets đang thuộc tên khác với đăng ký.'
+            state, reason = 'conflict', 'The Tickets link name differs from the registration name.'
         else:
-            state, reason = 'linked', 'Có liên kết cục bộ; chức năng lịch vẫn kiểm tra nguồn trước khi sử dụng.'
+            state, reason = 'linked', 'A local link exists. Schedule features still verify the source before use.'
         return dict(link_status=state, link_reason=reason, tickets_account=account)
 
     async def list_members(self, query='', status='', link='', page=1, limit=20):
         self._page(page, limit)
         if not isinstance(query, str) or len(query) > 160 or status not in ('', 'pending', 'approved', 'rejected', 'revoked', 'reset', 'locked'):
-            raise AdminMemberError('Bộ lọc thành viên chưa hợp lệ.')
+            raise AdminMemberError('Invalid member filters.')
         if link not in ('', 'linked', 'missing', 'conflict', 'disabled'):
-            raise AdminMemberError('Bộ lọc liên kết chưa hợp lệ.')
+            raise AdminMemberError('Invalid link filters.')
         chat = await self._chat()
         def read():
             with chat.store.lock if chat else nullcontext():
@@ -109,37 +109,37 @@ class MemberAdmin:
 
     async def _validated(self, record, *, unique=False):
         if record.source_key != self.flow.directory.source_key:
-            raise AdminMemberError('Nguồn đăng ký đã thay đổi; cần xác minh lại trước khi sửa quyền hoặc liên kết.')
+            raise AdminMemberError('The registration source has changed. Verify it again before changing access or links.')
         try:
             person = await self.flow.directory.lookup(record.phone)
         except (RegistrationError, WorkloadError):
-            raise AdminMemberError('Chưa đối chiếu được đúng người trong Workload; kiểm tra nguồn trước khi thay đổi.') from None
+            raise AdminMemberError('The person could not be verified in Workload. Check the source before making changes.') from None
         if any(getattr(record, key) != getattr(person, key) for key in ('phone', 'name', 'source_key', 'fingerprint')):
-            raise AdminMemberError('Thông tin Workload đã thay đổi; cần xác minh lại đăng ký.')
+            raise AdminMemberError('Workload details have changed. Verify the registration again.')
         if unique and not person.name_unique:
-            raise AdminMemberError('Tên trùng trong Workload; cần mã phân biệt và ánh xạ lịch, chưa được tự chọn theo tên.')
+            raise AdminMemberError('Workload contains duplicate names. A unique ID and schedule mapping are required; do not select by name alone.')
         if self._record(record.member_id) != record:
-            raise AdminMemberError('Đăng ký vừa thay đổi. Tải lại thông tin thành viên.')
+            raise AdminMemberError('The registration has changed. Reload the member details.')
         return person
 
     async def _source_candidate(self, chat, record):
         if not chat or chat.service.mode not in ('lab_live', 'lab_live_test'):
-            raise AdminMemberError('Bản này chỉ sửa liên kết cho nguồn lịch Lab đã cấu hình.')
+            raise AdminMemberError('This version only repairs links for the configured Lab schedule source.')
         if record.status != 'approved':
-            raise AdminMemberError('Chỉ sửa liên kết của thành viên đã được duyệt; thao tác này không cấp quyền đăng ký.')
+            raise AdminMemberError('Only approved members can have their links repaired. This action does not approve registration.')
         await self._validated(record, unique=True)
         provider = chat.service.provider
         if not self.work.sheets or provider.settings.spreadsheet_id != self.work.sheets.settings.spreadsheet_id:
-            raise AdminMemberError('Nguồn lịch và Workload không khớp.')
+            raise AdminMemberError('The schedule and Workload sources do not match.')
         if chat.service.mode == 'lab_live_test' and record.name not in chat.service.test_members:
-            raise AdminMemberError('Thành viên nằm ngoài phạm vi đổi ca đang thử nghiệm.')
+            raise AdminMemberError('This member is outside the shift exchange pilot scope.')
         try:
             members = await asyncio.to_thread(provider.inspect_members)
         except Exception:
-            raise AdminMemberError('Chưa đọc được danh sách trên lịch. Thử lại sau; chưa sửa dữ liệu.') from None
+            raise AdminMemberError('The schedule roster could not be read. Try again later. No data was changed.') from None
         found = [item for item in members if item.get('member_name') == record.name]
         if len(found) != 1 or not re.fullmatch(r'[A-Za-z0-9_.:-]{1,80}', str(found[0].get('member_id', ''))):
-            raise AdminMemberError('Tên chưa khớp duy nhất một mã trên lịch. Cần bổ sung ánh xạ; không tự đoán.')
+            raise AdminMemberError('The name does not match one unique schedule ID. Add a mapping instead of guessing.')
         source = found[0]
         def candidate():
             with chat.store.lock:
@@ -147,11 +147,11 @@ class MemberAdmin:
                                              (source['member_id'],)).fetchall()
                 active = [dict(row) for row in rows if row['active']]
                 if len(active) > 1 or rows and not active:
-                    raise AdminMemberError('Tài khoản Tickets bị thu hồi hoặc trùng; cần xử lý dữ liệu trước.')
+                    raise AdminMemberError('The Tickets account is revoked or duplicated. Resolve the data issue first.')
                 if active:
                     account = active[0]
                     if account['name'] != record.name or account['role'] != 'member':
-                        raise AdminMemberError('Tên hoặc vai trò tài khoản Tickets không khớp; chưa thay đổi liên kết.')
+                        raise AdminMemberError('The Tickets account name or role does not match. The link was not changed.')
                 else:
                     account = dict(id='zalo-' + digest(source['member_id'])[:24], name=record.name,
                                    role='member', member_id=source['member_id'], active=1)
@@ -172,7 +172,7 @@ class MemberAdmin:
             result['source_checked'] = True
             current = result['tickets_account']
             if current and (current['member_id'] != candidate['member_id'] or current['id'] != candidate['account_id']):
-                result.update(link_status='conflict', link_reason='Liên kết hiện tại khác mã đã đối chiếu trên lịch.')
+                result.update(link_status='conflict', link_reason='The current link differs from the verified schedule ID.')
         except AdminMemberError as error:
             result.update(source_checked=False, source_reason=str(error))
         return result
@@ -180,7 +180,7 @@ class MemberAdmin:
     async def set_locked(self, member_id, locked, actor, expected_revision, confirm=False):
         self._actor(actor)
         if type(locked) is not bool or type(expected_revision) is not int or expected_revision < 0 or confirm is not True:
-            raise AdminMemberError('Cần xác nhận thao tác và phiên bản thông tin đang xem.')
+            raise AdminMemberError('Confirm the action and provide the displayed record revision.')
         record, chat = self._record(member_id), await self._chat()
         if not locked:
             await self._validated(record)
@@ -191,17 +191,17 @@ class MemberAdmin:
                 store = self.flow.store
                 with store._transaction() as db:
                     if self._record(member_id) != record:
-                        raise AdminMemberError('Đăng ký vừa thay đổi; tải lại trước khi xác nhận.')
+                        raise AdminMemberError('The registration has changed. Reload it before confirming.')
                     before = store.member_control(member_id)
                     if before['revision'] != expected_revision:
-                        raise AdminMemberError('Thông tin vừa được cập nhật; tải lại trước khi xác nhận.')
+                        raise AdminMemberError('The details have been updated. Reload them before confirming.')
                     if before['locked'] != locked:
                         store._bump_revision(db, member_id)
                         db.execute('UPDATE registration_member_controls SET locked=? WHERE member_id=?', (int(locked), member_id))
                         store._audit_admin(db, member_id, actor, 'locked' if locked else 'unlocked',
                                            {'locked': before['locked'], 'status': record.status},
                                            {'locked': locked, 'status': record.status})
-                    return self._basic(record) | {'message': 'Đã khóa quyền dùng bot.' if locked else 'Đã bỏ khóa; trạng thái đăng ký và quyền nhóm giữ nguyên.'}
+                    return self._basic(record) | {'message': 'Bot access was locked.' if locked else 'Bot access was unlocked. Registration status and group access are unchanged.'}
         return await asyncio.to_thread(change)
 
     def _snapshot(self, chat, record, candidate):
@@ -210,22 +210,22 @@ class MemberAdmin:
             if candidate['create_account']:
                 if chat.store.db.execute('SELECT 1 FROM ticket_accounts WHERE id=? OR (member_id=? AND active=1)',
                                          (candidate['account_id'], candidate['member_id'])).fetchone():
-                    raise AdminMemberError('Tài khoản đích vừa thay đổi; tải lại trước khi sửa.')
+                    raise AdminMemberError('The target account has changed. Reload it before making changes.')
             elif (not account or any(account[key] != candidate[source] for key, source in
                     (('id', 'account_id'), ('member_id', 'member_id'), ('name', 'name'))) or account['role'] != 'member'):
-                raise AdminMemberError('Tài khoản đích vừa thay đổi; tải lại trước khi sửa.')
+                raise AdminMemberError('The target account has changed. Reload it before making changes.')
             rows = [dict(row) for row in chat.store.db.execute(
                 'SELECT * FROM ticket_zalo_bindings WHERE bot=? AND (user_id=? OR chat_id=? OR account=?) ORDER BY account',
                 (chat.bot_scope, record.user_id, record.chat_id, candidate['account_id']))]
             if any(row['user_id'] != record.user_id or row['chat_id'] != record.chat_id for row in rows):
-                raise AdminMemberError('Tài khoản đích hoặc chat đã thuộc người khác. Chưa ghi đè; cần xác minh và thu hồi đúng liên kết cũ.')
+                raise AdminMemberError('The target account or chat belongs to someone else. Nothing was overwritten. Verify and revoke the correct old link first.')
             accounts = {row['account'] for row in rows} | {candidate['account_id']}
             members = {row['member_id'] for row in rows} | {candidate['member_id']}
             for ticket in chat.store.db.execute('SELECT creator,recipient,body FROM exchange_tickets WHERE status IN (?,?,?,?)', ACTIVE):
                 body = json.loads(ticket['body'])
                 if ticket['creator'] in accounts or ticket['recipient'] in members or any(
                         body.get(side, {}).get('member_id') in members for side in ('a', 'b')):
-                    raise AdminMemberError('Còn yêu cầu đổi ca đang chờ hoặc cần kiểm tra kết quả. Hoàn tất/hủy đúng yêu cầu trước khi sửa liên kết.')
+                    raise AdminMemberError('A shift exchange request is pending or needs reconciliation. Complete or cancel the correct request before repairing the link.')
             return dict(record_id=record.id, user_id=record.user_id, chat_id=record.chat_id,
                         registration_revision=self.flow.store.member_control(record.member_id)['revision'],
                         bindings=rows, candidate=candidate)
@@ -235,26 +235,26 @@ class MemberAdmin:
         record, chat = self._record(member_id), await self._chat()
         candidate = await self._source_candidate(chat, record)
         if target_account_id != candidate['account_id']:
-            raise AdminMemberError('Chọn đúng tài khoản đã đối chiếu từ danh sách đề xuất.')
+            raise AdminMemberError('Choose the verified account from the suggested list.')
         snapshot = await asyncio.to_thread(self._snapshot, chat, record, candidate)
         self._previews = {key: value for key, value in self._previews.items() if value['expires'] > self.clock()}
         if len(self._previews) >= 100:
-            raise AdminMemberError('Có nhiều bản xem trước đang mở; thử lại sau ít phút.')
+            raise AdminMemberError('Too many previews are open. Try again in a few minutes.')
         token = secrets.token_urlsafe(32)
         self._previews[hashlib.sha256(token.encode()).hexdigest()] = dict(
             actor=actor, member_id=member_id, snapshot=snapshot, expires=self.clock() + 300)
         return dict(preview_token=token, expires=self.clock() + 300,
                     before=snapshot['bindings'], after=dict(candidate, zalo_user_id=record.user_id, private_chat_id=record.chat_id),
-                    message='Chỉ sửa liên kết nội bộ của đúng thành viên; không sửa lịch, cấp vai trò hoặc chuyển tài khoản của người khác.')
+                    message='Repair only this member\'s internal link. Do not change the schedule, grant roles or transfer another person\'s account.')
 
     async def confirm_link(self, preview_token, actor):
         self._actor(actor)
         if not isinstance(preview_token, str) or not 20 <= len(preview_token) <= 100:
-            raise AdminMemberError('Bản xem trước chưa hợp lệ.')
+            raise AdminMemberError('Invalid preview.')
         key = hashlib.sha256(preview_token.encode()).hexdigest()
         preview = self._previews.get(key)
         if not preview or preview['actor'] != actor or preview['expires'] <= self.clock():
-            raise AdminMemberError('Bản xem trước hết hạn hoặc không thuộc phiên quản trị này.')
+            raise AdminMemberError('The preview has expired or belongs to another administrator session.')
         record, chat = self._record(preview['member_id']), await self._chat()
         candidate = await self._source_candidate(chat, record)
         def apply():
@@ -262,9 +262,9 @@ class MemberAdmin:
                 store = self.flow.store
                 with store._transaction() as reg_db:
                     if preview['expires'] <= self.clock() or self._previews.get(key) is not preview:
-                        raise AdminMemberError('Bản xem trước hết hạn hoặc đã được sử dụng.')
+                        raise AdminMemberError('The preview has expired or has already been used.')
                     if self._record(record.member_id) != record or self._snapshot(chat, record, candidate) != preview['snapshot']:
-                        raise AdminMemberError('Thông tin hoặc liên kết vừa thay đổi; tạo bản xem trước mới.')
+                        raise AdminMemberError('The details or link have changed. Create a new preview.')
                     before = preview['snapshot']['bindings']
                     with chat.store.transaction() as db:
                         if candidate['create_account']:
@@ -290,7 +290,7 @@ class MemberAdmin:
                         store._audit_admin(reg_db, record.member_id, actor, 'tickets_link', {'bindings': before}, after)
                     self._previews.pop(key, None)
                     return dict(ok=True, member_id=record.member_id, revision=store.member_control(record.member_id)['revision'],
-                                message='Đã cập nhật liên kết Tickets; lịch thật không thay đổi.')
+                                message='The Tickets link was updated. The actual schedule was not changed.')
         return await asyncio.to_thread(apply)
 
     async def _correction_person(self, phone):
@@ -300,29 +300,29 @@ class MemberAdmin:
         except (RegistrationError, WorkloadError) as error:
             raise AdminMemberError(str(error)) from None
         if person.source_key != self.flow.directory.source_key:
-            raise AdminMemberError('Nguồn Workload đã thay đổi; tải lại trước khi sửa đăng ký.')
+            raise AdminMemberError('The Workload source has changed. Reload it before repairing registration.')
         if not person.name_unique:
-            raise AdminMemberError('Tên trùng trong Workload; cần bổ sung mã phân biệt trước khi sửa đăng ký.')
+            raise AdminMemberError('Workload contains duplicate names. Add a unique ID before repairing registration.')
         return person
 
     async def _correction_schedule(self, chat, person):
         if chat is None:
             if (str(getattr(self.work, '_tickets_values', {}).get('TICKETS_CHAT_MODE') or 'off').lower() != 'off' or
                     getattr(self.work, '_tickets_error', False)):
-                raise AdminMemberError('Đổi ca đang bật nhưng chưa kiểm tra được liên kết. Thử lại sau.')
+                raise AdminMemberError('Shift exchange is enabled, but its link could not be verified. Try again later.')
             return None
         if (chat.service.mode not in ('lab_live', 'lab_live_test') or not self.work.sheets or
                 chat.service.provider.settings.spreadsheet_id != self.work.sheets.settings.spreadsheet_id):
-            raise AdminMemberError('Nguồn Tickets chưa hỗ trợ sửa đăng ký từ Workload này.')
+            raise AdminMemberError('The Tickets source does not support registration repair from this Workload.')
         if chat.service.mode == 'lab_live_test' and person.name not in chat.service.test_members:
-            raise AdminMemberError('Người được chọn nằm ngoài phạm vi đổi ca đang thử nghiệm.')
+            raise AdminMemberError('The selected person is outside the shift exchange pilot scope.')
         try:
             members = await asyncio.to_thread(chat.service.provider.inspect_members)
         except Exception:
-            raise AdminMemberError('Chưa đọc được danh sách lịch; thử lại sau. Chưa sửa đăng ký.') from None
+            raise AdminMemberError('The schedule roster could not be read. Try again later. Registration was not changed.') from None
         found = [row for row in members if row.get('member_name') == person.name]
         if len(found) != 1 or not re.fullmatch(r'[A-Za-z0-9_.:-]{1,80}', str(found[0].get('member_id', ''))):
-            raise AdminMemberError('Tên chưa khớp duy nhất một mã trên lịch. Cần bổ sung ánh xạ trước khi sửa.')
+            raise AdminMemberError('The name does not match one unique schedule ID. Add a mapping before making changes.')
         return dict(member_id=found[0]['member_id'], name=person.name)
 
     def _correction_tickets_snapshot(self, chat, record, schedule):
@@ -334,15 +334,15 @@ class MemberAdmin:
             'SELECT * FROM ticket_zalo_bindings WHERE bot=? AND (user_id=? OR chat_id=? OR member_id=?) ORDER BY account',
             (chat.bot_scope, record.user_id, record.chat_id, schedule['member_id']))]
         if any(row['user_id'] != record.user_id or row['chat_id'] != record.chat_id for row in rows):
-            raise AdminMemberError('Liên kết lịch đích đã thuộc tài khoản Zalo khác; chưa ghi đè.')
+            raise AdminMemberError('The target schedule link belongs to another Zalo account. Nothing was overwritten.')
         if any(row['role'] != 'member' for row in rows):
-            raise AdminMemberError('Liên kết có quyền quản trị; cần người vận hành kiểm tra riêng.')
+            raise AdminMemberError('This link has administrative privileges and requires a separate operator review.')
         accounts = [dict(row) for row in chat.store.db.execute(
             'SELECT id,name,role,member_id,active FROM ticket_accounts WHERE member_id=? ORDER BY id',
             (schedule['member_id'],))]
         if accounts and (len(accounts) != 1 or accounts[0]['active'] != 1 or
                          accounts[0]['role'] != 'member' or accounts[0]['name'] != schedule['name']):
-            raise AdminMemberError('Tài khoản lịch đích bị khóa hoặc xung đột; cần kiểm tra trước khi sửa.')
+            raise AdminMemberError('The target schedule account is locked or conflicting. Review it before making changes.')
         old_accounts = [dict(row) for row in chat.store.db.execute(
             'SELECT id,member_id FROM ticket_accounts WHERE name=?', (record.name,))]
         member_ids = {row['member_id'] for row in rows + accounts + old_accounts} | {schedule['member_id']}
@@ -351,7 +351,7 @@ class MemberAdmin:
             body = json.loads(ticket['body'])
             if ticket['creator'] in account_ids or ticket['recipient'] in member_ids or any(
                     body.get(side, {}).get('member_id') in member_ids for side in ('a', 'b')):
-                raise AdminMemberError('Còn yêu cầu đổi ca đang xử lý. Hoàn tất hoặc hủy yêu cầu trước khi sửa đăng ký.')
+                raise AdminMemberError('A shift exchange request is still being processed. Complete or cancel it before repairing registration.')
         return dict(bindings=rows, accounts=accounts, old_accounts=old_accounts)
 
     async def preview_registration(self, member_id, phone, reason, actor):
@@ -370,7 +370,7 @@ class MemberAdmin:
         self._registration_previews = {key: value for key, value in self._registration_previews.items()
                                        if value['expires'] > self.clock()}
         if len(self._registration_previews) >= 100:
-            raise AdminMemberError('Có nhiều bản xem trước đang mở; thử lại sau ít phút.')
+            raise AdminMemberError('Too many previews are open. Try again in a few minutes.')
         token = secrets.token_urlsafe(32)
         self._registration_previews[hashlib.sha256(token.encode()).hexdigest()] = dict(
             record=record, person=person, actor=actor, registration=registration, tickets=tickets,
@@ -380,21 +380,19 @@ class MemberAdmin:
                     after=dict(name=person.name, phone_masked='******' + person.phone[-4:],
                                member_id=registration.get('target_member_id'),
                                zalo_user_id=record.user_id, private_chat_id=record.chat_id),
-                    message='Xác minh đúng chủ tài khoản trước khi lưu. Đăng ký cũ sẽ bị thu hồi và người đúng được duyệt. '
-                            'Ngữ cảnh cũ được làm mới, nhắc việc thủ công cũ được dừng; lịch sử và issue không chuyển sang người mới. '
-                            'Không sửa ô lịch trên Sheets. Liên kết đổi ca được tạo lại khi thành viên dùng bot.')
+                    message='Verify the account owner before saving. The previous registration will be revoked and the correct person approved. The old context is reset and old manual reminders are stopped; history and issues are not transferred. Schedule cells in Sheets are not changed. The shift exchange link is recreated when the member uses the bot.')
 
     async def confirm_registration(self, preview_token, actor, *, authorize=None):
         self._actor(actor)
         if not isinstance(preview_token, str) or not 20 <= len(preview_token) <= 100:
-            raise AdminMemberError('Bản xem trước chưa hợp lệ.')
+            raise AdminMemberError('Invalid preview.')
         key = hashlib.sha256(preview_token.encode()).hexdigest()
         preview = self._registration_previews.get(key)
         if not preview or preview['actor'] != actor or preview['expires'] <= self.clock():
-            raise AdminMemberError('Bản xem trước hết hạn hoặc không thuộc quản trị này.')
+            raise AdminMemberError('The preview has expired or belongs to another administrator.')
         person = await self._correction_person(preview['person'].phone)
         if person != preview['person']:
-            raise AdminMemberError('Workload vừa thay đổi; tạo bản xem trước mới.')
+            raise AdminMemberError('Workload has changed. Create a new preview.')
         chat = await self._chat()
         schedule = await self._correction_schedule(chat, person)
         record, store = preview['record'], self.flow.store
@@ -407,12 +405,12 @@ class MemberAdmin:
                 if authorize:
                     authorize()
                 if preview['expires'] <= self.clock() or self._registration_previews.get(key) is not preview:
-                    raise AdminMemberError('Bản xem trước hết hạn hoặc đã được sử dụng.')
+                    raise AdminMemberError('The preview has expired or has already been used.')
                 try:
                     if (store.correction_snapshot(record, person) != preview['registration'] or
                             schedule != preview['schedule'] or
                             self._correction_tickets_snapshot(chat, record, schedule) != preview['tickets']):
-                        raise AdminMemberError('Thông tin vừa thay đổi; tạo bản xem trước mới.')
+                        raise AdminMemberError('The details have changed. Create a new preview.')
                     self._registration_previews.pop(key, None)
                     self.work.reminders.detach_registration(record.user_id)
                     self.work.issues.detach_registration(record.user_id)
@@ -428,8 +426,8 @@ class MemberAdmin:
                     result = store.correct_registration(actor, record, person, preview['registration'], preview['reason'])
                 except RegistrationError as error:
                     raise AdminMemberError(str(error)) from None
-        return self._basic(result) | dict(ok=True, message='Đã sửa đăng ký thành công: ' + result.name +
-                '. Thành viên có thể gửi /dangky trangthai, /lichcuatoi hoặc /doica; không cần đăng ký lại.')
+        return self._basic(result) | dict(ok=True, message='Registration repaired successfully: ' + result.name +
+                '. The member can use /dangky trangthai, /lichcuatoi or /doica without registering again.')
 
     def _reset_tickets_snapshot(self, chat, record):
         """Inspect only local ownership and open work; roster reads are unnecessary.
@@ -440,23 +438,23 @@ class MemberAdmin:
         if chat is None:
             if (str(getattr(self.work, '_tickets_values', {}).get('TICKETS_CHAT_MODE') or 'off').lower() != 'off' or
                     getattr(self.work, '_tickets_error', False)):
-                raise AdminMemberError('Đổi ca đang bật nhưng chưa kiểm tra được liên kết. Thử lại sau.')
+                raise AdminMemberError('Shift exchange is enabled, but its link could not be verified. Try again later.')
             return None
         db = chat.store.db
         bindings = [dict(row) for row in db.execute(
             'SELECT * FROM ticket_zalo_bindings WHERE bot=? AND (user_id=? OR chat_id=?) ORDER BY account',
             (chat.bot_scope, record.user_id, record.chat_id))]
         if any(row['user_id'] != record.user_id or row['chat_id'] != record.chat_id for row in bindings):
-            raise AdminMemberError('Liên kết chat đang xung đột với tài khoản khác; cần kiểm tra trước khi xóa đăng ký.')
+            raise AdminMemberError('The chat link conflicts with another account. Review it before resetting registration.')
         if any(row['role'] != 'member' for row in bindings):
-            raise AdminMemberError('Liên kết có quyền quản trị; cần người vận hành kiểm tra riêng.')
+            raise AdminMemberError('This link has administrative privileges and requires a separate operator review.')
         links = []
         if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='ticket_registration_links'").fetchone():
             links = [dict(row) for row in db.execute(
                 'SELECT * FROM ticket_registration_links WHERE bot=? AND member_id=?',
                 (chat.bot_scope, record.member_id))]
             if any(row['registration_id'] != record.id for row in links):
-                raise AdminMemberError('Liên kết đổi ca thuộc đăng ký khác; tải lại và kiểm tra trước khi xóa.')
+                raise AdminMemberError('The shift exchange link belongs to another registration. Reload and review it before resetting.')
         accounts = {row['account'] for row in bindings + links}
         names = [dict(row) for row in db.execute('SELECT id,member_id FROM ticket_accounts WHERE name=?', (record.name,))]
         # A legacy account may exist without a route. Its outstanding work must
@@ -467,17 +465,17 @@ class MemberAdmin:
             owner = db.execute('SELECT user_id,chat_id,role FROM ticket_zalo_bindings WHERE bot=? AND account=?',
                                (chat.bot_scope, link['account'])).fetchone()
             if owner and (owner['user_id'] != record.user_id or owner['chat_id'] != record.chat_id or owner['role'] != 'member'):
-                raise AdminMemberError('Liên kết đổi ca đang thuộc tài khoản khác; chưa xóa đăng ký.')
+                raise AdminMemberError('The shift exchange link belongs to another account. Registration was not reset.')
             account = db.execute('SELECT member_id,role FROM ticket_accounts WHERE id=?', (link['account'],)).fetchone()
             if account:
                 if account['role'] != 'member':
-                    raise AdminMemberError('Liên kết có quyền quản trị; cần người vận hành kiểm tra riêng.')
+                    raise AdminMemberError('This link has administrative privileges and requires a separate operator review.')
                 members.add(account['member_id'])
         for ticket in db.execute('SELECT creator,recipient,body FROM exchange_tickets WHERE status IN (?,?,?,?)', ACTIVE):
             body = json.loads(ticket['body'])
             if (ticket['creator'] in accounts or ticket['recipient'] in members or any(
                     body.get(side, {}).get('member_id') in members for side in ('a', 'b'))):
-                raise AdminMemberError('Còn yêu cầu đổi ca đang xử lý. Hoàn tất hoặc hủy yêu cầu trước khi xóa đăng ký.')
+                raise AdminMemberError('A shift exchange request is still being processed. Complete or cancel it before resetting registration.')
         return dict(bindings=bindings, links=links)
 
     async def reset_registration(self, member_id, request_id, expected_revision, reason, actor, *, confirm=False, authorize=None):
@@ -490,10 +488,10 @@ class MemberAdmin:
         self._actor(actor)
         if (confirm is not True or type(expected_revision) is not int or expected_revision < 0 or
                 not isinstance(request_id, str) or not re.fullmatch(r'DK-[A-F0-9]{8}', request_id)):
-            raise AdminMemberError('Cần xác nhận đúng đăng ký và phiên bản thông tin đang xem.')
+            raise AdminMemberError('Confirm the correct registration and provide the displayed record revision.')
         record = self._record(member_id)
         if record.id != request_id:
-            raise AdminMemberError('Đăng ký vừa thay đổi; tải lại trước khi xóa.')
+            raise AdminMemberError('The registration has changed. Reload it before resetting.')
         chat = await self._chat()
         store = self.flow.store
         with chat.store.lock if chat else nullcontext():
@@ -504,7 +502,7 @@ class MemberAdmin:
                     reason = store._correction_actor_reason(actor, reason)
                     snapshot = store.reset_snapshot(record)
                     if store.member_control(member_id)['revision'] != expected_revision:
-                        raise AdminMemberError('Thông tin vừa được cập nhật; tải lại trước khi xóa.')
+                        raise AdminMemberError('The details have been updated. Reload them before resetting.')
                     self._reset_tickets_snapshot(chat, record)
                     self.work.reminders.detach_registration(record.user_id)
                     self.work.issues.detach_registration(record.user_id)
@@ -521,8 +519,7 @@ class MemberAdmin:
                     result = store.reset_registration(actor, record, snapshot, reason)
                 except RegistrationError as error:
                     raise AdminMemberError(str(error)) from None
-        return self._basic(result) | dict(ok=True, message='Đã xóa đăng ký. Thành viên nhắn riêng bot: '
-            '/dangky SỐ_ĐIỆN_THOẠI, dùng số hiện tại trên Workload để đăng ký lại.')
+        return self._basic(result) | dict(ok=True, message='Registration was reset. The member can message the bot privately with /dangky PHONE_NUMBER using their current Workload phone number to register again.')
 
     async def audit(self, member_id, page=1, limit=20):
         self._record(member_id)

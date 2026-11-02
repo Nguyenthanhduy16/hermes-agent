@@ -73,7 +73,7 @@ class AdminRegistrationRepairTests(unittest.IsolatedAsyncioTestCase):
         self.add_account(route=('member', 'dm-member'))
         preview = await self.preview()
         self.target = replace(self.target, fingerprint='new-source-row')
-        with self.assertRaisesRegex(AdminMemberError, 'Workload vừa thay đổi'):
+        with self.assertRaisesRegex(AdminMemberError, 'Workload has changed'):
             await self.confirm(preview)
         self.assert_original()
         self.assertIsNotNone(self.identities.resolve(self.chat.bot_scope, 'member', 'dm-member'))
@@ -84,12 +84,12 @@ class AdminRegistrationRepairTests(unittest.IsolatedAsyncioTestCase):
     async def test_duplicate_name_and_missing_or_ambiguous_schedule_do_not_guess(self):
         original = self.target
         self.target = replace(original, name_unique=False)
-        with self.assertRaisesRegex(AdminMemberError, 'Tên trùng'):
+        with self.assertRaisesRegex(AdminMemberError, 'duplicate names'):
             await self.preview()
         self.target = original
         for candidates in ([], [dict(member_id='lab-beta', member_name=original.name)] * 2):
             self.provider.inspect_members.return_value = candidates
-            with self.assertRaisesRegex(AdminMemberError, 'duy nhất'):
+            with self.assertRaisesRegex(AdminMemberError, 'unique'):
                 await self.preview()
         self.assert_original()
 
@@ -103,11 +103,11 @@ class AdminRegistrationRepairTests(unittest.IsolatedAsyncioTestCase):
     async def test_missing_ticket_runtime_blocks_when_enabled_or_open_failed(self):
         with patch.object(self.admin, '_chat', new=AsyncMock(return_value=None)):
             self.work._tickets_values['TICKETS_CHAT_MODE'] = 'lab_live'
-            with self.assertRaisesRegex(AdminMemberError, 'chưa kiểm tra được'):
+            with self.assertRaisesRegex(AdminMemberError, 'could not be verified'):
                 await self.preview()
             self.work._tickets_values['TICKETS_CHAT_MODE'] = 'off'
             self.work._tickets_error = True
-            with self.assertRaisesRegex(AdminMemberError, 'chưa kiểm tra được'):
+            with self.assertRaisesRegex(AdminMemberError, 'could not be verified'):
                 await self.preview()
         self.assert_original()
 
@@ -123,13 +123,13 @@ class AdminRegistrationRepairTests(unittest.IsolatedAsyncioTestCase):
         preview = await self.preview()
         self.provider.inspect_members.side_effect = RuntimeError('synthetic upstream failure')
         for operation in (self.preview, lambda: self.confirm(preview)):
-            with self.assertRaisesRegex(AdminMemberError, 'Chưa đọc được danh sách lịch'):
+            with self.assertRaisesRegex(AdminMemberError, 'schedule roster could not be read'):
                 await operation()
         self.assert_original()
 
     async def test_target_tickets_route_belongs_to_other_person_is_never_overwritten(self):
         self.add_account('beta-account', 'lab-beta', self.target.name, ('other-user', 'other-dm'))
-        with self.assertRaisesRegex(AdminMemberError, 'tài khoản Zalo khác'):
+        with self.assertRaisesRegex(AdminMemberError, 'another Zalo account'):
             await self.preview()
         self.assertEqual('beta-account', self.identities.resolve(self.chat.bot_scope, 'other-user', 'other-dm')['id'])
         self.assert_original()
@@ -148,9 +148,9 @@ class AdminRegistrationRepairTests(unittest.IsolatedAsyncioTestCase):
         preview = await self.preview()
         for status in ('pending_peer', 'pending_manager', 'applying', 'uncertain'):
             self.open_exchange(status)
-            with self.assertRaisesRegex(AdminMemberError, 'Còn yêu cầu'):
+            with self.assertRaisesRegex(AdminMemberError, 'shift exchange request'):
                 await self.preview()
-            with self.assertRaisesRegex(AdminMemberError, 'Còn yêu cầu'):
+            with self.assertRaisesRegex(AdminMemberError, 'shift exchange request'):
                 await self.confirm(preview)
         self.assert_original()
         self.assertIsNotNone(self.identities.resolve(self.chat.bot_scope, 'member', 'dm-member'))
@@ -159,12 +159,12 @@ class AdminRegistrationRepairTests(unittest.IsolatedAsyncioTestCase):
         self.add_account(route=('member', 'dm-member'))
         preview = await self.preview()
         self.identities.bind(self.chat.bot_scope, 'member', 'dm-member', 'alpha-account')
-        with self.assertRaisesRegex(AdminMemberError, 'vừa thay đổi'):
+        with self.assertRaisesRegex(AdminMemberError, 'changed'):
             await self.confirm(preview)
         preview = await self.preview()
         with self.store._transaction() as db:
             self.store._bump_revision(db, self.record.member_id)
-        with self.assertRaisesRegex(AdminMemberError, 'vừa thay đổi'):
+        with self.assertRaisesRegex(AdminMemberError, 'changed'):
             await self.confirm(preview)
         self.assert_original()
 
