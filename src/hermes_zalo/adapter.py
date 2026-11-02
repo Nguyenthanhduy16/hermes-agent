@@ -1,7 +1,9 @@
 """Official Zalo transport for the Hermes platform-plugin interface.
 
-Work commands and source-backed answers are handled locally. AI only classifies
-work requests; no inbound message may fall through to general conversation.
+Work commands and source-backed answers are handled locally. In ``lab`` mode
+AI only classifies work requests; no inbound message may fall through to
+general conversation. In ``assistant`` mode every other admitted message
+(text or image) runs the full Hermes agent loop with the configured toolsets.
 """
 
 import asyncio
@@ -43,30 +45,45 @@ TURN_TIMEOUT_SECONDS = 300
 def scoped_settings() -> Settings:
     values = {
         name: get_scoped_secret(name, "") or ""
-        for name in ("ZALO_BOT_TOKEN", "ZALO_ALLOWED_USERS", "ZALO_ALLOWED_GROUPS", "ZALO_STATE_DIR", "ZALO_KNOWLEDGE_DIR", "ZALO_GROUP_ACCESS")
+        for name in ("ZALO_BOT_TOKEN", "ZALO_ALLOWED_USERS", "ZALO_ALLOWED_GROUPS", "ZALO_STATE_DIR", "ZALO_KNOWLEDGE_DIR", "ZALO_GROUP_ACCESS", "ZALO_BOT_MODE")
     }
     if not values["ZALO_STATE_DIR"]:
         values["ZALO_STATE_DIR"] = str(Path(get_hermes_home()) / "zalo-state")
     return Settings.from_mapping(values)
 
 
-def assert_chat_only() -> None:
+# Never exposed to a messaging chat, even in assistant mode: they act on the
+# host desktop/accounts rather than inside the agent's sandbox.
+FORBIDDEN_ASSISTANT_TOOLSETS = frozenset({"computer_use", "desktop_ui", "connections", "setup", "project"})
+
+
+def assert_chat_only(assistant: bool = False) -> None:
     """Reject unsafe config, including implicit tools added by Hermes plugins.
 
 An empty adapter override is ignored by some Hermes releases; checking the
 effective resolver is required instead of assuming that returning [] suffices.
+Assistant mode needs an explicit toolset list instead of an empty one.
 """
     from hermes_cli.config_effective import load_user_config_effective
     from hermes_cli.tools_config import _get_platform_tools
 
     config = load_user_config_effective(Path(get_hermes_home()) / "config.yaml", fail_closed=True)
-    if (config.get("platform_toolsets") or {}).get("zalo") != []:
+    toolsets = (config.get("platform_toolsets") or {}).get("zalo")
+    if assistant:
+        if not isinstance(toolsets, list) or not toolsets:
+            raise ConfigError("Assistant mode requires an explicit platform_toolsets.zalo list.")
+        if FORBIDDEN_ASSISTANT_TOOLSETS.intersection(toolsets):
+            raise ConfigError("platform_toolsets.zalo contains host-level toolsets not allowed in chat.")
+    else:
+        if toolsets != []:
             raise ConfigError("Zalo requires platform_toolsets.zalo: []; work commands run in the adapter.")
-    if _get_platform_tools(config, "zalo"):
-        raise ConfigError("Hermes still exposes tools to Zalo; disable tools, MCP and other tool plugins.")
+        if _get_platform_tools(config, "zalo"):
+            raise ConfigError("Hermes still exposes tools to Zalo; disable tools, MCP and other tool plugins.")
     memory = config.get("memory") or {}
+    # Hermes memory is one store per home, shared by every Zalo user, so it
+    # stays off in both modes until memory is scoped per user/group.
     if memory.get("memory_enabled") is not False or memory.get("user_profile_enabled") is not False:
-        raise ConfigError("Phase 1 requires memory.memory_enabled and memory.user_profile_enabled: false.")
+        raise ConfigError("Zalo requires memory.memory_enabled and memory.user_profile_enabled: false.")
     gateway = config.get("gateway") or {}
     if gateway.get("delivery_ledger") is not False:
         raise ConfigError("Phase 1 requires gateway.delivery_ledger: false to avoid ambiguous Zalo resends.")
@@ -76,6 +93,12 @@ effective resolver is required instead of assuming that returning [] suffices.
         raise ConfigError("Phase 1 requires gateway.multiplex_profiles: false in a dedicated Hermes home.")
     if gateway.get("profile_routes") or config.get("profile_routes"):
         raise ConfigError("Profile routing is disabled for the phase 1 Zalo adapter.")
+
+
+def cache_image(data: bytes) -> str:
+    """Store an inbound image in Hermes' media cache (validates image bytes)."""
+    from gateway.platforms.base import cache_image_from_bytes
+    return cache_image_from_bytes(data, ".jpg")
 
 
 class ZaloAdapter(BasePlatformAdapter):
@@ -109,11 +132,15 @@ class ZaloAdapter(BasePlatformAdapter):
         self._archive_sequence = 0
         self._archive_task = None
         self._send_permit = ContextVar("zalo_send_permit", default=None)
+        # Assistant mode: latest admitted message per chat, and Hermes turns
+        # still running (id(event) -> message) for completion bookkeeping.
+        self._agent_chats: dict[str, object] = {}
+        self._agent_turns: dict[int, object] = {}
 
     async def connect(self, *, is_reconnect: bool = False) -> bool:
         protect_logs()
         try:
-            assert_chat_only()
+            assert_chat_only(self.settings.assistant)
             if not self._message_handler:
                 raise ConfigError("Hermes gateway message handler is not installed.")
             token_id = sha256(self.settings.token.encode()).hexdigest()
@@ -159,7 +186,8 @@ class ZaloAdapter(BasePlatformAdapter):
             self._tickets_task = asyncio.create_task(self._tickets_loop(), name="zalo-ticket-notifications")
             if getattr(self.work, 'managed_issues', None) is not None:
                 self._issues_task = asyncio.create_task(self._issues_loop(), name="zalo-issue-notifications")
-            logger.info("Zalo adapter connected; group capability=%s", self._groups_supported)
+            logger.info("Zalo adapter connected; mode=%s group capability=%s",
+                        self.settings.bot_mode, self._groups_supported)
             return True
         except AuthenticationError:
             self._set_fatal_error("zalo_auth", "Zalo rejected the bot token.", retryable=False)
@@ -591,7 +619,7 @@ class ZaloAdapter(BasePlatformAdapter):
             await self._notify_fatal_error()
 
     async def _dispatch(self, update: dict) -> None:
-        message = parse_update(update)
+        message = parse_update(update, images=self.settings.assistant)
         if message is None:
             return
         if len(message.text) > self.settings.max_inbound_chars:
@@ -617,7 +645,7 @@ class ZaloAdapter(BasePlatformAdapter):
         # Accept the bot's display name or account handle only at the start.
         if message.chat_type == "GROUP" and self._bot_names:
             message = replace(message, text=strip_bot_mention(message.text, self._bot_names))
-        assert_chat_only()
+        assert_chat_only(self.settings.assistant)
         if not self.store.reserve(message.key):
             logger.info("Zalo duplicate update ignored")
             if self.work:
@@ -674,6 +702,14 @@ class ZaloAdapter(BasePlatformAdapter):
                         self.store.finish(message.key, 'failed_uncertain')
                         return
                     self.conversations.mark_notice(message)
+            if await self._agent_route(message):
+                await self._start_agent_turn(message, source)
+                return
+            if message.photo_url:
+                response = 'Bot chưa được bật chế độ trợ lý nên chưa xử lý ảnh. Gửi /menu để xem lệnh.'
+                delivered = await self.send(message.chat_id, response, reply_to=message.message_id)
+                self.store.finish(message.key, 'completed' if delivered.success else 'failed_uncertain')
+                return
             response = await asyncio.wait_for(self.work.handle(message), timeout=TURN_TIMEOUT_SECONDS) if self.work else None
             # Fail closed even if a future work route accidentally returns None.
             # Never use managed chat or the Hermes gateway as a fallback; the
@@ -708,13 +744,132 @@ class ZaloAdapter(BasePlatformAdapter):
             self._reply_chat = None
 
     async def on_processing_complete(self, event: MessageEvent, outcome: ProcessingOutcome) -> None:
+        message = self._agent_turns.pop(id(event), None)
+        if message is not None:
+            ok = outcome == ProcessingOutcome.SUCCESS
+            if self.store:
+                self.store.finish(message.key, "completed" if ok else "failed_uncertain")
+            if self.conversations:
+                self.conversations.complete_turn(message, is_chat=True)
+            if self.work:
+                self.work.pilot.record("agent", "ok" if ok else "uncertain",
+                                       (time.monotonic() - getattr(event, "_zalo_started", time.monotonic())) * 1000)
+            return
         if event is self._current_event:
             self._current_outcome = "completed" if outcome == ProcessingOutcome.SUCCESS and not self._delivery_failed else "failed_uncertain"
 
     async def handle_message(self, event: MessageEvent) -> None:
-        # All Zalo input belongs to _dispatch/WorkService. Background resume or
-        # direct gateway delivery cannot reopen unrestricted model generation.
+        # All Zalo input belongs to _dispatch. Only an event it admitted for
+        # the agent loop (assistant mode) may reach the Hermes gateway; a
+        # background resume or direct delivery cannot open model generation.
+        if self.settings.assistant and getattr(event, "_zalo_agent_turn", False):
+            await super().handle_message(event)
+            return
         event._gateway_accepted = False
+
+    # ---- assistant mode -------------------------------------------------
+
+    def _agent_allowed(self, message) -> bool:
+        """Full agent access: allowlisted users, approved members in their own
+        DM, or any member of a group opened with ZALO_GROUP_ACCESS=members.
+        Unapproved senders admitted only to enrol never reach the model."""
+        if self.work and self.work.member_admin_locked(
+                message.user_id, message.chat_id if message.chat_type == "PRIVATE" else None):
+            return False
+        if is_allowed(message, self.settings.allowed_users, self.settings.allowed_groups,
+                      group_members=self.settings.group_access == "members"):
+            return not (self.work and self.work.background_registration_blocked(
+                message.user_id, message.chat_id, message.chat_type))
+        return bool(self.work and self.work.member_feature_allowed(
+            message.user_id, message.chat_id, message.chat_type))
+
+    async def _agent_route(self, message) -> bool:
+        if not self.settings.assistant or not self._agent_allowed(message):
+            return False
+        # Slash commands and open multi-step work dialogs stay in WorkService.
+        return not (self.work and await self.work.owns_turn(message))
+
+    async def _start_agent_turn(self, message, source) -> None:
+        text, media_urls, media_types, kind = message.text, [], [], MessageType.TEXT
+        if message.photo_url:
+            try:
+                data = await self.client.download(message.photo_url)
+                media_urls.append(await asyncio.to_thread(cache_image, data))
+                media_types.append("image/jpeg")
+                kind = getattr(MessageType, "PHOTO", MessageType.TEXT)
+            except (ZaloAPIError, ValueError, OSError):
+                logger.info("Zalo inbound image could not be downloaded")
+                text = (text + "\n" if text else "") + "[Người dùng gửi một ảnh nhưng bot không tải được ảnh.]"
+        event = MessageEvent(
+            text=text, message_type=kind, source=source, user_id=message.user_id,
+            message_id=message.message_id, media_urls=media_urls, media_types=media_types,
+            allow_gateway_control=False, reply_expected=True,
+        )
+        event._zalo_agent_turn = True
+        event._zalo_started = time.monotonic()
+        self._agent_chats[message.chat_id] = message
+        self._agent_turns[id(event)] = message
+        # The gateway task copies this context: it must not inherit the work
+        # turn's reply permit, which ends when _dispatch returns.
+        token = self._send_permit.set(None)
+        try:
+            await self.handle_message(event)
+        finally:
+            self._send_permit.reset(token)
+        if not getattr(event, "_gateway_accepted", False):
+            self._agent_turns.pop(id(event), None)
+            self.store.finish(message.key, "failed_uncertain")
+
+    def _agent_destination(self, chat_id: str):
+        """The admitted message a Hermes send to this chat belongs to, if the
+        chat is still authorized. Cron or unknown destinations are refused."""
+        message = self._agent_chats.get(str(chat_id))
+        if not self.settings.assistant or message is None or self.client is None:
+            return None
+        return message if self._agent_allowed(message) else None
+
+    async def _agent_send(self, message, content: str) -> SendResult:
+        text = content[:self.settings.max_reply_chars]
+        ids, chunk, key = [], "", None
+        try:
+            for chunk in split_text(text):
+                self._archive_sequence += 1
+                key = "agent-" + str(self._archive_sequence)
+                result = await self.client.send_text_chunk(message.chat_id, chunk)
+                self._archive_agent(message, chunk, "sent", key)
+                if result.get("message_id") is not None:
+                    ids.append(str(result["message_id"]))
+            return SendResult(success=True, message_id=ids[-1] if ids else None,
+                              continuation_message_ids=tuple(ids[:-1]))
+        except AuthenticationError:
+            self._archive_agent(message, chunk, "failed", key)
+            self._set_fatal_error("zalo_auth", "Zalo rejected the token while sending.", retryable=False)
+            return SendResult(success=False, error="ZALO_AUTH_REJECTED", retryable=False)
+        except (DeliveryUncertain, ZaloAPIError):
+            self._archive_agent(message, chunk, "uncertain", key)
+            logger.warning("Zalo agent reply incomplete or unconfirmed; automatic resend disabled")
+            return SendResult(success=False, error="ZALO_DELIVERY_UNCONFIRMED", retryable=False)
+
+    def _archive_agent(self, message, text, status, key):
+        if self.conversations and text:
+            self.conversations.record_outgoing(message, text, status=status, delivery_key=key)
+
+    async def _agent_send_photo(self, chat_id: str, photo, caption=None) -> SendResult:
+        message = self._agent_destination(chat_id)
+        if message is None:
+            return SendResult(success=False, error="ZALO_SEND_DENIED", retryable=False)
+        try:
+            if isinstance(photo, Path):
+                data = await asyncio.to_thread(photo.read_bytes)
+                result = await self.client.send_photo(message.chat_id, data, caption, filename=photo.name)
+            else:
+                result = await self.client.send_photo(message.chat_id, photo, caption)
+            self._archive_agent(message, "[ảnh] " + (caption or ""), "sent", "agent-photo")
+            return SendResult(success=True, message_id=str(result.get("message_id")))
+        except (ValueError, OSError):
+            return SendResult(success=False, error="ZALO_PHOTO_INVALID", retryable=False)
+        except (DeliveryUncertain, ZaloAPIError):
+            return SendResult(success=False, error="ZALO_DELIVERY_UNCONFIRMED", retryable=False)
 
     async def _record_delivery_obligation(self, *args, **kwargs):
         # Hermes can otherwise replay a failed/ambiguous final after restart or
@@ -733,6 +888,12 @@ class ZaloAdapter(BasePlatformAdapter):
         # Only the active, authorized inbound turn may produce a reply. Cron,
         # model-initiated sends and unrelated destinations are outside phase 1.
         permit = self._send_permit.get()
+        if not permit and content:
+            # Hermes agent turns reply from a background task, after _dispatch
+            # returned; they may only reach a chat that admitted an agent turn.
+            message = self._agent_destination(chat_id)
+            if message is not None:
+                return await self._agent_send(message, content)
         if (not permit or not permit["active"] or permit["chat_id"] != str(chat_id)
                 or permit["message_id"] != reply_to
                 or self._reply_chat != str(chat_id) or self.client is None or self._delivery_failed
@@ -785,29 +946,37 @@ class ZaloAdapter(BasePlatformAdapter):
             return SendResult(success=False, error="ZALO_DELIVERY_UNCONFIRMED", retryable=False)
 
     async def send_typing(self, chat_id: str, metadata=None) -> None:
-        return None
+        if self._agent_destination(chat_id) is not None:
+            with suppress(ZaloAPIError):
+                await self.client.send_chat_action(str(chat_id), "typing")
+
+    async def send_image(self, chat_id: str, image_url: str, caption=None, reply_to=None, metadata=None) -> SendResult:
+        return await self._agent_send_photo(chat_id, image_url, caption)
+
+    async def send_image_file(self, chat_id: str, image_path: str, caption=None, reply_to=None,
+                              metadata=None, **kwargs) -> SendResult:
+        return await self._agent_send_photo(chat_id, Path(image_path), caption)
 
     # Hermes normally recognizes image URLs and local paths in model prose and
-    # may turn them into attachments. Keep all model output plain text here;
+    # may turn them into attachments. In lab mode keep all output plain text;
     # an untrusted request must never trigger local file discovery or upload.
-    @staticmethod
-    def extract_media(content: str):
-        return [], content
+    # Assistant mode uses Hermes' own MEDIA:/path validation (sandboxed paths).
+    def extract_media(self, content: str):
+        return super().extract_media(content) if self.settings.assistant else ([], content)
 
-    @staticmethod
-    def extract_images(content: str):
-        return [], content
+    def extract_images(self, content: str):
+        return super().extract_images(content) if self.settings.assistant else ([], content)
 
-    @staticmethod
-    def extract_local_files(content: str):
-        return [], content
+    def extract_local_files(self, content: str):
+        return super().extract_local_files(content) if self.settings.assistant else ([], content)
 
     async def get_chat_info(self, chat_id: str) -> dict:
         return {"name": str(chat_id), "type": "group" if str(chat_id) in self.settings.allowed_groups else "dm"}
 
     def toolsets_for_source(self, source):
         # Defense in depth only: assert_chat_only checks the effective resolver.
-        return []
+        # None defers to the checked platform_toolsets.zalo list.
+        return None if self.settings.assistant else []
 
 
 def check_requirements() -> bool:
@@ -818,7 +987,32 @@ def check_requirements() -> bool:
         return False
 
 
+LAB_HINT = ("LabCoach only supports enabled Lab work features and authorized source-backed document lookup. "
+            "Do not answer general knowledge, writing, coding or unrelated conversation. Plain Vietnamese text only. You have no tools. "
+            "Do not infer company-specific facts, a user's roster identity, internal rules or document contents. "
+            "Never claim to read internal documents/calendar, schedule reminders, exchange shifts, send notifications "
+            "or create issues yourself, and never claim a command completed. The application handles work commands "
+            "and supported Vietnamese work requests with their existing permissions. Guide users to /menu, /help lich, "
+            "/help nhac, /help tailieu, /help tickets or /help issue when they need those capabilities. "
+            "Commands include /hoi QUESTION, /tailieu, /lich homnay, /lichcuatoi mai, /nhac, /thongbao, /doica "
+            "and /issue. Never assume a feature is enabled; issue creation and shift exchanges require the application's "
+            "own confirmation flow. For private work details, direct users to their authorized application commands.")
+
+ASSISTANT_HINT = (
+    "You are a personal assistant inside Zalo (Vietnam's messaging app). Reply in the user's language, "
+    "Vietnamese by default, short and conversational. Zalo shows plain text only: no Markdown tables, headings "
+    "or code fences unless the user asks for code; one message holds at most 2000 characters. "
+    "In groups you only see messages that @mention you or reply to you, and each member has a separate session. "
+    "Users cannot send files (CSV/Excel/PDF) through Zalo Bot; ask for a public link (Google Sheets/Drive export, "
+    "GitHub raw, etc.) or a photo of the table instead, then download and analyse it with your tools. "
+    "To send a chart or image, save it as PNG/JPG and include MEDIA:/absolute/path on its own line; never "
+    "mention other local paths. Lab work (schedule, shift swaps, issues, registration, reminders) is handled "
+    "by app commands with their own permissions: suggest /menu, /lich, /lichcuatoi, /doica, /issue, /nhac "
+    "instead of claiming you did those actions. Never reveal tokens, environment variables or other users' data.")
+
+
 def register(ctx) -> None:
+    assistant = (get_scoped_secret("ZALO_BOT_MODE", "") or "lab").strip().lower() == "assistant"
     ctx.register_platform(
         name="zalo",
         label="Zalo Bot Platform (official)",
@@ -831,15 +1025,6 @@ def register(ctx) -> None:
         trusted_inbound=False,
         display_tier="minimal",
         max_message_length=2000,
-        platform_hint=("LabCoach only supports enabled Lab work features and authorized source-backed document lookup. "
-                       "Do not answer general knowledge, writing, coding or unrelated conversation. Plain Vietnamese text only. You have no tools. "
-                       "Do not infer company-specific facts, a user's roster identity, internal rules or document contents. "
-                       "Never claim to read internal documents/calendar, schedule reminders, exchange shifts, send notifications "
-                       "or create issues yourself, and never claim a command completed. The application handles work commands "
-                       "and supported Vietnamese work requests with their existing permissions. Guide users to /menu, /help lich, "
-                       "/help nhac, /help tailieu, /help tickets or /help issue when they need those capabilities. "
-                       "Commands include /hoi QUESTION, /tailieu, /lich homnay, /lichcuatoi mai, /nhac, /thongbao, /doica "
-                       "and /issue. Never assume a feature is enabled; issue creation and shift exchanges require the application's "
-                       "own confirmation flow. For private work details, direct users to their authorized application commands."),
+        platform_hint=ASSISTANT_HINT if assistant else LAB_HINT,
         emoji="💬",
     )

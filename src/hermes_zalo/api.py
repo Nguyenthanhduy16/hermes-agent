@@ -15,6 +15,9 @@ import random
 import httpx
 
 
+MAX_PHOTO_BYTES = 10 * 1024 * 1024
+
+
 class ZaloAPIError(RuntimeError):
     """Safe to display: deliberately excludes response content and request URLs."""
 
@@ -148,11 +151,56 @@ class ZaloClient:
             raise DeliveryUncertain("Zalo did not confirm a message ID; no automatic resend.", method="sendMessage")
         return result
 
+    async def send_photo(self, chat_id: str, photo: str | bytes, caption: str | None = None, *,
+                         filename: str = "image.png") -> dict:
+        """Send an image by public URL, or upload bytes as multipart/form-data.
+
+The docs only show ``photo`` as a URL; multipart upload is the generic
+upload path described for all methods and must be verified live.
+"""
+        if not isinstance(chat_id, str) or not chat_id.strip():
+            raise ValueError("A nonempty chat ID string is required.")
+        body = {"chat_id": chat_id}
+        if caption:
+            body["caption"] = caption[:2000]
+        files = None
+        if isinstance(photo, bytes):
+            if not photo or len(photo) > MAX_PHOTO_BYTES:
+                raise ValueError("Image is empty or too large.")
+            files = {"photo": (filename, photo)}
+        elif isinstance(photo, str) and photo.startswith("https://"):
+            body["photo"] = photo
+        else:
+            raise ValueError("photo must be an https URL or image bytes.")
+        result = await self._request("sendPhoto", body, sending=True, files=files)
+        if not isinstance(result.get("message_id"), (str, int)) or isinstance(result.get("message_id"), bool):
+            raise DeliveryUncertain("Zalo did not confirm a message ID; no automatic resend.", method="sendPhoto")
+        return result
+
+    async def send_chat_action(self, chat_id: str, action: str = "typing") -> None:
+        await self._request("sendChatAction", {"chat_id": chat_id, "action": action})
+
+    async def download(self, url: str, *, limit: int = MAX_PHOTO_BYTES) -> bytes:
+        """Fetch an inbound Zalo media URL with a hard size cap; never sends the token."""
+        if not isinstance(url, str) or not url.startswith("https://"):
+            raise ZaloAPIError("Media URL must use https.", method="download")
+        async with self._client.stream("GET", url, timeout=httpx.Timeout(10, read=30),
+                                       follow_redirects=True) as response:
+            if response.status_code != 200:
+                raise ZaloAPIError("Media download failed.", status_code=response.status_code, method="download")
+            data = bytearray()
+            async for chunk in response.aiter_bytes():
+                data.extend(chunk)
+                if len(data) > limit:
+                    raise ZaloAPIError("Media exceeds the size limit.", method="download")
+        return bytes(data)
+
     async def _request(
         self,
         method: str,
         body: dict,
         *,
+        files: dict | None = None,
         sending: bool = False,
         poll: bool = False,
         read_timeout: int = 20,
@@ -169,9 +217,10 @@ class ZaloClient:
                 if allowed is not True:
                     raise DeliveryBlocked("Zalo delivery authorization changed.", method=method)
             try:
+                payload_args = {"data": body, "files": files} if files else {"json": body}
                 response = await self._client.post(
                     self._base_url + "/" + method,
-                    json=body,
+                    **payload_args,
                     timeout=httpx.Timeout(10, read=read_timeout),
                     follow_redirects=False,
                 )

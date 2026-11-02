@@ -11,6 +11,8 @@ class IncomingMessage:
     message_id: str
     chat_type: str
     text: str
+    # Assistant mode only: a Zalo-hosted image (message.image.received).
+    photo_url: str | None = None
 
     @property
     def key(self) -> str:
@@ -28,10 +30,11 @@ def _id(value) -> str | None:
     return value if value and not any(c in value for c in (":", "\0", "\r", "\n")) else None
 
 
-def parse_update(update: dict) -> IncomingMessage | None:
+def parse_update(update: dict, *, images: bool = False) -> IncomingMessage | None:
     if not isinstance(update, dict):
         return None
-    if update.get("event_name") != "message.text.received":
+    event_name = update.get("event_name")
+    if event_name != "message.text.received" and not (images and event_name == "message.image.received"):
         return None
     message = update.get("message")
     if not isinstance(message, dict):
@@ -45,8 +48,16 @@ def parse_update(update: dict) -> IncomingMessage | None:
     if chat_type not in ("PRIVATE", "GROUP"):
         return None
     chat_id, user_id, message_id = _id(chat.get("id")), _id(sender.get("id")), _id(message.get("message_id"))
+    if not all((chat_id, user_id, message_id)):
+        return None
+    if event_name == "message.image.received":
+        photo_url, caption = message.get("photo_url"), message.get("caption")
+        if not isinstance(photo_url, str) or not photo_url.startswith("https://"):
+            return None
+        return IncomingMessage(chat_id, user_id, message_id, chat_type,
+                               caption if isinstance(caption, str) else "", photo_url)
     text = message.get("text")
-    if not all((chat_id, user_id, message_id)) or not isinstance(text, str) or not text.strip():
+    if not isinstance(text, str) or not text.strip():
         return None
     return IncomingMessage(chat_id, user_id, message_id, chat_type, text)
 

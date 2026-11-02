@@ -1,0 +1,38 @@
+# Overlay applied on top of hermes.config.example.yaml when ZALO_BOT_MODE=assistant
+# or TELEGRAM_BOT_TOKEN is set. The assistant-core plugin also vetoes
+# session_search, skill_manage and memory until they are isolated per person.
+# Lab commands (/lich, /doica, /issue, /dangky...) still run in the adapter;
+# every other admitted message runs the full Hermes agent loop with these tools.
+platform_toolsets:
+  zalo:
+    - web             # web_search, web_extract: fetch CSV/Sheets links, research
+    - vision          # read photos users send (tables, receipts, screenshots)
+    - code_execution  # execute_code: pandas/matplotlib analysis, charts as PNG
+    - file            # read/write files inside the sandbox
+    - skills          # SKILL.md library (skills_list/view/manage)
+    - todo            # multi-step planning
+  telegram:
+    - web
+    - vision
+    - code_execution
+    - file
+    - skills
+    - todo
+# Commands and code run in a Docker sandbox, not on the bot host: the host
+# holds the Zalo token, model keys and Google credentials. Railway cannot run
+# Docker; see docs/tro-ly-zalo.md before enabling assistant mode there.
+terminal:
+  backend: docker
+  cwd: /workspace
+  docker_image: nousresearch/hermes-sandbox:desktop
+  docker_mount_cwd_to_workspace: false
+  timeout: 180
+  lifetime_seconds: 600
+code_execution:
+  timeout: 180
+  max_tool_calls: 30
+# Hermes memory is one store per home, shared by every Zalo user: keep it off
+# until it is scoped per user/group (the adapter refuses to start otherwise).
+memory:
+  memory_enabled: false
+  user_profile_enabled: false

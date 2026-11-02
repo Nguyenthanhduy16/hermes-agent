@@ -117,6 +117,24 @@ class WorkService:
     def registration_admission(self, message):
         return bool(self.registration.bootstrap(message) or self.registration.approved(message))
 
+    async def owns_turn(self, message):
+        """Assistant mode: inputs WorkService must keep instead of the agent.
+
+Slash commands, enrolment phrases and an open Tickets dialog (free-form
+reasons, numeric choices) never become model input.
+"""
+        text = message.text.lstrip()
+        if text.startswith('/') or normalized(text).startswith(('dang ky', 'nhac minh')):
+            return True
+        # Recognised Lab phrases ("lịch hôm nay", "mình muốn đổi ca") keep
+        # their direct, zero-model route; a generic "what can you do" does not.
+        if text and interpret(text)[0] not in ('', '/trogiup', '/hoi'):
+            return True
+        if message.chat_type != 'PRIVATE' or not text:
+            return False
+        chat = await self._open_tickets()
+        return bool(chat is not None and await asyncio.to_thread(chat.has_dialog, message))
+
     def group_registration_response(self, message):
         """Enrollment gates group usage without expanding any existing ACL."""
         if message.chat_type != 'GROUP' or not self.registration.requested:

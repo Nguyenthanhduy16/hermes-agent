@@ -1,0 +1,24 @@
+name: assistant-core
+version: 0.1.0
+description: Platform-independent assistant core (per-person quota, tool policy, SCER-AH telemetry) for every Hermes messaging channel.
+author: hermes-zalo-bot
+provides_hooks:
+  - pre_gateway_dispatch
+  - pre_tool_call
+  - post_tool_call
+  - pre_api_request
+  - post_api_request
+  - api_request_error
+optional_env:
+  - name: ASSISTANT_USER_DAILY_LIMIT
+    description: Agent turns per person per day (Vietnam time), default 30
+    password: false
+  - name: ASSISTANT_TOTAL_DAILY_LIMIT
+    description: Agent turns for the whole bot per day, default 500
+    password: false
+  - name: ASSISTANT_BLOCKED_TOOLS
+    description: Comma-separated tools vetoed in chat, default session_search,skill_manage,memory
+    password: false
+  - name: ASSISTANT_RUN_LABEL
+    description: Label for this gateway run in telemetry (e.g. baseline, router-v1) to compare settings
+    password: false

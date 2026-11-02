@@ -45,6 +45,13 @@ class Settings:
     max_reply_chars: int = 12000
     knowledge_dir: Path = field(default_factory=lambda: Path("data/knowledge").resolve())
     group_access: str = "allowlist"
+    # lab: work commands only (phase 1). assistant: commands stay local and
+    # every other admitted message runs the full Hermes agent loop.
+    bot_mode: str = "lab"
+
+    @property
+    def assistant(self) -> bool:
+        return self.bot_mode == "assistant"
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -63,6 +70,9 @@ class Settings:
         group_access = values.get("ZALO_GROUP_ACCESS") or "allowlist"
         if group_access not in ("allowlist", "members"):
             raise ConfigError("ZALO_GROUP_ACCESS can la allowlist hoac members.")
+        bot_mode = (values.get("ZALO_BOT_MODE") or "lab").strip().lower()
+        if bot_mode not in ("lab", "assistant"):
+            raise ConfigError("ZALO_BOT_MODE can la lab hoac assistant.")
         return cls(
             token=token,
             allowed_users=users,
@@ -70,4 +80,5 @@ class Settings:
             state_dir=Path(values.get("ZALO_STATE_DIR") or "data").resolve(),
             knowledge_dir=Path(values.get("ZALO_KNOWLEDGE_DIR") or "data/knowledge").resolve(),
             group_access=group_access,
+            bot_mode=bot_mode,
         )
