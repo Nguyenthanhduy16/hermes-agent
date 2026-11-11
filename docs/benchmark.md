@@ -278,6 +278,9 @@ PYTHONPATH=src .runtime/venv/bin/python -m assistant_core.bench run --suite dabe
 PYTHONPATH=src .runtime/venv/bin/python -m assistant_core.bench show <RUN_ID>
 ```
 
+Để so sánh các chính sách định tuyến trên cùng suite, xem
+[định tuyến theo từng bước](dinh-tuyen.md#4-chạy-các-cấu-hình-đối-chứng).
+
 `show` in thêm ba chỉ số của bài báo, tính trên các câu đã được chấm:
 
 | Chỉ số | Cách tính |

@@ -69,7 +69,8 @@ ENABLE_HINT = ("No agent telemetry has been recorded yet. Enable the assistant-c
 API_COLUMNS = ("id", "run_id", "ts", "platform", "session_id", "turn_id", "api_request_id", "api_call_count",
                "retry_count", "provider", "model", "response_model", "duration_s", "ttfb_s", "finish_reason",
                "error_type", "status_code", "input_tokens", "output_tokens", "cache_read_tokens",
-               "cache_write_tokens", "reasoning_tokens", "message_count", "context_length", "tool_call_count")
+               "cache_write_tokens", "reasoning_tokens", "message_count", "context_length", "tool_call_count",
+               "route_policy", "route_choice", "route_reason")
 TOOL_COLUMNS = ("id", "run_id", "ts", "platform", "session_id", "turn_id", "api_request_id", "tool_name", "status",
                 "error_type", "duration_ms", "blocked")
 TOKEN_KEYS = ("input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens", "reasoning_tokens")
@@ -239,7 +240,10 @@ def _api_event(row):
              "api_call_count": _int(row.get("api_call_count")), "retry_count": _int(row.get("retry_count")),
              "finish_reason": _name(row.get("finish_reason"), 40), "error_type": _name(row.get("error_type"), 80),
              "status_code": _int(row.get("status_code")), "message_count": _int(row.get("message_count")),
-             "context_length": _int(row.get("context_length")), "tool_call_count": _int(row.get("tool_call_count"))}
+             "context_length": _int(row.get("context_length")), "tool_call_count": _int(row.get("tool_call_count")),
+             # The router's decision for this step (assistant_core.router), when it made one.
+             "route_policy": _name(row.get("route_policy"), 40), "route_choice": _name(row.get("route_choice"), 20),
+             "route_reason": _name(row.get("route_reason"), 120)}
     for key in TOKEN_KEYS:
         value = _int(row.get(key))
         event[key] = value if value is None or value >= 0 else None
@@ -590,7 +594,8 @@ def _step(event, origin, pricing, request_steps):
     if event["kind"] == "api":
         step.update({k: event[k] for k in ("provider", "model", "response_model", "api_call_count", "retry_count",
                                             "finish_reason", "status_code", "message_count", "context_length",
-                                            "tool_call_count", *TOKEN_KEYS)})
+                                            "tool_call_count", "route_policy", "route_choice", "route_reason",
+                                            *TOKEN_KEYS)})
         step["ttfb_ms"] = round(event["ttfb_s"] * 1000, 1) if event["ttfb_s"] is not None else None
         step["cost_usd"] = _round(pricing.cost(event), 6) if pricing is not None and pricing.available else None
         step["status"] = "error" if event["error_type"] else "ok"

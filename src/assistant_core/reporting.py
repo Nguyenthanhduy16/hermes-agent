@@ -57,12 +57,29 @@ def tools(telemetry_db: Path, since: float = 0.0) -> list[dict]:
         FROM tool_calls WHERE ts >= ? GROUP BY tool_name ORDER BY calls DESC""", (since,))
 
 
+STEP_COLUMNS = ("ts, turn_id, api_request_id, api_call_count, retry_count, model, duration_s, ttfb_s, "
+                "finish_reason, error_type, input_tokens, output_tokens, cache_read_tokens, tool_call_count")
+ROUTE_COLUMNS = "default_model, route_policy, route_choice, route_reason, route_score, route_switched, route_features"
+
+
 def session_steps(telemetry_db: Path, session_id: str) -> list[dict]:
-    """Chronological API attempts of one session: the trajectory view for the router."""
-    return _rows(telemetry_db, """
-        SELECT ts, turn_id, api_request_id, api_call_count, retry_count, model, duration_s, ttfb_s,
-               finish_reason, error_type, input_tokens, output_tokens, cache_read_tokens, tool_call_count
-        FROM api_calls WHERE session_id = ? ORDER BY ts""", (session_id,))
+    """Chronological API attempts of one session: the trajectory view for the router.
+
+    Routed steps carry the router's decision; ``route_features`` is parsed into a dict.
+    """
+    query = "SELECT {} FROM api_calls WHERE session_id = ? ORDER BY ts"
+    try:
+        rows = _rows(telemetry_db, query.format(f"{STEP_COLUMNS}, {ROUTE_COLUMNS}"), (session_id,))
+    except sqlite3.OperationalError as error:  # a store written before the router existed
+        if "no such column" not in str(error):
+            raise
+        return _rows(telemetry_db, query.format(STEP_COLUMNS), (session_id,))
+    for row in rows:
+        try:
+            row["route_features"] = json.loads(row["route_features"]) if row["route_features"] else None
+        except ValueError:
+            row["route_features"] = None
+    return rows
 
 
 def quota_today(quota_db: Path, day: str) -> dict:
@@ -231,6 +248,21 @@ def session_totals(telemetry_db: Path, session_ids) -> dict:
                                                            cache_read_tokens=0, errors=0, models={},
                                                            tool_calls=0, tool_failures=0))
             entry.update(tool_calls=row["tool_calls"], tool_failures=row["tool_failures"])
+        # Routed steps in order; a retried step has several rows and counts once.
+        previous = {}
+        for row in _safe_rows(telemetry_db, f"""
+            SELECT session_id, api_request_id, MIN(route_choice) AS choice, MIN(ts) AS first_ts
+            FROM api_calls WHERE session_id IN ({_marks(chunk)}) AND route_choice IS NOT NULL
+            GROUP BY session_id, api_request_id ORDER BY session_id, first_ts""", chunk):
+            entry = out.get(row["session_id"])
+            if entry is None:
+                continue
+            routing = entry.setdefault("routing", dict(steps=0, cheap=0, switches=0))
+            routing["steps"] += 1
+            routing["cheap"] += row["choice"] == "cheap"
+            if previous.get(row["session_id"]) not in (None, row["choice"]):
+                routing["switches"] += 1
+            previous[row["session_id"]] = row["choice"]
     return out
 
 

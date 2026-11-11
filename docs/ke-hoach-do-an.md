@@ -39,12 +39,12 @@ Cập nhật 11/11/2026. Hạn: cuối tháng 12/2026. Các mốc trong báo cá
 | # | Gói việc | Trạng thái |
 |---|---|---|
 | A | Máy thực nghiệm: Hermes ghim, Docker sandbox, API server, telemetry; chọn cặp mô hình mạnh/rẻ; thử đổi mô hình giữa các bước và đo token cache | Chưa làm (chỉ làm được trên máy Linux) |
-| B | Bộ đánh giá: check `answers`, bộ chuyển đổi DABench, chia tập phát triển/kiểm tra | Xong phần DABench ([hướng dẫn](benchmark.md#9-infiagent-dabench)) |
+| B | Bộ đánh giá: check `answers`, bộ chuyển đổi DABench, chia tập phát triển/kiểm tra | Xong phần DABench ([hướng dẫn](benchmark.md#9-infiagent-dabench)); chưa chạy với mô hình thật |
 | B2 | Chạy tiếp run bị gián đoạn (giới hạn lượt của gói Plus); giới hạn số bước mỗi tác vụ | Chưa làm |
 | B3 | DA-Code: mẫu khoảng 40 tác vụ, lấy file kết quả từ sandbox, gọi `evaluate.py` gốc | Chưa làm |
 | B4 | Bộ tiếng Việt khoảng 20 tác vụ cùng định dạng | Chưa làm |
 | C | Ghi chú nghiên cứu: chạy lại RouteLLM, đọc mã FrugalGPT; đầu vào, đầu ra, dữ liệu huấn luyện, so với thiết kế này | Chưa làm |
-| D | Khung định tuyến trong `assistant-core`: chính sách luôn mạnh, luôn rẻ, ngẫu nhiên, luật; trích đặc trưng; bảng quyết định trong telemetry; cột trên Agent Console; lỗi thì rơi về mô hình mạnh | Chưa làm |
+| D | Khung định tuyến trong `assistant-core`: chính sách luôn mạnh, luôn rẻ, ngẫu nhiên, luật; trích đặc trưng; quyết định ghi vào telemetry và hiện trên Agent Console; lỗi thì chạy mô hình mặc định | Xong code và test giả lập ([hướng dẫn](dinh-tuyen.md)); chưa chạy trong Hermes thật |
 | E | Thu dữ liệu trên tập phát triển với ba chính sách đối chứng | Chưa làm |
 | F | Bộ định tuyến đề xuất: luật có ngưỡng, rồi mô hình nhỏ dễ giải thích; chỉnh trên tập phát triển rồi khóa | Chưa làm |
 | G | Đánh giá trên tập kiểm tra, lặp 3 lần; script phân tích có khoảng tin cậy | Chưa làm |

@@ -901,11 +901,13 @@ def summarize(run: dict, results: list, *, sessions: dict | None = None, pricing
                              pass_rate=(sum(bool(r["passed"]) for r in subset) / len(subset)) if subset else None)
     ok = [r for r in results if not r.get("error")]
     tokens = [r["total_tokens"] for r in results if isinstance(r.get("total_tokens"), int)]
-    calls, cost_values, priced = [], [], 0
+    calls, cost_values, priced, routed = [], [], 0, []
     for r in results:
         session = sessions.get(r.get("session_id") or "")
         if session:
             calls.append(session["api_calls"])
+            if session.get("routing"):
+                routed.append(session["routing"])
             costs = [reporting.estimate_cost(pricing, model, m["input_tokens"], m["output_tokens"],
                                              m["cache_read_tokens"]) for model, m in session["models"].items()]
             if costs and all(c is not None for c in costs):
@@ -926,6 +928,10 @@ def summarize(run: dict, results: list, *, sessions: dict | None = None, pricing
         api_calls_per_task=(sum(calls) / len(calls)) if calls else None,
         cost_per_task=(sum(cost_values) / len(cost_values)) if cost_values else None,
         cost_total=sum(cost_values) if cost_values else None, cost_coverage=(priced / count) if count else None,
+        # Router behaviour, from telemetry: share of model calls sent to the cheap model, and how often
+        # the model changed from one step to the next within a task.
+        cheap_step_share=(sum(r["cheap"] for r in routed) / sum(r["steps"] for r in routed)) if routed else None,
+        switches_per_task=(sum(r["switches"] for r in routed) / len(routed)) if routed else None,
         answers=answer_accuracy(results))
 
 
@@ -934,6 +940,8 @@ COMPARE_ROWS = (("pass_rate", "Pass rate", "percent"), ("L1", "Pass rate L1", "p
                 ("median_latency_s", "Median latency", "seconds"), ("p95_latency_s", "p95 latency", "seconds"),
                 ("tokens_per_task", "Tokens per task", "number"), ("api_calls_per_task", "API calls per task", "number"),
                 ("cost_per_task", "Cost per task", "money"), ("cost_total", "Cost (priced tasks)", "money"),
+                ("cheap_step_share", "Cheap-model steps", "percent"),
+                ("switches_per_task", "Model switches per task", "number"),
                 ("errors", "Request errors", "number"), ("tasks", "Results", "number"))
 
 

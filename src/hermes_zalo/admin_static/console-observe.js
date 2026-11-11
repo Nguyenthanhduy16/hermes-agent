@@ -122,6 +122,7 @@
     if (step.kind === "api") {
       parts.push("API call" + (known(step.api_call_count) ? " #" + step.api_call_count : ""));
       if (step.retry_count) parts.push("retry " + step.retry_count);
+      if (step.route_choice) parts.push("routed " + step.route_choice + (step.route_reason ? " (" + step.route_reason + ")" : ""));
       if (known(step.ttfb_ms)) parts.push("TTFB " + millis(step.ttfb_ms));
       if (step.finish_reason) parts.push(step.finish_reason);
       if (known(step.input_tokens) || known(step.output_tokens)) parts.push(compact(step.input_tokens) + " in · " + compact(step.output_tokens) + " out" + (step.cache_read_tokens ? " · " + compact(step.cache_read_tokens) + " cached" : ""));
