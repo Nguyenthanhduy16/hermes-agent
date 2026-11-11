@@ -159,11 +159,11 @@ bằng `HERMES_BENCH_BUNDLED_DIR`.
 ```yaml
 name: my-suite                  # a-z, 0-9, '-' ; tối đa 48 ký tự
 description: Mô tả ngắn         # tùy chọn, tối đa 500 ký tự
-tasks:                          # 1..100 tác vụ
+tasks:                          # 1..300 tác vụ
   - id: tom-tat-email           # duy nhất trong suite
     level: L2                   # L1 đơn giản, L2 nhiều bước, L3 dài/khó/nhiều công cụ
     category: writing           # tùy chọn
-    timeout_s: 120              # tùy chọn, 5..600, mặc định 120
+    timeout_s: 120              # tùy chọn, 5..1800, mặc định 120
     prompt: >-
       Tóm tắt email sau thành 3 gạch đầu dòng ...
     checks:                     # tùy chọn, tối đa 10; tất cả phải đạt
@@ -174,9 +174,10 @@ tasks:                          # 1..100 tác vụ
       - {type: max_latency_s, value: 30}
       - {type: min_length, value: 200}                # số ký tự
       - {type: json_valid}                             # cả câu trả lời là JSON (cho phép ```json)
+      - {type: answers, value: {mean_fare: "34.65"}}   # đáp án dạng @ten[giá trị], xem mục 9
 ```
 
-Giới hạn: file tối đa 256 KB, tối đa 50 file mỗi thư mục, prompt tối đa 8000
+Giới hạn: file tối đa 1 MB, tối đa 50 file mỗi thư mục, prompt tối đa 8000
 ký tự, mỗi run tối đa 500 request (số tác vụ × số lần lặp). Suite sai định dạng
 được liệt kê kèm lỗi và bị bỏ qua. Câu trả lời trống luôn tính là không đạt.
 
@@ -214,3 +215,90 @@ không gọi model, không ghi file.
   dữ liệu.
 - Check `regex` do chủ bot tự viết; tránh mẫu quá phức tạp (chạy trên tối đa
   20.000 ký tự đầu của câu trả lời).
+
+## 9. InfiAgent-DABench
+
+[InfiAgent-DABench](https://github.com/InfiAgent/InfiAgent/tree/main/examples/DA-Agent)
+(Hu và cộng sự, ICML 2024) gồm 257 câu hỏi phân tích dữ liệu trên 52 file CSV,
+chia ba mức dễ / trung bình / khó, đáp án dạng đóng `@ten_dap_an[giá trị]`.
+Dữ liệu không nằm trong repo này; tải về rồi tạo suite bằng bộ chuyển đổi.
+
+### Tạo suite
+
+```bash
+git clone --depth 1 https://github.com/InfiAgent/InfiAgent ~/datasets/InfiAgent
+export HERMES_HOME=.runtime/hermes-home
+PYTHONPATH=src .runtime/venv/bin/python -m assistant_core.dabench build \
+  --data ~/datasets/InfiAgent/examples/DA-Agent/data
+```
+
+Lệnh ghi vào `<HERMES_HOME>/benchmarks`:
+
+| File | Nội dung |
+|---|---|
+| `dabench-dev.yaml` | Tập phát triển (mặc định 40%): dùng để xây và chỉnh bộ định tuyến |
+| `dabench-test.yaml` | Tập kiểm tra: chỉ dùng cho đánh giá cuối |
+| `dabench-pilot.yaml` | 9 câu lấy từ tập phát triển, 3 câu mỗi mức, để ước tính chi phí trước |
+| `dabench-manifest.json` | Seed, file và mã câu hỏi của từng tập, mã băm dữ liệu gốc, câu bị bỏ qua |
+
+- **Chia theo file CSV.** Mọi câu hỏi về cùng một file nằm chung một tập, nên
+  những gì rút ra từ một file ở tập phát triển không lọt sang tập kiểm tra.
+  Trong ràng buộc đó, số câu mỗi mức được giữ cân bằng.
+- **Lặp lại được.** Cùng `--seed` (mặc định 2026) cho ra đúng cùng bộ câu.
+- Mức dễ / trung bình / khó thành `L1` / `L2` / `L3`; `category` là khái niệm
+  đầu tiên của câu hỏi; mã tác vụ là `da-<id gốc>`.
+- Lệnh không ghi đè suite đã có, vì kết quả các run cũ đang tham chiếu tới
+  chúng. Thêm `--force` nếu thật sự muốn tạo lại.
+
+Tùy chọn: `--dev-fraction 0.4`, `--per-level N` (lấy mẫu tối đa N câu mỗi mức
+trong mỗi tập), `--pilot 9` (0 để bỏ), `--timeout 900` (giây cho mỗi câu),
+`--container-dir /data/dabench`, `--out DIR`.
+
+### Cho sandbox đọc được file CSV
+
+Prompt của mỗi câu chỉ tới `/data/dabench/<tên file>`. Gắn thư mục bảng ở chế
+độ chỉ đọc trong `config.yaml` của Hermes rồi khởi động lại gateway:
+
+```yaml
+terminal:
+  docker_volumes:
+    - "/home/<bạn>/datasets/InfiAgent/examples/DA-Agent/data/da-dev-tables:/data/dabench:ro"
+```
+
+Mặc định nền tảng `api_server` của Hermes có gần đủ bộ công cụ, gồm cả web.
+Khi chạy benchmark nên cố định `platform_toolsets.api_server` (ví dụ
+`code_execution`, `file`, `todo`) và **bỏ `web`**: đề và đáp án DABench công
+khai trên GitHub, agent có thể tìm thấy thay vì tự tính. Giữ nguyên danh sách
+này cho mọi cấu hình cần so sánh.
+
+### Chạy và đọc kết quả
+
+```bash
+PYTHONPATH=src .runtime/venv/bin/python -m assistant_core.bench run --suite dabench-pilot --label luon-manh
+PYTHONPATH=src .runtime/venv/bin/python -m assistant_core.bench show <RUN_ID>
+```
+
+`show` in thêm ba chỉ số của bài báo, tính trên các câu đã được chấm:
+
+| Chỉ số | Cách tính |
+|---|---|
+| by question | Tỷ lệ câu đúng **mọi** đáp án con |
+| proportional by sub-question | Trung bình tỷ lệ đáp án con đúng của từng câu |
+| by sub-question | Tổng đáp án con đúng / tổng đáp án con |
+
+### Cách chấm và điểm khác với bài báo
+
+Check `answers` làm đúng như `eval_closed_form.py` của tác giả: đọc mọi cụm
+`@ten[giá trị]` trong câu trả lời (tên lặp lại thì lấy cụm cuối), so khớp chính
+xác chuỗi, hoặc so số với sai số dưới 1e-6. Chữ được phân biệt hoa thường;
+thêm `ignore_case: true` nếu muốn nới.
+
+Ba điểm khác với quy trình gốc cần ghi rõ khi báo cáo số liệu:
+
+- Định dạng đáp án nằm ngay trong prompt và câu trả lời được chấm nguyên
+  trạng. Quy trình gốc không đưa định dạng cho agent mà dùng một LLM
+  (`reformat.py`) viết lại câu trả lời trước khi chấm.
+- Agent đọc file CSV từ đường dẫn trong sandbox thay vì file tải lên.
+- Request lỗi hoặc quá thời gian tính là sai trong `Pass rate`. Ba chỉ số ở
+  trên bỏ qua các câu không có câu trả lời, giống script gốc; nên báo cáo kèm
+  số câu đã chấm.

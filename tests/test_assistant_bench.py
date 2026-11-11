@@ -168,7 +168,14 @@ class SuiteTests(unittest.TestCase):
             dict(SUITE, tasks=[dict(task, checks=[{"type": "regex", "value": "("}])]),
             dict(SUITE, tasks=[dict(task, checks=[{"type": "min_length", "value": True}])]),
             dict(SUITE, tasks=[dict(task, checks=[{"type": "contains", "value": ""}])]),
-            dict(SUITE, tasks=[dict(task, id=f"t{i}") for i in range(101)]),
+            dict(SUITE, tasks=[dict(task, id=f"t{i}") for i in range(301)]),
+            dict(SUITE, tasks=[dict(task, timeout_s=1801)]),
+            dict(SUITE, tasks=[dict(task, checks=[{"type": "answers", "value": {}}])]),
+            dict(SUITE, tasks=[dict(task, checks=[{"type": "answers", "value": {"mean": 34.65}}])]),
+            dict(SUITE, tasks=[dict(task, checks=[{"type": "answers", "value": {"flag": False}}])]),
+            dict(SUITE, tasks=[dict(task, checks=[{"type": "answers", "value": {"bad name": "1"}}])]),
+            dict(SUITE, tasks=[dict(task, checks=[{"type": "answers", "value": {"a": "x]y"}}])]),
+            dict(SUITE, tasks=[dict(task, checks=[{"type": "answers", "value": {f"n{i}": "1" for i in range(13)}}])]),
         ]
         for data in bad:
             with self.assertRaises(bench.BenchError, msg=str(data)[:120]):
@@ -203,6 +210,39 @@ class SuiteTests(unittest.TestCase):
         bad = bench.evaluate_checks(checks, "Sorry", 3.0)
         self.assertEqual([False, False, False, False, True, False], [c["passed"] for c in bad])
         self.assertNotIn("Sorry", json.dumps(bad))  # details describe the check, not the reply
+
+    def test_answers_check_scores_like_the_dabench_script(self):
+        def score(expected, reply, **options):
+            check = bench.parse_suite({"name": "c", "tasks": [{"id": "a", "prompt": "p", "level": "L1", "checks": [
+                dict({"type": "answers", "value": expected}, **options)]}]}).tasks[0].checks
+            return bench.evaluate_checks(check, reply, 1.0)[0]
+
+        expected = {"mean_fare": "34.65", "verdict": "No", "empty": ""}
+        full = score(expected, "Result:\n@mean_fare[34.650000]\n@verdict[No]\n@empty[]")
+        self.assertEqual((True, 3, 3, "3/3 answers match"),
+                         (full["passed"], full["matched"], full["total"], full["detail"]))
+        # Text is compared exactly, numbers within 1e-6, and a repeated name keeps its last value.
+        part = score(expected, "@mean_fare[1] @verdict[no] ... @mean_fare[ 34.65 ]")
+        self.assertEqual((False, 1, 3), (part["passed"], part["matched"], part["total"]))
+        self.assertTrue(score({"verdict": "No"}, "@verdict[no]", ignore_case=True)["passed"])
+        self.assertEqual(0, score(expected, "The mean fare is 34.65.")["matched"])
+        self.assertFalse(score({"r": "0.21"}, "@r[0.2100011]")["passed"])
+        self.assertNotIn("34.65", json.dumps(full))
+
+    def test_answer_accuracy_follows_the_three_dabench_metrics(self):
+        def result(matched, total, **extra):
+            return dict(dict(passed=matched == total, error=None, level="L1", checks=[
+                dict(type="answers", passed=matched == total, matched=matched, total=total, detail="")]), **extra)
+
+        results = [result(1, 1), result(1, 2), result(0, 3),
+                   dict(passed=False, error="timeout", level="L1", checks=[]),
+                   dict(passed=True, error=None, level="L1", checks=[dict(type="contains", passed=True, detail="")])]
+        answers = bench.summarize({}, results)["answers"]
+        self.assertEqual(3, answers["questions"])
+        self.assertAlmostEqual(1 / 3, answers["by_question"])
+        self.assertAlmostEqual((1 + 0.5 + 0) / 3, answers["proportional"])
+        self.assertAlmostEqual(2 / 6, answers["by_subquestion"])
+        self.assertIsNone(bench.summarize({}, results[3:])["answers"])
 
 
 class TargetTests(unittest.TestCase):

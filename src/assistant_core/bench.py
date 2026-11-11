@@ -16,12 +16,12 @@ Suite format (``config/bench/*.yaml`` bundled, ``<home>/benchmarks/*.yaml`` own)
 
     name: assistant-basics            # a-z, 0-9 and '-', unique
     description: Everyday tasks       # optional, <= 500 characters
-    tasks:                            # 1..100 tasks
+    tasks:                            # 1..300 tasks
       - id: weather-summary           # unique in the suite
         prompt: "Tóm tắt ..."         # <= 8000 characters
         level: L1                     # L1 simple, L2 multi-step, L3 long/tool-heavy
         category: summarize           # optional, default "general"
-        timeout_s: 120                # optional, 5..600, default 120
+        timeout_s: 120                # optional, 5..1800, default 120
         checks:                       # optional, up to 10; all must pass
           - {type: contains, value: "Hà Nội"}           # case-insensitive
           - {type: contains, value: ["7", "bảy"]}       # any of the list
@@ -30,6 +30,11 @@ Suite format (``config/bench/*.yaml`` bundled, ``<home>/benchmarks/*.yaml`` own)
           - {type: max_latency_s, value: 30}
           - {type: min_length, value: 200}               # characters
           - {type: json_valid}                            # whole reply (code fences allowed)
+          - {type: answers, value: {mean_fare: "34.65"}}  # closed-form @name[value] answers
+
+``answers`` scores replies the way InfiAgent-DABench's ``eval_closed_form.py``
+does: every ``@name[value]`` in the reply is read (the last one wins per name)
+and compared with the expected text, exactly or as numbers within 1e-6.
 
 CLI::
 
@@ -65,7 +70,7 @@ from .telemetry import config_snapshot
 
 BUNDLED_DIR = Path(__file__).resolve().parents[2] / "config" / "bench"
 LEVELS = ("L1", "L2", "L3")
-CHECK_TYPES = ("contains", "not_contains", "regex", "max_latency_s", "min_length", "json_valid")
+CHECK_TYPES = ("contains", "not_contains", "regex", "max_latency_s", "min_length", "json_valid", "answers")
 STATUSES = ("queued", "running", "done", "cancelled", "failed")
 ACTIVE = ("queued", "running")
 SUITE_NAME = re.compile(r"[a-z0-9][a-z0-9-]{0,47}")
@@ -74,9 +79,14 @@ CATEGORY = re.compile(r"[\w -]{1,40}")
 LABEL = re.compile(r"[\w .:+-]{0,60}")
 RUN_ID = re.compile(r"[0-9]{8}-[0-9]{6}-[0-9a-f]{6}")
 SESSION_ID = re.compile(r"[A-Za-z0-9_.:-]{1,128}")
-MAX_SUITE_BYTES = 256 * 1024
+ANSWER_NAME = re.compile(r"\w{1,80}")
+ANSWER_MARK = re.compile(r"@(\w+)\[(.*?)\]")  # same pattern as InfiAgent-DABench eval_closed_form.py
+MAX_SUITE_BYTES = 1024 * 1024
 MAX_SUITE_FILES = 50
-MAX_TASKS = 100
+MAX_TASKS = 300
+MAX_TIMEOUT_S = 1800
+MAX_ANSWERS = 12
+MAX_ANSWER_CHARS = 500
 MAX_PROMPT = 8000
 MAX_CHECKS = 10
 MAX_REQUESTS = 500
@@ -150,7 +160,7 @@ def _check(raw, where) -> Check:
     kind = raw["type"]
     if kind not in CHECK_TYPES:
         raise BenchError(f"{where}: unknown check type. Use one of: {', '.join(CHECK_TYPES)}.")
-    ignore_case = raw.get("ignore_case", kind != "regex")
+    ignore_case = raw.get("ignore_case", kind not in ("regex", "answers"))
     if not isinstance(ignore_case, bool):
         raise BenchError(f"{where}: ignore_case must be true or false.")
     value = raw.get("value")
@@ -171,6 +181,14 @@ def _check(raw, where) -> Check:
         if value not in (None, True):
             raise BenchError(f"{where}: json_valid takes no value (or true).")
         value = True
+    elif kind == "answers":
+        # Text only: an unquoted YAML ``no`` or ``0.50`` would silently become False or 0.5.
+        if (not isinstance(value, dict) or not 1 <= len(value) <= MAX_ANSWERS
+                or not all(isinstance(k, str) and ANSWER_NAME.fullmatch(k) and isinstance(v, str)
+                           and len(v) <= MAX_ANSWER_CHARS and "\n" not in v and "]" not in v for k, v in value.items())):
+            raise BenchError(f"{where}: answers needs a mapping of 1 to {MAX_ANSWERS} names (letters, digits, '_') "
+                             f"to quoted text of at most {MAX_ANSWER_CHARS} characters without ']'.")
+        value = tuple(sorted(value.items()))
     return Check(kind, value, ignore_case)
 
 
@@ -206,7 +224,7 @@ def parse_suite(data, *, source="inline") -> Suite:
         category = raw.get("category", "general")
         if not isinstance(category, str) or not CATEGORY.fullmatch(category):
             raise BenchError(f"{where}: category must be 1-40 letters, digits, spaces, '_' or '-'.")
-        timeout = float(_number(raw.get("timeout_s", 120), f"{where} timeout_s", 5, 600))
+        timeout = float(_number(raw.get("timeout_s", 120), f"{where} timeout_s", 5, MAX_TIMEOUT_S))
         checks = raw.get("checks", [])
         if not isinstance(checks, list) or len(checks) > MAX_CHECKS:
             raise BenchError(f"{where}: checks must be a list of at most {MAX_CHECKS} items.")
@@ -604,8 +622,22 @@ def _strip_fences(text: str) -> str:
     return match.group(1) if match else text
 
 
+def _answer_matches(found, expected: str, ignore_case: bool) -> bool:
+    if found is None:
+        return False
+    if found == expected or (ignore_case and found.casefold() == expected.casefold()):
+        return True
+    try:
+        return abs(float(found) - float(expected)) < 1e-6
+    except ValueError:
+        return False
+
+
 def evaluate_checks(checks, text: str, latency_s: float | None) -> list:
-    """[{type, passed, detail}] for each check. Details describe the check, never the reply."""
+    """[{type, passed, detail}] for each check. Details describe the check, never the reply.
+
+    An ``answers`` check also reports ``matched`` and ``total`` sub-answers.
+    """
     text = text or ""
     scan = text[:100000]
     out = []
@@ -627,6 +659,12 @@ def evaluate_checks(checks, text: str, latency_s: float | None) -> list:
         elif kind == "min_length":
             passed = len(text.strip()) >= value
             detail = f"{len(text.strip())} characters vs minimum {value}"
+        elif kind == "answers":
+            found = dict(ANSWER_MARK.findall(scan))  # a repeated name keeps its last value
+            matched = sum(_answer_matches(found.get(name), expected, check.ignore_case) for name, expected in value)
+            out.append(dict(type=kind, passed=matched == len(value), matched=matched, total=len(value),
+                            detail=f"{matched}/{len(value)} answers match"))
+            continue
         else:  # json_valid
             try:
                 json.loads(_strip_fences(text))
@@ -830,6 +868,28 @@ def _median(values):
     return statistics.median(data) if data else None
 
 
+def answer_accuracy(results: list) -> dict | None:
+    """InfiAgent-DABench accuracies over the results that carry an ``answers`` check.
+
+    Like the original script, only replies that were scored count: a request
+    error has no check results and is left out here (``pass_rate`` counts it as
+    a failure). by_question = every sub-answer right, proportional = mean share
+    of right sub-answers per question, by_subquestion = right / all sub-answers.
+    """
+    scored = []
+    for result in results:
+        parts = [c for c in result.get("checks") or [] if c.get("type") == "answers"
+                 and isinstance(c.get("total"), int) and c["total"] > 0 and isinstance(c.get("matched"), int)]
+        if parts:
+            scored.append((sum(c["matched"] for c in parts), sum(c["total"] for c in parts)))
+    if not scored:
+        return None
+    return dict(questions=len(scored),
+                by_question=sum(matched == total for matched, total in scored) / len(scored),
+                proportional=sum(matched / total for matched, total in scored) / len(scored),
+                by_subquestion=sum(matched for matched, _ in scored) / sum(total for _, total in scored))
+
+
 def summarize(run: dict, results: list, *, sessions: dict | None = None, pricing: dict | None = None) -> dict:
     """Pass rates (overall and per level), latency, tokens, API calls and cost per task for one run."""
     sessions, pricing = sessions or {}, pricing or {}
@@ -865,7 +925,8 @@ def summarize(run: dict, results: list, *, sessions: dict | None = None, pricing
         tokens_per_task=(sum(tokens) / len(tokens)) if tokens else None,
         api_calls_per_task=(sum(calls) / len(calls)) if calls else None,
         cost_per_task=(sum(cost_values) / len(cost_values)) if cost_values else None,
-        cost_total=sum(cost_values) if cost_values else None, cost_coverage=(priced / count) if count else None)
+        cost_total=sum(cost_values) if cost_values else None, cost_coverage=(priced / count) if count else None,
+        answers=answer_accuracy(results))
 
 
 COMPARE_ROWS = (("pass_rate", "Pass rate", "percent"), ("L1", "Pass rate L1", "percent"),
@@ -1045,6 +1106,11 @@ def _command(args, store, home, data_dir, environ, write) -> int:
                       for r in results]))
         write(f"Pass rate {_fmt(summary['pass_rate'], 'percent')}  median {_fmt(summary['median_latency_s'], 'seconds')}"
               f"  tokens/task {_fmt(summary['tokens_per_task'], 'number')}  cost/task {_fmt(summary['cost_per_task'], 'money')}")
+        answers = summary["answers"]
+        if answers:
+            write(f"Answers ({answers['questions']} scored replies): by question {answers['by_question']:.1%}"
+                  f"  proportional by sub-question {answers['proportional']:.1%}"
+                  f"  by sub-question {answers['by_subquestion']:.1%}")
         return 0
     matrix = compare([(run, _summary_for(store, run, data_dir, pricing)[1]) for run in runs])
     write(_table(["Metric", *[_clean(c["label"] or c["id"]) for c in matrix["columns"]]],
