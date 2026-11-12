@@ -4,11 +4,13 @@ Cập nhật 12/11/2026. Ghi chú cho gói C trong [kế hoạch đồ án](ke-h
 ai đã làm định tuyến mô hình, họ nhận gì, trả gì, học từ dữ liệu nào, đánh giá
 ra sao, và so với thiết kế của đồ án ([khung định tuyến](dinh-tuyen.md)).
 
-**Mức kiểm chứng.** RouteLLM và FrugalGPT tóm tắt theo bài báo và mã nguồn
-công khai. Các bài năm 2026 (EvoRoute, MTRouter, AgentRouter, TRIM, Agentic
-Routing) mới tóm tắt theo abstract, trang hội nghị và trang review, **chưa đọc
-toàn văn**. Con số của các bài này là số tác giả tự báo cáo. Đọc lại bài gốc
-trước khi đưa vào báo cáo cuối. Chưa chạy lại mã của bài nào.
+**Mức kiểm chứng.** Đã đọc mã nguồn và README của RouteLLM, MTRouter,
+RouterBench, FrugalGPT, Router-R1 (bảng kết quả của MTRouter lấy từ README của
+tác giả). EvoRoute, AgentRouter, TRIM, Agentic Routing mới tóm tắt theo
+abstract, trang hội nghị và trang review, **chưa đọc toàn văn**, vì máy làm
+việc không vào được arxiv, ACL Anthology, OpenReview. Con số là số tác giả tự
+báo cáo. Đọc lại bài gốc trước khi đưa vào báo cáo cuối. Chưa chạy lại mã của
+bài nào.
 
 ## 1. Bức tranh chung
 
@@ -35,10 +37,17 @@ mới. Đóng góp cần đặt vào cách làm và điều kiện làm (mục 4
   làm bộ phân loại, xếp hạng theo độ tương tự có trọng số.
 - **Dữ liệu huấn luyện:** cặp so sánh ưa thích của Chatbot Arena, bổ sung dữ
   liệu có nhãn tự động bằng LLM chấm.
-- **Đánh giá:** MT-Bench, MMLU, GSM8K. Chỉ số **PGR** (phần khoảng cách chất
+- **Đánh giá:** MT-Bench, MMLU, GSM8K. Câu trả lời của cả hai mô hình cho
+  mọi câu được **tính sẵn một lần**; mỗi bộ định tuyến chỉ chấm điểm câu hỏi
+  rồi tra kết quả, nên đánh giá không tốn thêm lượt gọi
+  (`routellm/evals/evaluate.py`). Chỉ số **PGR** (phần khoảng cách chất
   lượng giữa mô hình yếu và mạnh mà bộ định tuyến lấy lại được), **APGR** (PGR
-  trung bình trên mọi mức chi phí) và **CPT(x%)** (tỷ lệ gọi mô hình mạnh tối
-  thiểu để đạt x% PGR). Đường cơ sở là bộ định tuyến ngẫu nhiên.
+  trung bình trên mọi mức chi phí, tính bằng diện tích dưới đường) và
+  **CPT(x%)** (tỷ lệ gọi mô hình mạnh tối thiểu để đạt x% PGR, báo cáo ở 20%,
+  50%, 80%). Đường cơ sở là bộ định tuyến ngẫu nhiên, lấy trung bình 10 lần;
+  đường "Optimal" là oracle: mô hình yếu làm đúng thì dùng yếu, còn lại dùng
+  mạnh, giới hạn theo tỷ lệ gọi mạnh. Có thêm bước kiểm tra trùng lặp giữa dữ
+  liệu huấn luyện và benchmark bằng độ giống embedding.
 - **Mã:** `lm-sys/RouteLLM`.
 - **Dùng cho đồ án:** lấy cách đo (PGR, APGR, CPT, đường ngẫu nhiên) cho
   [thiết kế thực nghiệm](thiet-ke-thuc-nghiem.md). Làm mốc "định tuyến theo
@@ -74,10 +83,26 @@ mới. Đóng góp cần đặt vào cách làm và điều kiện làm (mục 4
   mô hình có giá trị cao nhất sau khi trừ chi phí.
 - **Dữ liệu huấn luyện:** các quỹ đạo đã ghi lại, mỗi lượt gắn mô hình đã dùng
   và kết quả cuối.
-- **Đánh giá:** ScienceWorld, HLE; có tập ngoài phân phối. Tác giả báo cáo
-  điểm ScienceWorld từ 48,4 (GPT-5) lên 53,8, chi phí giảm 58,7%; và đổi mô
-  hình ít hơn Router-R1.
-- **Mã:** `ZhangYiqun018/MTRouter`.
+- **Đánh giá:** ScienceWorld, HLE; mỗi bộ có tập kiểm tra và tập ngoài phân
+  phối (loại tác vụ hoặc môn chưa thấy). Tác giả báo cáo điểm ScienceWorld từ
+  48,4 (GPT-5) lên 53,8, chi phí giảm 58,7%; và đổi mô hình ít hơn Router-R1.
+- **Đọc từ mã** (`ZhangYiqun018/MTRouter`):
+  - **Thu dữ liệu** có hai chế độ: một mô hình cho cả quỹ đạo, và "roulette"
+    chọn ngẫu nhiên mô hình ở mỗi bước, **ghi lại xác suất chọn (propensity)**
+    để đánh giá ngoại tuyến (`research/collection/propensity_router.py`).
+  - **Nhãn** là điểm cuối của cả quỹ đạo, có trừ phạt cho bước gây lỗi (AEC);
+    chi phí là đầu ra riêng. Chọn mô hình theo `Q = điểm − λ · chi phí`.
+  - **Bộ định tuyến đơn giản nhất** là một hồi quy Ridge cho mỗi mô hình trên
+    embedding lịch sử (`research/routers/per_model_ridge_q.py`).
+  - **Router luật** (`routers/heuristic.py`): bước đầu dùng mô hình mạnh, công
+    cụ lỗi ở lượt trước dùng mô hình mạnh, giai đoạn cuối dùng mô hình "giá
+    trị", còn lại dùng mô hình rẻ. **Gần như trùng chính sách `rule` của đồ án.**
+  - **Chia dữ liệu theo loại tác vụ**, cố định seed, ghi "DO NOT MODIFY after
+    data collection begins"; có tập con "first-try" để thử nhanh, giống
+    `dabench-pilot`.
+  - **Mốc so sánh**: 6 mô hình đơn; router một lượt (RouterDC, EmbedLLM,
+    AvengersPro); router nhiều lượt (ngẫu nhiên, LLM làm router, Router-R1,
+    OpenRouter).
 - **Dùng cho đồ án:** gần nhất với gói F. Học từ log quỹ đạo, đúng loại dữ liệu
   chính sách `random` sinh ra. Kết quả "đổi ít hơn" ủng hộ ý quán tính của đồ án.
   **Ứng viên chính để chạy lại.**
@@ -101,14 +126,17 @@ mới. Đóng góp cần đặt vào cách làm và điều kiện làm (mục 4
   sánh. Chỗ chưa rõ cần đọc bài gốc: họ gán nhãn "thành công" cho từng bước thế
   nào khi benchmark chỉ chấm cả tác vụ.
 
-### AgentRouter (ICML 2026)
+### AgentRouter (workshop AgenticUQ, ICML 2026)
 
 - **Cách làm:** bộ phân loại 12M tham số gán mỗi bước của quỹ đạo vào một trong
   4 mức mô hình, dùng 5 đặc trưng lấy được **trước khi gọi LLM**, trễ dưới 5 ms
   mỗi bước.
 - **Luận điểm:** RouteLLM và FrugalGPT coi các lần gọi là độc lập; trong agent,
   bước rẻ làm sai sẽ làm hỏng ngữ cảnh của các bước sau.
-- **Dữ liệu huấn luyện:** 50.000 bước quỹ đạo đã gán nhãn.
+- **Dữ liệu huấn luyện:** 50.000 bước quỹ đạo đã gán nhãn mức mô hình.
+- **Đánh giá:** bốn miền: lập kế hoạch, lập trình, nghiên cứu, **phân tích dữ
+  liệu**. Báo cáo độ chính xác gán mức cho từng bước (76–91% tùy mức) và
+  RouteLLM, FrugalGPT áp theo từng bước làm mốc.
 - **Kết quả tác giả báo cáo:** chi phí giảm khoảng 72% so với chỉ dùng mô hình
   mạnh nhất, chất lượng giảm dưới 3%; slide so với RouteLLM và FrugalGPT.
 - **Dùng cho đồ án:** gần nhất về **thiết kế đặc trưng**: không gọi LLM khi định
@@ -120,7 +148,10 @@ mới. Đóng góp cần đặt vào cách làm và điều kiện làm (mục 4
 - **Cách làm:** mô hình rẻ sinh một bước suy luận, mô hình chấm theo quá trình
   (PRM) cho điểm; dưới ngưỡng thì mô hình mạnh sinh lại bước đó. Bản đơn giản
   TRIM-Thr chỉ dùng ngưỡng; bản học dùng RL.
-- **Đánh giá:** MATH-500, AIME, OlympiadBench, Minerva Math.
+- **Đánh giá:** MATH-500, AIME, OlympiadBench, Minerva Math, GPQA-Diamond.
+  Mô hình nhỏ Qwen2.5-3B, mô hình mạnh Claude 3.7 Sonnet, PRM
+  Qwen2.5-Math-PRM-7B. **Chi phí đo bằng số token mô hình mạnh sinh ra**; so
+  với RouteLLM, AutoMix, Smoothie, router BERT theo câu hỏi.
 - **Dùng cho đồ án:** ngưỡng giống τ của đồ án, nhưng TRIM **chấm sau khi
   sinh**, cần hai lần gọi trong một bước. Đồ án phải **dự đoán trước khi gọi**.
 
@@ -185,13 +216,38 @@ mới. Đóng góp cần đặt vào cách làm và điều kiện làm (mục 4
 
 - [ ] Đọc toàn văn EvoRoute, MTRouter, AgentRouter, TRIM; sửa lại các con số và
   chỗ chưa rõ trong ghi chú này (đặc biệt cách gán nhãn từng bước).
-- [ ] Chạy lại mã MTRouter trên ví dụ có sẵn của tác giả để xem định dạng log
-  quỹ đạo và đặc trưng họ dùng.
-- [ ] Chạy thử một router của RouteLLM trên prompt DABench (định tuyến theo câu
-  hỏi) để làm mốc.
+- [x] Đọc mã MTRouter: cách thu dữ liệu, nhãn, router đơn giản nhất, router
+  luật, cách chia dữ liệu (mục 2).
+- [ ] Chạy router của RouteLLM ngoại tuyến trên prompt DABench, tra kết quả từ
+  hai lần chạy luôn mạnh và luôn rẻ (định tuyến theo câu hỏi, gần như không tốn
+  lượt gọi; xem [thiết kế thực nghiệm](thiet-ke-thuc-nghiem.md)).
 - [ ] Gửi Thầy ghi chú và bảng so sánh mục 3.
 
-## 5. Nguồn
+## 5. Phần thực nghiệm của các bài
+
+| Bài | Benchmark | Mốc so sánh | Chỉ số | Hình chính | Ablation, phân tích thêm | Lặp, thống kê |
+|---|---|---|---|---|---|---|
+| RouteLLM | MT-Bench, MMLU, GSM8K | Ngẫu nhiên (trung bình 10 lần), oracle, router thương mại | Độ chính xác, % gọi mạnh, **APGR**, **CPT(20/50/80%)** | Độ chính xác theo % gọi mạnh, kèm đường mạnh, yếu, oracle | Tăng cường dữ liệu; kiểm tra trùng dữ liệu; đổi cặp mô hình | Một lần, đánh giá ngoại tuyến trên kết quả tính sẵn |
+| FrugalGPT | Phân loại, hỏi đáp | Từng mô hình đơn | Độ chính xác, chi phí USD | Đường chi phí ↔ độ chính xác theo ngân sách | Thứ tự cascade | Một lần |
+| RouterBench | Nhiều bộ hỏi đáp | Từng mô hình, oracle, "zero router" (trộn ngẫu nhiên giữa các mô hình, phần bao lồi) | Chất lượng, chi phí, AIQ (diện tích dưới bao lồi không giảm) | Mặt phẳng chi phí ↔ chất lượng với bao lồi | — | Ngoại tuyến |
+| MTRouter | ScienceWorld, HLE; tập ngoài phân phối | 6 mô hình đơn; router một lượt; ngẫu nhiên, LLM-router, Router-R1, OpenRouter | Điểm / độ chính xác, **tổng chi phí USD**, % giảm so với mô hình mạnh nhất, số lần đổi mô hình | Biểu đồ so sánh router; embedding mô hình | Kiểu Q-function, AEC | Một lần mỗi cấu hình |
+| EvoRoute | GAIA, BrowseComp+, … (5 bộ) | Hệ agent gốc với từng mô hình đơn | Độ chính xác, chi phí, **độ trễ** | Bảng chính theo bộ | Bỏ kho kinh nghiệm (−13%), Thompson → tham lam (−6,5), bỏ Pareto (−1,5) | Không rõ |
+| AgentRouter | 4 miền gồm phân tích dữ liệu | Chỉ mô hình mạnh nhất; RouteLLM, FrugalGPT theo bước | % giảm chi phí, % giảm chất lượng, độ chính xác gán mức | — | — | Không rõ |
+| TRIM | MATH-500, AIME, OlympiadBench, Minerva, GPQA | RouteLLM, AutoMix, Smoothie, BERT router | Độ chính xác, **token mô hình mạnh**, hiệu quả chi phí | Độ chính xác theo token mô hình mạnh | Chính sách ngưỡng vs học; chuyển giữa bộ | Không rõ |
+
+Điểm chung, dùng để chọn thực nghiệm cho đồ án trong
+[thiết kế thực nghiệm](thiet-ke-thuc-nghiem.md#2-chọn-từ-các-bài-liên-quan):
+
+- **Bài nào cũng có:** bảng chính gồm từng mô hình đơn, bộ định tuyến ngẫu
+  nhiên và bộ định tuyến đề xuất, với độ chính xác và chi phí.
+- **Hình chính** luôn là đường hoặc mặt phẳng chi phí ↔ chất lượng, có mốc mô
+  hình mạnh, mô hình yếu, ngẫu nhiên và thường cả oracle.
+- **Lặp lại ít.** Phần lớn báo cáo một lần chạy; chỉ RouteLLM lấy trung bình
+  ngẫu nhiên 10 lần, vì đánh giá ngoại tuyến không tốn lượt gọi.
+- **Ablation** chỉ có ở bài có nhiều thành phần (EvoRoute), mỗi lần bỏ một
+  thành phần.
+
+## 6. Nguồn
 
 - RouteLLM: <https://github.com/lm-sys/RouteLLM>
 - FrugalGPT: <https://github.com/stanford-futuredata/FrugalGPT>
@@ -199,6 +255,7 @@ mới. Đóng góp cần đặt vào cách làm và điều kiện làm (mục 4
 - MTRouter: <https://aclanthology.org/2026.acl-long.2045/>, <https://arxiv.org/abs/2604.23530>, <https://github.com/ZhangYiqun018/MTRouter>
 - EvoRoute: <https://aclanthology.org/2026.acl-long.1771/>, <https://arxiv.org/abs/2601.02695>
 - AgentRouter: <https://arxiv.org/abs/2609.22951>, <https://icml.cc/virtual/2026/68040>
+- RouterBench (mã): <https://github.com/withmartian/routerbench>; Router-R1 (mã): <https://github.com/ulab-uiuc/Router-R1>
 - TRIM: <https://arxiv.org/abs/2601.10245>, <https://vansh28kapoor.github.io/trim.github.io/>
 - Agentic Routing: <https://arxiv.org/abs/2607.11399>
 - AgentOpt: <https://arxiv.org/abs/2604.06296>
