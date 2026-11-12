@@ -41,10 +41,12 @@ thời gian và quota, **bỏ** kèm lý do để ghi vào phần giới hạn.
 | # | Thực nghiệm | Theo bài | Chi phí | Mức |
 |---|---|---|---|---|
 | E1 | Mô hình đơn: luôn mạnh (S), luôn rẻ (C) trên tập phát triển và kiểm tra | Mọi bài | Chạy thật | **Bắt buộc** |
-| E2 | Router ngẫu nhiên theo bước (R) và router luật (L) | RouteLLM, MTRouter (router luật của MTRouter gần như trùng `rule`) | Chạy thật | **Bắt buộc** |
+| E2 | Router ngẫu nhiên theo bước (R) và router luật (L) | RouteLLM, MTRouter (router luật của MTRouter gần như trùng `rule`), Budget-Aware (ngẫu nhiên quét p) | Chạy thật | **Bắt buộc** |
+| E2b | **First-Large** (FL): mô hình mạnh k bước đầu rồi chuyển rẻ, không nâng lên khi lỗi; k = 2 | Budget-Aware (mốc đơn giản nhưng rất mạnh) | 1 run tập phát triển | Nên có; cần thêm một chính sách nhỏ |
 | E3 | **Theo câu hỏi, ngoại tuyến:** oracle và router của RouteLLM (`bert` hoặc `mf`) chấm prompt DABench, tra đúng/sai từ lần chạy S và C | RouteLLM (đánh giá ngoại tuyến), RouterBench | **Gần như 0**: không gọi mô hình agent | **Bắt buộc**; đây cũng là phần "chạy lại bài báo" Thầy yêu cầu |
 | E4 | Router đề xuất: chọn τ trên tập phát triển, 2 điểm τ trên tập kiểm tra | TRIM-Thr (ngưỡng), MTRouter (học từ log), EvoRoute (nhãn bước) | Chạy thật | **Bắt buộc** |
-| E7 | **Bảng bổ trợ S/C**: số câu cả hai đúng, chỉ S đúng, chỉ C đúng, cả hai sai; theo mức | FrugalGPT (MPI), RouteLLM (oracle) | 0 | **Bắt buộc**: cho thấy định tuyến có bao nhiêu chỗ để lấy lại |
+| E7 | **Bảng bổ trợ S/C và nhóm độ khó**: số câu cả hai đúng, chỉ S đúng, chỉ C đúng, cả hai sai; chia câu thành **dễ** (C đúng mọi lần), **khó** (C không chắc đúng, S đúng ít nhất một lần), **không giải được** (S sai mọi lần) | FrugalGPT (MPI), RouteLLM (oracle), Budget-Aware (phân loại độ khó, 5 lần mỗi biên) | 0 | **Bắt buộc**: cho thấy định tuyến có bao nhiêu chỗ để lấy lại |
+| E7b | **Chi phí theo nhóm độ khó**: mỗi chính sách tiêu bao nhiêu % chi phí vào câu dễ / khó / không giải được | Budget-Aware (Hình 3) | 0 | **Bắt buộc**: router tốt tiêu vào câu khó, "thua rẻ" ở câu không giải được |
 | E8 | **Phân tích sau lỗi**: tỷ lệ đổi mô hình sau lỗi công cụ, tỷ lệ bước sau hồi phục theo lựa chọn; trên R50, L, P | MTRouter (Hình 4) | 0 | **Bắt buộc**, trả lời RQ5 |
 | E9 | **Kiểm tra định dạng** ở pilot: tỷ lệ câu trả lời thiếu cụm `@ten[...]` của từng mô hình | DABench (bỏ bước viết lại làm mô hình yếu giảm tới 32 điểm) | 0 | **Bắt buộc** |
 | E5a | Ablation **dự đoán**: bỏ từng nhóm đặc trưng, đo AUC của mô hình rủi ro bằng kiểm chứng chéo trên log tập phát triển | EvoRoute (bỏ từng thành phần) | 0 | Nên có |
@@ -54,6 +56,8 @@ thời gian và quota, **bỏ** kèm lý do để ghi vào phần giới hạn.
 | — | Router-R1, tái hiện đầy đủ EvoRoute | — | Huấn luyện RL / nhiều mô hình | **Bỏ**: ngoài phạm vi và ngân sách |
 | — | Gán nhãn bằng cách chạy mọi bước với mọi mô hình | AgentRouter | Nhân số lượt gọi theo số bước | **Bỏ**: quá đắt; dùng nhãn từ kết quả cuối như MTRouter, EvoRoute |
 | — | Router nhúng nội dung lịch sử hoặc chỉ dẫn | MTRouter, EvoRoute | Cần mô hình embedding | **Bỏ**: trái nguyên tắc không đọc nội dung tin nhắn |
+| — | LLM làm router (GPT-5 không huấn luyện), router LLM huấn luyện SFT + RL | Budget-Aware | Thêm một lần gọi LLM mỗi bước; huấn luyện RL | **Bỏ**: tốn kém; Budget-Aware cho thấy GPT-5 router hay sụp về một lựa chọn cố định, RL thường chỉ ngang ngẫu nhiên |
+| — | Chế độ ngân sách cứng (tối đa K lần gọi mạnh mỗi câu) | Budget-Aware | Thêm cấu hình | **Bỏ** cho đến hết tháng 12; ghi làm hướng mở rộng |
 | — | Nhóm hơn 2 mô hình, tối ưu độ trễ | MTRouter, EvoRoute | — | **Bỏ**: chỉ đo độ trễ, không tối ưu |
 
 **Vì sao E3 rẻ.** Định tuyến theo câu hỏi dùng một mô hình cho cả câu, nên kết
@@ -151,6 +155,8 @@ Chạy `dabench-pilot` (9 câu, 3 mỗi mức) với S và C, mỗi cấu hình 
 - Mô hình rẻ thua chủ yếu vì **thiếu định dạng đáp án** → sửa prompt định dạng
   cho mọi cấu hình, hoặc thêm bước viết lại như quy trình gốc của DABench. Nếu
   không, router sẽ học "sửa định dạng" thay vì "khó phân tích".
+- Tham khảo khi chọn cặp: Budget-Aware dùng GPT-4.1 mini / GPT-4.1 (giá chênh
+  5 lần), khoảng cách thành công 13–23 điểm trên ba bộ.
 - Mô hình mạnh gần đúng hết ở mức dễ (GPT-4 đã đạt 78,99% toàn bộ từ đầu 2024) →
   khoảng cách dồn vào mức khó; cân nhắc lấy mẫu nhiều câu khó hơn trong tập
   kiểm tra, quyết định trước khi chạy.
@@ -181,7 +187,11 @@ và đặc trưng tự chọn. Dữ liệu học gồm run ngẫu nhiên **và**
 dùng cả hai; bỏ dữ liệu ngẫu nhiên làm họ giảm 6,6 điểm).
 
 1. **Nhãn**: đúng/sai của cả câu, gắn cho mọi bước của câu đó. Biến thể theo
-   EvoRoute: nhân thêm "bước đó không có lỗi công cụ"; so hai cách trong E5a.
+   EvoRoute: nhân thêm "bước đó không có lỗi công cụ". Cách thứ ba theo
+   Budget-Aware: với mỗi câu, trong các quỹ đạo **đúng** của R25, R50, R75, S, C,
+   lấy **quỹ đạo rẻ nhất**; nhãn của mỗi bước là lựa chọn ở quỹ đạo đó; câu dễ
+   và câu không giải được lấy nhãn "rẻ". Router học bắt chước. So ba cách trong
+   E5a.
 2. **Mô hình**: với mỗi lựa chọn (rẻ, mạnh), một hồi quy logistic trên đặc
    trưng của bước, ước lượng `P(câu đúng | đặc trưng, lựa chọn)`. Đây là bản
    tương tự router Ridge theo từng mô hình của MTRouter. Điểm rủi ro = hiệu hai
@@ -224,12 +234,15 @@ cấu hình một lần.
 | R50 | `random` 0,5 | 1 | 1 |
 | R25, R75 | `random` 0,25 / 0,75 | 1 (nên có) | — |
 | L | `rule` | 1 | 1 |
+| FL | `first-strong`, k = 2 | 1 (nên có) | — |
 | P1, P2 | Đề xuất ở 2 điểm τ | 1 mỗi điểm | P1: **2**, P2: 1 |
 | E5b | Đề xuất, bỏ quán tính | 1 (nên có) | — |
 | O, RouteLLM | Theo câu hỏi | Ngoại tuyến | Ngoại tuyến |
 
-Lặp 2 lần cho S, C, P1 để đo độ dao động giữa các lần chạy; còn lại 1 lần. Phần
-lớn bài liên quan chỉ báo cáo một lần chạy. Khoảng tin cậy lấy bằng bootstrap
+Lặp 2 lần cho S, C, P1 để đo độ dao động giữa các lần chạy; còn lại 1 lần.
+MTRouter và Budget-Aware lặp 3 lần; các bài khác một lần. Hai lần là mức tối
+thiểu theo ngân sách; ghi rõ trong phần giới hạn. Nhóm độ khó (E7) trên tập kiểm
+tra dựa trên 2 lần chạy S và C, ít hơn 5 lần của Budget-Aware. Khoảng tin cậy lấy bằng bootstrap
 trên câu hỏi (mục 6).
 
 **Số câu phải chạy thật**, với tập phát triển khoảng 100 câu và tập kiểm tra
@@ -238,9 +251,9 @@ khoảng 155 câu:
 | Phần | Bắt buộc | Thêm nếu làm "nên có" |
 |---|---|---|
 | Pilot | 9 × 4 = 36 | — |
-| Tập phát triển | 100 × 6 = 600 | + 300 (R25, R75, E5b) |
+| Tập phát triển | 100 × 6 = 600 | + 400 (R25, R75, FL, E5b) |
 | Tập kiểm tra | 155 × 9 ≈ 1.400 | — |
-| Tổng | **khoảng 2.050** | khoảng 2.350 |
+| Tổng | **khoảng 2.050** | khoảng 2.450 |
 
 Nhân với chi phí và thời gian mỗi câu đo ở pilot. Nếu vượt ngân sách, giảm theo
 thứ tự: bỏ phần "nên có" → P2 trên tập kiểm tra → lấy mẫu tập kiểm tra theo mức.
@@ -277,7 +290,8 @@ Quyết định trước khi chạy và ghi lại.
 | H7 | Đổi mô hình và cache | x: số lần đổi mỗi câu, y: tỷ lệ token đọc từ cache | telemetry, E5b | Nên có, nếu có token cache |
 | H8 | Hệ số đặc trưng của router | Cột ngang | Mô hình đã khóa | Nên có (có ngay từ hồi quy logistic) |
 | **H9** | **Sau lỗi công cụ** | Hai ô: tỷ lệ đổi mô hình sau lỗi theo chính sách; tỷ lệ bước sau hồi phục theo lựa chọn sau lỗi, kèm khoảng tin cậy | R50, L, P; telemetry | **Bắt buộc** (RQ5; theo MTRouter Hình 4) |
-| **B4** | **Bảng bổ trợ S/C** | 2×2 đúng/sai, tổng và theo mức | Run S, C | **Bắt buộc** (E7) |
+| **B4** | **Bảng bổ trợ S/C** | 2×2 đúng/sai và số câu dễ / khó / không giải được, tổng và theo mức | Run S, C | **Bắt buộc** (E7) |
+| **H10** | **Chi phí theo nhóm độ khó** | Cột chồng 100%: phần chi phí vào câu dễ / khó / không giải được; cột đầu là tỷ lệ số câu mỗi nhóm; một cột mỗi chính sách ở mức chi phí gần nhau | Run S, C (để phân nhóm) + run của từng chính sách | **Bắt buộc** (E7b; theo Budget-Aware Hình 3) |
 | B2 | Ablation | E5a (AUC), E5b | Tập phát triển | Nên có |
 | B3 | So sánh thiết kế với các bài liên quan | Từ [gói C](nghien-cuu-dinh-tuyen.md#3-so-sánh-với-thiết-kế-của-đồ-án); không so số vì khác benchmark | — | **Bắt buộc** (phần tổng quan) |
 
@@ -290,6 +304,7 @@ Quyết định trước khi chạy và ghi lại.
 | 3 | **Chạy tiếp run bị gián đoạn** khi hết lượt của gói Plus (gói B2) | Một run 155 câu khó chạy liền | Trước bước 3 |
 | 4 | **Đánh giá ngoại tuyến theo câu hỏi** (E3): chạy router RouteLLM trên prompt, tra kết quả S/C, quét ngưỡng, oracle | RQ3; "chạy lại bài báo" | Sau bước 3 |
 | 5 | Router đề xuất: huấn luyện trên CSV, chính sách có τ và quán tính | Gói F | Bước 4 |
+| 5b | Chính sách `first-strong` (First-Large): mạnh k bước đầu, không nâng lên khi lỗi | Mốc E2b; khoảng 10 dòng qua `register_policy` | Trước bước 3 nếu làm |
 | 6 | **Script phân tích**: bootstrap ghép cặp, McNemar, PGR, CPT, các hình mục 7 | Gói G | Bước 6 |
 
 ## 9. Mối đe dọa đến tính hợp lệ

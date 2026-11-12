@@ -4,11 +4,11 @@ Cập nhật 12/11/2026. Ghi chú cho gói C trong [kế hoạch đồ án](ke-h
 ai đã làm định tuyến mô hình, họ nhận gì, trả gì, học từ dữ liệu nào, đánh giá
 ra sao, và so với thiết kế của đồ án ([khung định tuyến](dinh-tuyen.md)).
 
-**Mức kiểm chứng.** Đã đọc toàn văn 10 bài trong thư mục `papers/` (RouteLLM,
+**Mức kiểm chứng.** Đã đọc toàn văn 11 bài trong thư mục `papers/` (RouteLLM,
 FrugalGPT, RouterBench, Router-R1, MTRouter, EvoRoute, AgentRouter, TRIM,
-Agentic Routing, InfiAgent-DABench), và đã đọc mã nguồn RouteLLM, MTRouter,
-RouterBench. Các con số dưới đây là số tác giả tự báo cáo trong bài. Chưa chạy
-lại mã của bài nào. Chưa có: DA-Code, và Budget-Aware Agentic Routing (mục 2.10).
+Agentic Routing, Budget-Aware Agentic Routing, InfiAgent-DABench), và đã đọc mã
+nguồn RouteLLM, MTRouter, RouterBench. Các con số dưới đây là số tác giả tự báo
+cáo trong bài. Chưa chạy lại mã của bài nào. Chưa có: DA-Code.
 
 ## 1. Bức tranh chung
 
@@ -227,12 +227,66 @@ mới. Đóng góp cần đặt vào cách làm và điều kiện làm (mục 4
   dung) và về mô hình nhỏ dễ giải thích. Khác đồ án: vẫn dùng độ dài và loại tác
   vụ của prompt, harness riêng, đánh giá chỉ ở mức tổng.
 
-### 2.10 Chưa đọc
+### 2.10 Budget-Aware Agentic Routing (Zhang và cộng sự, Cambridge + Microsoft, 2026)
 
-- **Budget-Aware Agentic Routing via Boundary-Guided Training** (Zhang và cộng sự,
-  arXiv 2512.21227), được AgentRouter trích: chọn **giữa một mô hình rẻ và một mô
-  hình đắt ở mỗi bước agent**, đúng thiết lập nhị phân của đồ án. Cần đọc.
-- Cũng được trích: xRouter (arXiv 2510.08439), DAAO (arXiv 2509.11079).
+- **Mã arXiv đúng là 2602.21227** (bản PDF). AgentRouter trích sai thành 2512.21227.
+- **Thiết lập: đúng như đồ án.** Ở mỗi bước, chọn giữa **một mô hình rẻ và một
+  mô hình đắt** (GPT-4.1 mini và GPT-4.1, giá chênh 5 lần; thêm cặp Llama-3.1
+  8B/72B). Agent kiểu ReAct, trung bình khoảng 20 bước mỗi tác vụ. Hai chế độ:
+  - **ngân sách mềm**: tối đa `thành công − λ · chi phí`, quét λ để ra đường;
+  - **ngân sách cứng**: tối đa K lần gọi mô hình đắt mỗi tác vụ.
+- **Router:** Qwen2.5-1.5B **đọc toàn bộ lịch sử** (đề, hành động, kết quả công
+  cụ), sinh một token rẻ/đắt.
+- **Phân loại độ khó** từ hai chính sách biên, mỗi câu chạy luôn rẻ và luôn đắt
+  **5 lần**:
+  - Dễ: luôn rẻ đúng ít nhất 4/5 lần;
+  - Khó: luôn rẻ không chắc đúng nhưng luôn đắt làm được;
+  - Không giải được: luôn đắt sai cả 5 lần. Chính sách đúng ở nhóm này là "thua
+    rẻ": dùng mô hình rẻ.
+- **Huấn luyện** hai giai đoạn:
+  1. **BoSFT**: câu dễ và câu không giải được lấy quỹ đạo luôn rẻ làm mẫu. Câu
+     khó chạy **10–20 quỹ đạo ngẫu nhiên với xác suất chọn mô hình đắt quét từ
+     0 tới 1**, lấy **quỹ đạo thành công rẻ nhất** làm mẫu.
+  2. **BoPO** (biến thể GRPO): phần thưởng tính tương đối theo hai biên, có
+     thưởng thêm khi giải được câu khó; ưu thế so với cả trung bình nhóm và quỹ
+     đạo mẫu để tránh sụp về "luôn rẻ".
+  - Ngân sách cứng thực thi lúc chạy bằng cách cấm mô hình đắt khi hết ngân sách.
+- **Đánh giá:**
+  - Ba bộ: SciWorld, ALFWorld, AppWorld. Chỉ số: tỷ lệ thành công, **chi phí
+    trung bình mỗi tác vụ ($)**; ngân sách cứng thêm % số lần gọi đắt đã dùng.
+    **Trung bình 3 seed.** Chi phí của chính router không tính vào.
+  - Khoảng cách luôn rẻ / luôn đắt: ALFWorld 40,0 / 63,5; SciWorld 43,5 / 65,4;
+    AppWorld 53,0 / 66,7.
+  - **Mốc**:
+    - luôn rẻ, luôn đắt;
+    - **ngẫu nhiên với p quét ra một đường**;
+    - GPT-5 làm router không huấn luyện;
+    - cascade kiểu FrugalGPT;
+    - router kiểu RouteLLM áp tham lam cho từng bước;
+    - chỉ SFT; RL thường (DAPO);
+    - ngân sách cứng: **First-Large** (dùng mô hình đắt K bước đầu rồi chuyển rẻ).
+  - **Hình chính:** đường Pareto tỷ lệ thành công theo chi phí mỗi tác vụ.
+- **Kết quả đáng chú ý:**
+  - BoPO đẩy đường Pareto lên ở cả ba bộ.
+  - **RL thường chỉ ngang ngẫu nhiên** ở ALFWorld và AppWorld.
+  - GPT-5 làm router thường **sụp về một lựa chọn cố định cho cả quỹ đạo**.
+  - Ở ngân sách cứng, **First-Large rất mạnh**, gần các phương pháp phức tạp:
+    bước đầu đúng hướng thường quyết định kết quả.
+- **Ablation** (SciWorld): bỏ lấy mẫu phân tầng, bỏ ưu thế tham chiếu, bỏ thưởng
+  câu khó. **Phân tích**: tỷ lệ chi phí mỗi router tiêu vào nhóm dễ / khó / không
+  giải được (BoPO tiêu 52% vào câu khó, ngẫu nhiên tiêu đều, RL thường phí 37,5%
+  vào câu không giải được). Độ trễ thêm của router dưới 2%.
+- **Dùng cho đồ án:**
+  - **phân loại độ khó** từ run luôn rẻ / luôn mạnh;
+  - **phân tích tiêu chi phí theo độ khó**;
+  - **mốc First-Large** (gần chính sách `rule` với bước đầu mạnh);
+  - đường ngẫu nhiên quét p;
+  - **cách gán nhãn bằng quỹ đạo thành công rẻ nhất** trong các run ngẫu nhiên.
+
+  Khác đồ án: router là LLM 1,5B đọc toàn bộ nội dung, huấn luyện SFT + RL; không
+  tính cache.
+- Bài này trích thêm: xRouter (arXiv 2510.08439); AgentRouter trích DAAO
+  (arXiv 2509.11079).
 
 ### 2.11 InfiAgent-DABench (ICML 2024)
 
@@ -261,17 +315,17 @@ mới. Đóng góp cần đặt vào cách làm và điều kiện làm (mục 4
 
 ## 3. So sánh với thiết kế của đồ án
 
-| | RouteLLM | MTRouter | EvoRoute | AgentRouter | TRIM | Agentic Routing | Đồ án |
-|---|---|---|---|---|---|---|---|
-| Đơn vị | Câu hỏi | Lượt | Bước / sub-task | Bước (chuỗi bước biết trước) | Bước suy luận | Bước | Lần gọi mô hình, hoàn toàn trực tuyến |
-| Số mô hình | 2 | 6 | 6 | 4 mức | 2 | 3 | 2 mức |
-| Đọc nội dung | Có | Có (nhúng lịch sử) | Có (nhúng chỉ dẫn) | Có (chỉ dẫn bước) | Có (PRM) | Một phần (prompt + trạng thái harness) | **Không** |
-| Thời điểm quyết định | Trước | Trước | Trước | Trước, có chạy lại cuối | **Sau khi sinh** | Trước | Trước |
-| Gọi thêm mô hình để định tuyến | Tùy loại | Không | Đôi khi (dự đoán công cụ) | Không | Có (PRM) | Không | Không |
-| Học | Có giám sát | Có giám sát từ log | Trực tuyến | Có giám sát, nhãn từ chạy mọi mức | Ngưỡng / RL | LightGBM từ log | Hồi quy hoặc ngưỡng từ log, khóa trước tập kiểm tra |
-| Chi phí dữ liệu | Arena có sẵn | ~$1.620 | $28,8 khởi động | Chạy 4 mức mọi bước | Huấn luyện RL | Không rõ | Nằm trong ngân sách gói E |
-| Tính chi phí cache | Không | Không | Không | Không (chỉ nhắc số lần đổi) | Không | Không | **Có** (quán tính) |
-| Lặp / khoảng tin cậy | Ngoại tuyến | 3 lần; CI ở ablation | Một lần | Một lần | Không rõ | Một lần | 2 lần cho cấu hình chính; CI bootstrap |
+| | RouteLLM | MTRouter | EvoRoute | AgentRouter | TRIM | Agentic Routing | Budget-Aware | Đồ án |
+|---|---|---|---|---|---|---|---|---|
+| Đơn vị | Câu hỏi | Lượt | Bước / sub-task | Bước (chuỗi bước biết trước) | Bước suy luận | Bước | Bước | Lần gọi mô hình, hoàn toàn trực tuyến |
+| Số mô hình | 2 | 6 | 6 | 4 mức | 2 | 3 | **2** | **2** |
+| Đọc nội dung | Có | Có (nhúng lịch sử) | Có (nhúng chỉ dẫn) | Có (chỉ dẫn bước) | Có (PRM) | Một phần (prompt + trạng thái harness) | Có (LLM đọc toàn bộ lịch sử) | **Không** |
+| Thời điểm quyết định | Trước | Trước | Trước | Trước, có chạy lại cuối | **Sau khi sinh** | Trước | Trước | Trước |
+| Gọi thêm mô hình để định tuyến | Tùy loại | Không | Đôi khi (dự đoán công cụ) | Không | Có (PRM) | Không | Có (LLM 1,5B mỗi bước) | Không |
+| Học | Có giám sát | Có giám sát từ log | Trực tuyến | Có giám sát, nhãn từ chạy mọi mức | Ngưỡng / RL | LightGBM từ log | SFT + RL | Hồi quy hoặc ngưỡng từ log, khóa trước tập kiểm tra |
+| Chi phí dữ liệu | Arena có sẵn | ~$1.620 | $28,8 khởi động | Chạy 4 mức mọi bước | Huấn luyện RL | Không rõ | 5 run mỗi biên + 10–20 run ngẫu nhiên mỗi câu khó + RL | Nằm trong ngân sách gói E |
+| Tính chi phí cache | Không | Không | Không | Không (chỉ nhắc số lần đổi) | Không | Không | Không | **Có** (quán tính) |
+| Lặp / khoảng tin cậy | Ngoại tuyến | 3 lần; CI ở ablation | Một lần | Một lần | Không rõ | Một lần | 3 seed, trung bình | 2 lần cho cấu hình chính; CI bootstrap |
 
 ## 4. Hệ quả cho đồ án
 
@@ -279,7 +333,9 @@ mới. Đóng góp cần đặt vào cách làm và điều kiện làm (mục 4
 
 1. Bộ định tuyến **không đọc nội dung tin nhắn**, chỉ dùng tín hiệu hành vi của
    agent. Mọi bài ở bảng trên đều đọc nội dung ở mức nào đó; Agentic Routing gần
-   nhất nhưng vẫn dùng prompt.
+   nhất nhưng vẫn dùng prompt. Budget-Aware có cùng thiết lập nhị phân theo bước
+   nhưng router là một LLM đọc toàn bộ lịch sử và cần SFT + RL; đồ án hỏi được gì
+   với một router nhỏ, không đọc nội dung, không huấn luyện RL.
 2. **Chi phí mất prompt cache** khi đổi mô hình được đưa vào quyết định và đo
    riêng. Không bài nào làm.
 3. **Hoàn toàn trực tuyến trong một agent thật** (Hermes), một lần gọi mỗi bước,
@@ -297,7 +353,8 @@ mới. Đóng góp cần đặt vào cách làm và điều kiện làm (mục 4
 **Mốc so sánh cần có** (chi tiết trong [thiết kế thực nghiệm](thiet-ke-thuc-nghiem.md)):
 
 - luôn mạnh, luôn rẻ, ngẫu nhiên (theo RouteLLM, MTRouter, EvoRoute);
-- luật đơn giản (`rule`, trùng router luật của MTRouter);
+- luật đơn giản (`rule`, trùng router luật của MTRouter) và **First-Large** (mô
+  hình mạnh K bước đầu rồi rẻ; mạnh bất ngờ trong Budget-Aware);
 - theo câu hỏi: router RouteLLM và oracle, ngoại tuyến (MTRouter cũng dùng mốc
   "một lần ở đầu tập");
 - nếu kịp: bản rút gọn của EvoRoute cho hai mô hình.
@@ -306,7 +363,7 @@ mới. Đóng góp cần đặt vào cách làm và điều kiện làm (mục 4
 
 - [x] Đọc toàn văn 10 bài trong `papers/`.
 - [x] Đọc mã MTRouter, RouteLLM, RouterBench.
-- [ ] Đọc Budget-Aware Agentic Routing (arXiv 2512.21227), gần nhất về thiết lập
+- [x] Đọc Budget-Aware Agentic Routing (arXiv 2602.21227), gần nhất về thiết lập
   nhị phân theo bước.
 - [ ] Chạy router của RouteLLM ngoại tuyến trên prompt DABench, tra kết quả từ
   hai lần chạy luôn mạnh và luôn rẻ.
@@ -324,6 +381,7 @@ mới. Đóng góp cần đặt vào cách làm và điều kiện làm (mục 4
 | AgentRouter | 2.400 quỹ đạo, 4 miền | Chỉ mức mạnh nhất; RouteLLM, FrugalGPT theo bước; DAAO; Budget-Aware | Chất lượng tương đối, % giảm chi phí, độ trễ định tuyến, độ chính xác gán mức | — | Ablation đặc trưng; theo miền; số lần đổi mức | Một lần |
 | TRIM | MATH-500, AIME, OlympiadBench, Minerva, GPQA | RouteLLM, AutoMix, AutoMix-PRM, Smoothie | **Token mô hình mạnh**, PGR, CPT(50/80/95%), ΔIBC, độ chính xác theo ngân sách | Độ chính xác theo token mô hình mạnh | Chính sách ngưỡng / RL / POMDP; chuyển bộ; độ trễ thực | Không rõ |
 | Agentic Routing | PinchBench, DRACO | Opus cố định, OpenRouter Auto, Hermes MoA | Điểm, chi phí mỗi tác vụ, token, độ trễ p50/p95 | Bảng điểm làm việc | — | Một lần |
+| Budget-Aware | SciWorld, ALFWorld, AppWorld | Luôn rẻ/đắt; ngẫu nhiên quét p; GPT-5 router; cascade; RouteLLM theo bước; SFT; RL thường; First-Large | Tỷ lệ thành công, chi phí mỗi tác vụ; ngân sách cứng: % gọi đắt | Đường Pareto thành công theo chi phí | 3 ablation; **chi phí theo nhóm độ khó**; cặp mô hình khác; độ trễ | 3 seed, trung bình |
 
 Điểm chung, dùng để chọn thực nghiệm cho đồ án trong
 [thiết kế thực nghiệm](thiet-ke-thuc-nghiem.md#2-chọn-từ-các-bài-liên-quan):
@@ -332,7 +390,7 @@ mới. Đóng góp cần đặt vào cách làm và điều kiện làm (mục 4
   đề xuất, với độ chính xác và chi phí.
 - **Hình chính** là đường hoặc mặt phẳng chi phí ↔ chất lượng, có mốc mô hình
   mạnh, mô hình yếu, ngẫu nhiên và thường cả oracle.
-- **Lặp lại ít.** Chỉ MTRouter lặp 3 lần; các bài khác một lần.
+- **Lặp lại ít.** MTRouter và Budget-Aware lặp 3 lần; các bài khác một lần.
 - **Ablation** bỏ từng thành phần hoặc từng đặc trưng, thường trên một tập nhỏ.
 - **Phân tích hành vi** (MTRouter, EvoRoute, AgentRouter): số lần đổi mô hình,
   mô hình dùng ở vị trí nào hoặc vai trò nào, phản ứng sau lỗi.
@@ -351,6 +409,6 @@ Toàn văn: thư mục `papers/` trong repo.
 - TRIM: <https://arxiv.org/abs/2601.10245>
 - Agentic Routing: <https://arxiv.org/abs/2607.11399>, mã <https://github.com/opensquilla/opensquilla>
 - InfiAgent-DABench: <https://arxiv.org/abs/2401.05507>
-- Budget-Aware Agentic Routing: <https://arxiv.org/abs/2512.21227>
+- Budget-Aware Agentic Routing: <https://arxiv.org/abs/2602.21227>
 - StepRouter: <https://github.com/shipiit/shipit_agent/pull/33>
 - Bài viết dev.to: <https://dev.to/priyansh_singhal_5975e7d3/my-llm-router-spent-8x-more-and-matched-the-cheap-model-exactly-18d9>
