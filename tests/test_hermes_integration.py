@@ -145,16 +145,21 @@ class RealHermesTests(unittest.IsolatedAsyncioTestCase):
         try:
             with patch('importlib.import_module', side_effect=plugin_only):
                 for path, name, mime in (
-                    ('/', 'index.html', 'text/html'),
+                    ('/', 'console.html', 'text/html'),
+                    ('/legacy.html', 'index.html', 'text/html'),
                     ('/static/admin.js', 'admin.js', 'text/javascript'),
                     ('/static/admin.css', 'admin.css', 'text/css'),
+                    ('/static/console.js', 'console.js', 'text/javascript'),
                 ):
                     with self.subTest(path=path):
                         status, content_type, body = await asyncio.to_thread(request, path)
                         self.assertEqual(200, status)
                         self.assertTrue(content_type.startswith(mime))
-                        expected = Path(web.__file__).parent / 'admin_static' / name
-                        self.assertEqual(expected.read_bytes(), body)
+                        expected = (Path(web.__file__).parent / 'admin_static' / name).read_bytes()
+                        if mime == 'text/html':
+                            # Served pages carry ?v=<content hash> on their asset tags.
+                            expected = web.versioned_html(expected, web.asset_table())
+                        self.assertEqual(expected, body)
         finally:
             await runtime.close()
 
