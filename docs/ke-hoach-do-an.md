@@ -43,12 +43,14 @@ Cập nhật 11/11/2026. Hạn: cuối tháng 12/2026. Các mốc trong báo cá
 | B2 | Chạy tiếp run bị gián đoạn (giới hạn lượt của gói Plus); giới hạn số bước mỗi tác vụ | Chưa làm |
 | B3 | DA-Code: mẫu khoảng 40 tác vụ, lấy file kết quả từ sandbox, gọi `evaluate.py` gốc | Chưa làm |
 | B4 | Bộ tiếng Việt khoảng 20 tác vụ cùng định dạng | Chưa làm |
-| C | Ghi chú nghiên cứu: chạy lại RouteLLM, đọc mã FrugalGPT; đầu vào, đầu ra, dữ liệu huấn luyện, so với thiết kế này | Chưa làm |
+| C | Ghi chú nghiên cứu: chạy lại RouteLLM, đọc mã FrugalGPT; đầu vào, đầu ra, dữ liệu huấn luyện, so với thiết kế này | Xong ghi chú và bảng so sánh ([gói C](nghien-cuu-dinh-tuyen.md)); chưa đọc toàn văn các bài 2026, chưa chạy lại mã |
 | D | Khung định tuyến trong `assistant-core`: chính sách luôn mạnh, luôn rẻ, ngẫu nhiên, luật; trích đặc trưng; quyết định ghi vào telemetry và hiện trên Agent Console; lỗi thì chạy mô hình mặc định | Xong code và test giả lập ([hướng dẫn](dinh-tuyen.md)); chưa chạy trong Hermes thật |
 | E | Thu dữ liệu trên tập phát triển với ba chính sách đối chứng | Chưa làm |
 | F | Bộ định tuyến đề xuất: luật có ngưỡng, rồi mô hình nhỏ dễ giải thích; chỉnh trên tập phát triển rồi khóa | Chưa làm |
 | G | Đánh giá trên tập kiểm tra, lặp 3 lần; script phân tích có khoảng tin cậy | Chưa làm |
 | H | Báo cáo cuối và demo | Chưa làm |
+
+Thứ tự việc, ma trận cấu hình, chỉ số, thống kê và danh sách hình: [thiết kế thực nghiệm](thiet-ke-thuc-nghiem.md).
 
 ## 5. Lịch theo tuần
 
