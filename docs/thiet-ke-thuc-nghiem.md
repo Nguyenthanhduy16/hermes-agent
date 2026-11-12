@@ -23,14 +23,16 @@ Nguyên tắc chung:
 | RQ2 | Ở **cùng mức chi phí**, bộ định tuyến đề xuất có tốt hơn các cách đơn giản không? | Đề xuất ↔ ngẫu nhiên, luật |
 | RQ3 | Định tuyến **theo bước** có lợi hơn định tuyến **theo câu hỏi** không? | Đề xuất ↔ RouteLLM chạy trên DABench, oracle theo câu hỏi |
 | RQ4 | Đặc trưng nào và quán tính (chống mất cache) đóng góp bao nhiêu? | Ablation trên tập phát triển |
-| RQ5 (nếu kịp) | Bộ định tuyến đã khóa có giữ được trên bộ khác không? | DA-Code mẫu nhỏ, bộ tiếng Việt |
+| RQ5 | Nâng lên mô hình mạnh ngay sau một lỗi công cụ có làm bước sau hồi phục tốt hơn không? MTRouter cho thấy thường là không | Các bước sau lỗi trong run ngẫu nhiên (lựa chọn sau lỗi là ngẫu nhiên, nên so trực tiếp được) |
+| RQ6 (nếu kịp) | Bộ định tuyến đã khóa có giữ được trên bộ khác không? | DA-Code mẫu nhỏ, bộ tiếng Việt |
 
 Viết RQ, chỉ số chính và mức chênh chấp nhận được (mục 6) thành một trang, gửi
 Thầy duyệt **trước** khi chạy tập kiểm tra.
 
 ## 2. Chọn từ các bài liên quan
 
-Chọn theo hai tiêu chí: **bài nào cũng có** (hội đồng sẽ hỏi nếu thiếu), và
+Chọn từ toàn văn các bài trong `papers/` (tóm tắt ở [gói C](nghien-cuu-dinh-tuyen.md)),
+theo hai tiêu chí: **bài nào cũng có** (hội đồng sẽ hỏi nếu thiếu), và
 **chi phí** (số lượt gọi mô hình). Ba mức: **bắt buộc**, **nên có** nếu còn
 thời gian và quota, **bỏ** kèm lý do để ghi vào phần giới hạn.
 
@@ -41,12 +43,17 @@ thời gian và quota, **bỏ** kèm lý do để ghi vào phần giới hạn.
 | E1 | Mô hình đơn: luôn mạnh (S), luôn rẻ (C) trên tập phát triển và kiểm tra | Mọi bài | Chạy thật | **Bắt buộc** |
 | E2 | Router ngẫu nhiên theo bước (R) và router luật (L) | RouteLLM, MTRouter (router luật của MTRouter gần như trùng `rule`) | Chạy thật | **Bắt buộc** |
 | E3 | **Theo câu hỏi, ngoại tuyến:** oracle và router của RouteLLM (`bert` hoặc `mf`) chấm prompt DABench, tra đúng/sai từ lần chạy S và C | RouteLLM (đánh giá ngoại tuyến), RouterBench | **Gần như 0**: không gọi mô hình agent | **Bắt buộc**; đây cũng là phần "chạy lại bài báo" Thầy yêu cầu |
-| E4 | Router đề xuất: chọn τ trên tập phát triển, 2 điểm τ trên tập kiểm tra | TRIM-Thr (ngưỡng), MTRouter (học từ log) | Chạy thật | **Bắt buộc** |
+| E4 | Router đề xuất: chọn τ trên tập phát triển, 2 điểm τ trên tập kiểm tra | TRIM-Thr (ngưỡng), MTRouter (học từ log), EvoRoute (nhãn bước) | Chạy thật | **Bắt buộc** |
+| E7 | **Bảng bổ trợ S/C**: số câu cả hai đúng, chỉ S đúng, chỉ C đúng, cả hai sai; theo mức | FrugalGPT (MPI), RouteLLM (oracle) | 0 | **Bắt buộc**: cho thấy định tuyến có bao nhiêu chỗ để lấy lại |
+| E8 | **Phân tích sau lỗi**: tỷ lệ đổi mô hình sau lỗi công cụ, tỷ lệ bước sau hồi phục theo lựa chọn; trên R50, L, P | MTRouter (Hình 4) | 0 | **Bắt buộc**, trả lời RQ5 |
+| E9 | **Kiểm tra định dạng** ở pilot: tỷ lệ câu trả lời thiếu cụm `@ten[...]` của từng mô hình | DABench (bỏ bước viết lại làm mô hình yếu giảm tới 32 điểm) | 0 | **Bắt buộc** |
 | E5a | Ablation **dự đoán**: bỏ từng nhóm đặc trưng, đo AUC của mô hình rủi ro bằng kiểm chứng chéo trên log tập phát triển | EvoRoute (bỏ từng thành phần) | 0 | Nên có |
 | E5b | Ablation **chạy thật**: bỏ quán tính, một lần trên tập phát triển | EvoRoute | 1 run | Nên có, chỉ khi nhà cung cấp báo token cache |
 | E6 | Chuyển giao sang DA-Code mẫu nhỏ và bộ tiếng Việt | MTRouter (ngoài phân phối), TRIM (chuyển bộ) | Chạy thật | Nên có; bỏ đầu tiên nếu trễ |
 | — | RouteLLM / FrugalGPT áp theo từng bước | AgentRouter | Cần router đọc nội dung trong vòng lặp, hoặc cascade 2 lần gọi một bước | **Bỏ**: Hermes không cho cascade; RQ3 đã có E3 |
 | — | Router-R1, tái hiện đầy đủ EvoRoute | — | Huấn luyện RL / nhiều mô hình | **Bỏ**: ngoài phạm vi và ngân sách |
+| — | Gán nhãn bằng cách chạy mọi bước với mọi mô hình | AgentRouter | Nhân số lượt gọi theo số bước | **Bỏ**: quá đắt; dùng nhãn từ kết quả cuối như MTRouter, EvoRoute |
+| — | Router nhúng nội dung lịch sử hoặc chỉ dẫn | MTRouter, EvoRoute | Cần mô hình embedding | **Bỏ**: trái nguyên tắc không đọc nội dung tin nhắn |
 | — | Nhóm hơn 2 mô hình, tối ưu độ trễ | MTRouter, EvoRoute | — | **Bỏ**: chỉ đo độ trễ, không tối ưu |
 
 **Vì sao E3 rẻ.** Định tuyến theo câu hỏi dùng một mô hình cho cả câu, nên kết
@@ -69,13 +76,15 @@ làm: từ log tập phát triển, tính ngoại tuyến **tỷ lệ bước m�
 | % lần gọi dùng mô hình mạnh | RouteLLM (trục x) | **Bắt buộc** |
 | % giảm chi phí so với S | MTRouter, EvoRoute, AgentRouter | **Bắt buộc** |
 | PGR ở từng điểm làm việc | RouteLLM | **Bắt buộc** |
-| CPT(50%), CPT(80%) | RouteLLM | **Bắt buộc** (nội suy trên đường) |
+| CPT(50%), CPT(80%) | RouteLLM, TRIM | **Bắt buộc** (nội suy trên đường) |
+| CPT(95%) | TRIM | Nên có |
 | Hai chỉ số con của DABench (PSAQ, UASQ) và số câu đã chấm | DABench | Bắt buộc, có sẵn trong `bench show` |
 | APGR | RouteLLM | Nên có: chính xác cho E3; thô cho router theo bước vì ít điểm |
 | Token mô hình mạnh sinh ra | TRIM | Nên có; hữu ích khi dùng gói Plus không có hóa đơn |
 | Số lần đổi mô hình mỗi câu | MTRouter | Nên có, có sẵn |
 | Số bước mỗi câu, độ trễ trung vị, tỷ lệ token đọc từ cache | EvoRoute (độ trễ) | Nên có, có sẵn trong telemetry |
 | AIQ | RouterBench | Bỏ: trùng ý với APGR |
+| ΔIBC | TRIM | Bỏ: trùng ý với PGR theo chi phí |
 | Độ chính xác gán mức từng bước | AgentRouter | Bỏ: không có nhãn mức cho từng bước |
 
 ## 3. Biến cố định
@@ -129,6 +138,7 @@ Chạy `dabench-pilot` (9 câu, 3 mỗi mức) với S và C, mỗi cấu hình 
 | Chi phí, số bước, thời gian mỗi câu | Ước tính ngân sách cho mục 5 |
 | Số câu chạy được mỗi ngày trên một tài khoản Plus | Lên lịch chạy |
 | Tỷ lệ lỗi, quá thời gian | Chỉnh `timeout_s`, `max_turns` |
+| Tỷ lệ câu thiếu cụm `@ten[...]` của từng mô hình (E9) | Biết mô hình rẻ thua vì phân tích hay vì định dạng |
 
 **Cổng quyết định** (kiểm tra lại trên toàn tập phát triển ở bước 3):
 
@@ -138,6 +148,12 @@ Chạy `dabench-pilot` (9 câu, 3 mỗi mức) với S và C, mỗi cấu hình 
   kể. Đổi cặp.
 - Ngân sách ước tính cho mục 5 vượt khả năng → lấy mẫu tập kiểm tra theo mức
   (`--per-level`), **trước** khi chạy.
+- Mô hình rẻ thua chủ yếu vì **thiếu định dạng đáp án** → sửa prompt định dạng
+  cho mọi cấu hình, hoặc thêm bước viết lại như quy trình gốc của DABench. Nếu
+  không, router sẽ học "sửa định dạng" thay vì "khó phân tích".
+- Mô hình mạnh gần đúng hết ở mức dễ (GPT-4 đã đạt 78,99% toàn bộ từ đầu 2024) →
+  khoảng cách dồn vào mức khó; cân nhắc lấy mẫu nhiều câu khó hơn trong tập
+  kiểm tra, quyết định trước khi chạy.
 
 ### Bước 3. Thu dữ liệu trên tập phát triển (gói E)
 
@@ -161,9 +177,11 @@ RouteLLM trên tập phát triển.
 ### Bước 4. Xây và khóa bộ định tuyến đề xuất (gói F)
 
 Chỉ dùng dữ liệu tập phát triển. Cách làm theo MTRouter, thu nhỏ cho 2 mô hình
-và đặc trưng tự chọn:
+và đặc trưng tự chọn. Dữ liệu học gồm run ngẫu nhiên **và** run S, C (MTRouter
+dùng cả hai; bỏ dữ liệu ngẫu nhiên làm họ giảm 6,6 điểm).
 
-1. **Nhãn**: đúng/sai của cả câu, gắn cho mọi bước của câu đó.
+1. **Nhãn**: đúng/sai của cả câu, gắn cho mọi bước của câu đó. Biến thể theo
+   EvoRoute: nhân thêm "bước đó không có lỗi công cụ"; so hai cách trong E5a.
 2. **Mô hình**: với mỗi lựa chọn (rẻ, mạnh), một hồi quy logistic trên đặc
    trưng của bước, ước lượng `P(câu đúng | đặc trưng, lựa chọn)`. Đây là bản
    tương tự router Ridge theo từng mô hình của MTRouter. Điểm rủi ro = hiệu hai
@@ -177,7 +195,9 @@ và đặc trưng tự chọn:
    thời điểm này không sửa bộ định tuyến.
 
 Dữ liệu nhỏ (khoảng 100 câu × 1–3 run ngẫu nhiên), các bước trong cùng câu
-tương quan. Hồi quy không hơn luật có ngưỡng thì dùng luật có ngưỡng, đúng điểm
+tương quan. Để so sánh: MTRouter dùng 515.221 lượt cho một mạng nơ-ron;
+EvoRoute khởi động bằng khoảng 480 bản ghi bước từ 50 tác vụ ($28,8) cho phương
+pháp truy xuất. Quy mô của đồ án gần EvoRoute, nên chỉ hợp với mô hình rất nhỏ. Hồi quy không hơn luật có ngưỡng thì dùng luật có ngưỡng, đúng điểm
 cắt trong kế hoạch.
 
 ### Bước 5. Đánh giá trên tập kiểm tra (gói G)
@@ -256,6 +276,8 @@ Quyết định trước khi chạy và ghi lại.
 | H6 | Số bước mỗi câu | Hộp theo cấu hình | telemetry | Nên có: cho thấy mô hình rẻ có làm câu dài hơn |
 | H7 | Đổi mô hình và cache | x: số lần đổi mỗi câu, y: tỷ lệ token đọc từ cache | telemetry, E5b | Nên có, nếu có token cache |
 | H8 | Hệ số đặc trưng của router | Cột ngang | Mô hình đã khóa | Nên có (có ngay từ hồi quy logistic) |
+| **H9** | **Sau lỗi công cụ** | Hai ô: tỷ lệ đổi mô hình sau lỗi theo chính sách; tỷ lệ bước sau hồi phục theo lựa chọn sau lỗi, kèm khoảng tin cậy | R50, L, P; telemetry | **Bắt buộc** (RQ5; theo MTRouter Hình 4) |
+| **B4** | **Bảng bổ trợ S/C** | 2×2 đúng/sai, tổng và theo mức | Run S, C | **Bắt buộc** (E7) |
 | B2 | Ablation | E5a (AUC), E5b | Tập phát triển | Nên có |
 | B3 | So sánh thiết kế với các bài liên quan | Từ [gói C](nghien-cuu-dinh-tuyen.md#3-so-sánh-với-thiết-kế-của-đồ-án); không so số vì khác benchmark | — | **Bắt buộc** (phần tổng quan) |
 
@@ -280,6 +302,7 @@ Quyết định trước khi chạy và ghi lại.
 | Nhà cung cấp thay đổi mô hình hoặc tải theo thời gian | Ghi tên mô hình có phiên bản, chạy xen kẽ, ghi ngày |
 | Mô hình không tất định | Lặp 2 lần cho S, C, P1; tính theo câu; báo khoảng tin cậy |
 | Cách chấm khác bài gốc | Đã liệt kê trong [benchmark](benchmark.md#cách-chấm-và-điểm-khác-với-bài-báo); báo cáo cả chỉ số gốc |
+| Mô hình rẻ thua vì định dạng đáp án, không vì phân tích | E9 ở pilot; báo cáo riêng tỷ lệ thiếu định dạng theo cấu hình |
 | Chi phí quy đổi, không phải hóa đơn thật | Ghi ngày của bảng giá; báo cáo cả token thô và token mô hình mạnh |
 | Gateway khởi động lại giữa lượt làm bước sau bị coi là bước đầu | Không khởi động lại khi đang chạy run; lọc các câu bị ảnh hưởng |
 
