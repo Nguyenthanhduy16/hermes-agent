@@ -5,6 +5,11 @@ buckets (cache read/write kept separate), latency and outcome, plus one row
 per tool call. Rows carry the run metadata (Hermes revision, config hash) so
 baselines and ablations can be told apart. No message text or tool arguments
 are stored: only sizes, names and status.
+
+When the router (assistant_core.router) decided the step, the row also holds
+that decision: ``model`` is the model the call was sent to, ``default_model``
+the session model Hermes would have used, and the ``route_*`` columns the
+policy, its choice, reason, score and the features it saw.
 """
 
 import json
@@ -26,7 +31,9 @@ CREATE TABLE IF NOT EXISTS api_calls (
     api_call_count INTEGER, retry_count INTEGER, provider TEXT, model TEXT, response_model TEXT,
     duration_s REAL, ttfb_s REAL, finish_reason TEXT, error_type TEXT, status_code INTEGER,
     input_tokens INTEGER, output_tokens INTEGER, cache_read_tokens INTEGER, cache_write_tokens INTEGER,
-    reasoning_tokens INTEGER, message_count INTEGER, context_length INTEGER, tool_call_count INTEGER
+    reasoning_tokens INTEGER, message_count INTEGER, context_length INTEGER, tool_call_count INTEGER,
+    default_model TEXT, route_policy TEXT, route_choice TEXT, route_reason TEXT, route_score REAL,
+    route_switched INTEGER, route_features TEXT
 );
 CREATE TABLE IF NOT EXISTS tool_calls (
     id INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT, ts REAL NOT NULL,
@@ -38,7 +45,14 @@ CREATE INDEX IF NOT EXISTS tool_calls_session ON tool_calls (session_id, ts);
 CREATE TABLE IF NOT EXISTS config_snapshots (
     config_hash TEXT PRIMARY KEY, created_at REAL NOT NULL, snapshot_json TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS router_runs (
+    run_id TEXT PRIMARY KEY, policy TEXT NOT NULL, settings_json TEXT NOT NULL
+);
 """
+# Columns added after the first release; an older store gets them on open.
+ROUTE_COLUMNS = (("default_model", "TEXT"), ("route_policy", "TEXT"), ("route_choice", "TEXT"),
+                 ("route_reason", "TEXT"), ("route_score", "REAL"), ("route_switched", "INTEGER"),
+                 ("route_features", "TEXT"))
 
 
 def _int(value):
@@ -62,6 +76,10 @@ class TelemetryStore:
         self.db = sqlite3.connect(str(path), check_same_thread=False, isolation_level=None)
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.executescript(SCHEMA)
+        present = {row[1] for row in self.db.execute("PRAGMA table_info(api_calls)")}
+        for name, kind in ROUTE_COLUMNS:
+            if name not in present:
+                self.db.execute(f"ALTER TABLE api_calls ADD COLUMN {name} {kind}")
         self.db.execute("INSERT OR IGNORE INTO runs (run_id, started_at, hermes_rev, config_hash, label) "
                         "VALUES (?, ?, ?, ?, ?)", (run_id, time.time(), hermes_rev, config_hash, label))
 
@@ -88,24 +106,33 @@ class TelemetryStore:
                       status=_int(kw.get("status_code")), tools=None)
 
     def _api_row(self, kw, *, usage, duration, ttfb, finish, error, status, tools):
+        route = kw.get("route") if isinstance(kw.get("route"), dict) else {}
+        features = route.get("features")
         with self._lock:
             pending = self._pending.pop(str(kw.get("api_request_id")), {})
             self.db.execute(
                 "INSERT INTO api_calls (run_id, ts, platform, session_id, task_id, turn_id, api_request_id, "
                 "api_call_count, retry_count, provider, model, response_model, duration_s, ttfb_s, finish_reason, "
                 "error_type, status_code, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, "
-                "reasoning_tokens, message_count, context_length, tool_call_count) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "reasoning_tokens, message_count, context_length, tool_call_count, default_model, route_policy, "
+                "route_choice, route_reason, route_score, route_switched, route_features) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (self.run_id, time.time(), _text(kw.get("platform"), 40), _text(kw.get("session_id")),
                  _text(kw.get("task_id")), _text(kw.get("turn_id")), _text(kw.get("api_request_id")),
                  _int(kw.get("api_call_count")), _int(kw.get("retry_count")) if kw.get("retry_count") is not None
                  else pending.get("retry_count"),
-                 _text(kw.get("provider"), 80), _text(kw.get("model"), 120), _text(kw.get("response_model"), 120),
+                 _text(kw.get("provider"), 80), _text(route.get("model") or kw.get("model"), 120),
+                 _text(kw.get("response_model"), 120),
                  duration, ttfb, finish, error, status,
                  _int(usage.get("input_tokens")), _int(usage.get("output_tokens")),
                  _int(usage.get("cache_read_tokens")), _int(usage.get("cache_write_tokens")),
                  _int(usage.get("reasoning_tokens")), _int(kw.get("message_count")),
-                 _int(kw.get("context_length")), tools))
+                 _int(kw.get("context_length")), tools,
+                 _text(route.get("default_model"), 120) if route else None, _text(route.get("policy"), 40),
+                 _text(route.get("choice"), 20), _text(route.get("reason"), 120), _num(route.get("score")),
+                 int(bool(route.get("switched"))) if route else None,
+                 json.dumps(features, sort_keys=True, ensure_ascii=False)[:2000]
+                 if isinstance(features, dict) else None))
 
     def tool_call(self, *, blocked=False, **kw):
         with self._lock:
@@ -116,6 +143,13 @@ class TelemetryStore:
                  _text(kw.get("task_id")), _text(kw.get("turn_id")), _text(kw.get("api_request_id")),
                  _text(kw.get("tool_name"), 80), _text(kw.get("status"), 40), _text(kw.get("error_type"), 80),
                  _num(kw.get("duration_ms")), int(bool(blocked))))
+
+    def save_router(self, settings: dict) -> None:
+        """Store the router settings of this run (policy, models, seed...); no secrets are in them."""
+        with self._lock:
+            self.db.execute("INSERT OR REPLACE INTO router_runs (run_id, policy, settings_json) VALUES (?, ?, ?)",
+                            (self.run_id, str(settings.get("policy"))[:40],
+                             json.dumps(settings, sort_keys=True, ensure_ascii=False)))
 
     def save_snapshot(self, config_hash: str, snapshot: dict) -> None:
         """Store the secret-free settings summary once per config hash (first writer wins)."""

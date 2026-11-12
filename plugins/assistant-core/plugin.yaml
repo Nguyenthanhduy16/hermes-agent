@@ -1,6 +1,6 @@
 name: assistant-core
 version: 0.1.0
-description: Platform-independent assistant core (per-person quota, tool policy, SCER-AH telemetry) for every Hermes messaging channel.
+description: Platform-independent assistant core (per-person quota, tool policy, SCER-AH telemetry, optional per-step model routing) for every Hermes messaging channel.
 author: hermes-zalo-bot
 provides_hooks:
   - pre_gateway_dispatch
@@ -9,6 +9,8 @@ provides_hooks:
   - pre_api_request
   - post_api_request
   - api_request_error
+provides_middleware:
+  - llm_request
 optional_env:
   - name: ASSISTANT_USER_DAILY_LIMIT
     description: Agent turns per person per day (Vietnam time), default 30
@@ -21,4 +23,13 @@ optional_env:
     password: false
   - name: ASSISTANT_RUN_LABEL
     description: Label for this gateway run in telemetry (e.g. baseline, router-v1) to compare settings
+    password: false
+  - name: ASSISTANT_ROUTER_POLICY
+    description: Per-step model routing policy (off, always-strong, always-cheap, random, rule), default off
+    password: false
+  - name: ASSISTANT_ROUTER_STRONG_MODEL
+    description: Model name for steps routed to the strong tier (required when routing is on)
+    password: false
+  - name: ASSISTANT_ROUTER_CHEAP_MODEL
+    description: Model name for steps routed to the cheap tier (required when routing is on)
     password: false

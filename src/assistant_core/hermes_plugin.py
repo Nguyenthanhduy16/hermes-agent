@@ -4,8 +4,10 @@
   turns on every platform (Telegram, Zalo assistant mode, ...).
 - pre_tool_call: veto tools that are not yet isolated per person.
 - pre/post_api_request, api_request_error, post_tool_call: telemetry.
+- llm_request middleware: per-step model routing, only when
+  ASSISTANT_ROUTER_POLICY is set (see assistant_core.router).
 
-Hooks observe or veto; none of them changes which model runs a step.
+Hooks observe or veto; only the router middleware changes which model runs a step.
 """
 
 import hashlib
@@ -17,6 +19,7 @@ import subprocess
 import time
 
 from .quota import QuotaExceeded, QuotaStore, person_key
+from .router import Router
 from .settings import CoreSettings, SettingsError
 from .telemetry import TelemetryStore, config_snapshot
 
@@ -83,6 +86,12 @@ class AssistantCore:
                 self.telemetry.save_snapshot(config_hash, config_snapshot(config, home=home))
             except Exception:
                 logger.warning("assistant-core could not store the settings snapshot", exc_info=True)
+        self.router = Router(settings.router) if settings.router.enabled else None
+        if self.router and self.telemetry:
+            try:
+                self.telemetry.save_router(settings.router.describe())
+            except Exception:
+                logger.warning("assistant-core could not store the router settings", exc_info=True)
 
     # ---- admission ------------------------------------------------------
 
@@ -132,16 +141,29 @@ class AssistantCore:
 
     def pre_tool_call(self, tool_name=None, **kw):
         if tool_name in self.settings.blocked_tools:
+            if self.router:
+                self.router.tool_result(tool_name=tool_name, blocked=True, **kw)
             if self.telemetry:
                 self.telemetry.tool_call(tool_name=tool_name, status="blocked", blocked=True, **kw)
             return {"action": "block", "message": BLOCKED_TOOL_TEXT.format(tool=tool_name)}
         return None
 
     def post_tool_call(self, **kw):
+        if self.router:
+            self.router.tool_result(**{k: v for k, v in kw.items() if k != "blocked"})
         if self.telemetry:
             self.telemetry.tool_call(**{k: v for k, v in kw.items() if k not in ("args", "result", "blocked")})
 
+    # ---- routing --------------------------------------------------------
+
+    def llm_request(self, **kw):
+        return self.router.llm_request(**kw) if self.router else None
+
     # ---- telemetry ------------------------------------------------------
+
+    def _with_route(self, kw):
+        route = self.router.decision_for(**kw) if self.router else None
+        return dict(kw, route=route) if route else kw
 
     def pre_api_request(self, **kw):
         if self.telemetry:
@@ -149,11 +171,11 @@ class AssistantCore:
 
     def post_api_request(self, **kw):
         if self.telemetry:
-            self.telemetry.post_api_request(**kw)
+            self.telemetry.post_api_request(**self._with_route(kw))
 
     def api_request_error(self, **kw):
         if self.telemetry:
-            self.telemetry.api_request_error(**kw)
+            self.telemetry.api_request_error(**self._with_route(kw))
 
 
 def _safe(callback):
@@ -186,6 +208,11 @@ def register(ctx) -> None:
     ctx.register_hook("pre_tool_call", core.pre_tool_call)
     for name in ("post_tool_call", "pre_api_request", "post_api_request", "api_request_error"):
         ctx.register_hook(name, _safe(getattr(core, name)))
-    logger.info("assistant-core loaded: quota %s/%s per day, blocked tools %s, telemetry %s",
+    if core.router:
+        # The router guards itself: on any failure the step runs on the default model.
+        ctx.register_middleware("llm_request", core.llm_request)
+    logger.info("assistant-core loaded: quota %s/%s per day, blocked tools %s, telemetry %s, router %s",
                 settings.user_daily_limit, settings.total_daily_limit,
-                ",".join(sorted(settings.blocked_tools)), "on" if core.telemetry else "off")
+                ",".join(sorted(settings.blocked_tools)), "on" if core.telemetry else "off",
+                f"{settings.router.policy} ({settings.router.strong_model} / {settings.router.cheap_model})"
+                if core.router else "off")
