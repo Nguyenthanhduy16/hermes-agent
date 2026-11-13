@@ -378,7 +378,7 @@ T2–T6 01–04 và 06–10 UTC, theo `agent/usage_pricing.py` của Hermes); b�
 nhầm là giờ giá thường và tỷ lệ 3,5 lần. C tốn token gấp khoảng 4 lần S (167–186k so với
 44k mỗi câu). Quỹ đạo nhiều bước (S 5,9, C 10–14 bước/câu). Giới hạn: 10 câu, khoảng
 trống chỉ dựa vào 2 câu và có thể phụ thuộc ngân sách `max_turns`/timeout; C2 thiếu
-token của câu quá giờ nên chi phí C2 hơi thấp. Kiểm tra tiếp bằng thử nghiệm nhỏ trên 2
+token của câu quá giờ nên chi phí C2 hơi thấp. Đã nối lại câu đó qua session id suy ra (`bench export`, 13/11): C1 $0,0063, C2 $0,0068 mỗi câu, S1 $0,0387, tức khoảng 6 lần. Kiểm tra tiếp bằng thử nghiệm nhỏ trên 2
 câu ML (R50, FL, C với `max_turns` 50).
 
 **Thử nghiệm nhỏ trên 2 câu ML (2026-11-13, 5 run, đều giờ thấp điểm).** Trên 2 câu này
