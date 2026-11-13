@@ -358,6 +358,11 @@ Quyết định trước khi chạy và ghi lại.
 | 2026-11-12 | 2 | dacode-pilot-ml2@95fe06322716 | S | như trên | dacode-S2b | 20261112-133103-a53f89 | 89989bf+ | Bù 2 câu S2 thiếu (ml-competition-008, ml-regression-002): 0,99 / 1,0; 14 bước/câu. S2 + S2b = 0,755 |
 | 2026-11-12 | 2 | dacode-pilot@d590d2c45ac7 | C (DeepSeek V4 Flash, `deepseek-flash`) | như trên; 11:36–12:30 UTC (thứ 5), giờ thấp điểm | dacode-C1 | 20261112-113633-747b7a | 89989bf+ | 0,556; 13,7 bước/câu; 2 câu ML chạm `max_turns` 25 không ghi file kết quả |
 | 2026-11-12 | 2 | dacode-pilot@d590d2c45ac7 | C (DeepSeek V4 Flash, `deepseek-flash`) | như trên; 12:32–13:29 UTC (thứ 5), giờ thấp điểm | dacode-C2 | 20261112-123231-c41e00 | 89989bf+ | 0,623; 10,3 bước/câu; ml-competition-008 chạm `max_turns`, ml-regression-002 quá 1800 s |
+| 2026-11-13 | 2 | dacode-pilot-ml2@95fe06322716 | R50 `random` | share 0,5, seed 21; 14:48–15:08 UTC, thấp điểm | ml2-R50-a | 20261113-144849-7c104e | b30e1b2 | 0,994 / 1,00; 9 / 13 bước; 44% / 54% bước Sol; $0,060/câu |
+| 2026-11-13 | 2 | dacode-pilot-ml2@95fe06322716 | FL `first-strong` | `STRONG_FIRST_STEPS=2` | ml2-FL-a | 20261113-150858-818b87 | b30e1b2 | 0,993 / 1,00; 14 / 25 bước (reg-002 chạm `max_turns` nhưng file đã ghi); $0,023/câu |
+| 2026-11-13 | 2 | dacode-pilot-ml2-long@b0a76c9211c6 | C `always-cheap` | `max_turns` 50, timeout 3600 s (wrapper nâng `MAX_TIMEOUT_S`) | ml2-C50 | 20261113-154131-4d5802 | b30e1b2 | 0,887 / 1,00; 35 / 50 bước; reg-002 3286 s; $0,026/câu |
+| 2026-11-13 | 2 | dacode-pilot-ml2@95fe06322716 | R50 `random` | share 0,5, seed 22 | ml2-R50-b | 20261113-164539-ad013a | b30e1b2 | 0,986 / 1,00; 13 / 11 bước; 31% / 73% bước Sol; $0,078/câu |
+| 2026-11-13 | 2 | dacode-pilot-ml2@95fe06322716 | FL `first-strong` | `STRONG_FIRST_STEPS=2` | ml2-FL-b | 20261113-165613-d32c12 | b30e1b2 | 0,995 / 0; cả hai 25 bước; reg-002 chạm `max_turns` chưa ghi file; $0,026/câu |
 
 **Cổng quyết định, pilot DABench (2026-11-12): không đạt.** C ≥ S (83,3% so với
 77,8%); khác biệt là lỗi so khớp của bộ chấm (0,89/0,88, NaN/nan); quỹ đạo khoảng 3
@@ -376,6 +381,21 @@ trống chỉ dựa vào 2 câu và có thể phụ thuộc ngân sách `max_tur
 token của câu quá giờ nên chi phí C2 hơi thấp. Kiểm tra tiếp bằng thử nghiệm nhỏ trên 2
 câu ML (R50, FL, C với `max_turns` 50).
 
+**Thử nghiệm nhỏ trên 2 câu ML (2026-11-13, 5 run, đều giờ thấp điểm).** Trên 2 câu này
+S được 0,99–1,0 với $0,07–0,10/câu; C với ngân sách gốc (25 bước, 1800 s) được 0 cả 4
+lần vì hết ngân sách trước khi ghi file kết quả, không phải vì đáp án sai. (1) Với
+`max_turns` 50 và 3600 s, C giải được cả hai (0,887 và 1,0) nhưng cần 35 và 50 bước, tới
+3286 s, $0,026/câu. Vậy khoảng trống S − C của pilot là hàm của ngân sách `max_turns` /
+`timeout_s`; đổi ngân sách là đổi kết luận cổng. (2) R50 cứu 4/4 lần (TB 0,995), quỹ đạo
+về 9–13 bước như S, nhưng chi phí $0,06–0,08/câu, gần bằng S trên chính 2 câu này. (3) FL
+(2 bước Sol đầu) cứu 3/4 với $0,023–0,026/câu, nhưng 2 bước Sol đầu chỉ là dò dữ liệu,
+phần còn lại giống C và 2/3 lần thành công sát giới hạn 25 bước: FL đo chủ yếu phương sai
+của C. Hệ quả: giữ ngân sách 25 bước / 1800 s là biến cố định (nó tạo ra áp lực mà router
+phải giải), báo cáo kèm độ nhạy theo ngân sách; đặc trưng `step` và `short_exec_streak`
+có cơ sở (C có 8–22 lệnh ngắn mỗi câu, S có 1–4). Nối dữ liệu: 18/18 kết quả nối được
+sang bước bằng `bench export` (câu C2 quá giờ lấy lại qua session id suy ra). Giới hạn: 2
+câu cùng loại, được chọn vì C thua ở pilot (hồi quy về trung bình), 1–2 lần mỗi cấu hình.
+
 Giá trị cố định (mục 3):
 
 | Mục | Giá trị |
@@ -384,6 +404,7 @@ Giá trị cố định (mục 3):
 | Mô hình rẻ | DeepSeek V4 Flash, ID API `deepseek-flash` (provider `deepseek`, đổi qua Hermes theo bước: [dinh-tuyen](dinh-tuyen.md)), `reasoning_effort: high`. Pilot DABench đầu tiên dùng `gpt-6-luna` |
 | Hermes commit | `dce1e9b3` (2026-10-09) |
 | `max_turns`, `timeout_s`, song song | 25; 900 s (DABench), 1800 s (DA-Code); 1 |
+| Hạn mỗi lệnh tool | 420 s (`_DEFAULT_CONCURRENT_TOOL_TIMEOUT_S` trong `agent/tool_executor.py` của Hermes; thắng `code_execution.timeout: 600` vì profile không đặt `timeouts.tools.*`) |
 | Bộ công cụ `api_server` | `code_execution`, `file`, `todo` (không có web); `approvals.unattended_mode: approve` |
 | Sandbox | `hermes-bench-sandbox:2` (pilot DABench dùng `:1`; `:2` thêm thư viện DA-Code) ([Dockerfile](../deploy/bench-sandbox/Dockerfile), thư viện ghim), `docker_network: false`, `/data/dabench` chỉ đọc |
 | Profile Hermes | `.runtime/hermes-home/profiles/bench`, gateway riêng cổng 8650 ([benchmark](benchmark.md#10-profile-thực-nghiệm)) |
