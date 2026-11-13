@@ -710,17 +710,26 @@ def _int_or_none(value):
     return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None
 
 
+def expected_session_id(system_prompt: str, first_user_message: str) -> str:
+    """The session id the Hermes chat-completions endpoint derives for this conversation
+    (``_derive_chat_session_id`` in gateway/platforms/api_server.py, no profile prefix).
+    Recorded before the request so a task that times out, and so never gets the
+    X-Hermes-Session-Id response header, can still be joined to its telemetry steps."""
+    digest = hashlib.sha256(f"{system_prompt or ''}\n{first_user_message}".encode("utf-8")).hexdigest()[:16]
+    return f"api-{digest}"
+
+
 def execute_task(client, target: Target, run_id: str, task: Task, attempt: int, *, store_response=True) -> dict:
     """Send one task as a fresh conversation. Exactly one request; failures are recorded, not retried."""
     # The nonce gives each task its own Hermes session: the chat-completions
     # endpoint derives the session from the system prompt and first message.
-    messages = [{"role": "system", "content": f"Benchmark run {run_id}, task {task.id}, attempt {attempt}."},
-                {"role": "user", "content": task.prompt}]
+    system = f"Benchmark run {run_id}, task {task.id}, attempt {attempt}."
+    messages = [{"role": "system", "content": system}, {"role": "user", "content": task.prompt}]
     headers = {"Authorization": "Bearer " + target.key, "User-Agent": f"hermes-console-bench/1 run={run_id}"}
     result = dict(task_id=task.id, attempt=attempt, level=task.level, category=task.category, passed=False,
                   checks=[], latency_s=None, input_tokens=None, output_tokens=None, total_tokens=None,
-                  response_model=None, session_id=None, error=None, status_code=None, response_length=None,
-                  response_text=None)
+                  response_model=None, session_id=expected_session_id(system, task.prompt), error=None,
+                  status_code=None, response_length=None, response_text=None)
     started = time.monotonic()
     import httpx
     try:
@@ -1070,6 +1079,9 @@ def main(argv=None, environ=None, out=None) -> int:
     cmp.add_argument("runs", nargs="+")
     stop = commands.add_parser("cancel", help="ask a running run to stop")
     stop.add_argument("run")
+    export_cmd = commands.add_parser("export", help="write tasks.csv and steps.csv for runs (analysis, router data)")
+    export_cmd.add_argument("runs", nargs="+")
+    export_cmd.add_argument("--out", required=True, help="output directory")
     args = parser.parse_args(argv)
     home, data_dir = _paths(args, environ)
     write = lambda text="": print(text, file=out)
@@ -1134,6 +1146,18 @@ def _command(args, store, home, data_dir, environ, write) -> int:
         if not cancel(store, args.run):
             raise BenchError("That run is not active.")
         write("Cancellation requested; in-flight requests finish first.")
+        return 0
+    if args.command == "export":
+        from . import bench_export
+        try:
+            suites, _ = load_suites(home)
+            prompts = {name: {task.id: task.prompt for task in suite.tasks} for name, suite in suites.items()}
+            done = bench_export.export(store, data_dir, args.runs, Path(args.out), pricing, prompts)
+        except ValueError as error:
+            raise BenchError(str(error)) from None
+        write(f"{done['tasks']} task rows, {done['steps']} step rows -> {', '.join(done['files'])}")
+        for item in done["unjoined"]:
+            write(f"! no telemetry steps for {_clean(item)}")
         return 0
     ids = [args.run] if args.command == "show" else args.runs
     if args.command == "compare" and not 2 <= len(ids) <= 4:

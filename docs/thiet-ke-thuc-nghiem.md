@@ -196,6 +196,14 @@ dùng cả hai; bỏ dữ liệu ngẫu nhiên làm họ giảm 6,6 điểm).
    trưng của bước, ước lượng `P(câu đúng | đặc trưng, lựa chọn)`. Đây là bản
    tương tự router Ridge theo từng mô hình của MTRouter. Điểm rủi ro = hiệu hai
    xác suất; chọn mạnh khi điểm rủi ro > τ.
+   **Đặc trưng** (chốt 13/11/2026 sau thảo luận Claude + Codex, chi tiết trong
+   [định tuyến](dinh-tuyen.md#2-các-chính-sách)): mô hình chính dùng 7 đặc trưng
+   `step`, `prev_tool_errors`, `prev_tool_timeout`, `prev_tool_duration_log`,
+   `short_exec_streak`, `ctx_growth`, `prev_choice`, mỗi đặc trưng có tương tác với
+   lựa chọn và có regularization; 4 đặc trưng khác (`elapsed_log`, `tool_time_cum`,
+   `cum_tool_failures`, `error_streak`) dùng cho ablation E5a. Không đặc trưng nào là
+   hằng số của task: loại task, task_id và độ dài prompt ban đầu chỉ dùng để phân
+   tích. Sau khi học phải kiểm tra router có đổi quyết định bên trong cùng task.
 3. **Kiểm chứng chéo theo file CSV** bên trong tập phát triển để chọn đặc
    trưng (đồng thời là E5a).
 4. **Chọn τ**: tính ngoại tuyến tỷ lệ bước mạnh theo τ trên log, chọn 2 giá trị
@@ -299,12 +307,12 @@ Quyết định trước khi chạy và ghi lại.
 
 | # | Việc | Vì sao | Khi nào |
 |---|---|---|---|
-| 1 | **Xuất dữ liệu** ra CSV: một dòng mỗi câu × lần lặp (cấu hình, mức, đúng/sai, đáp án con, chi phí, token mô hình mạnh, số bước, bước rẻ, đổi mô hình, cache, độ trễ) và một dòng mỗi bước (đặc trưng, lựa chọn, mô hình, token) | Đầu vào cho mọi phân tích, E3 và gói F | Trước bước 3 |
+| 1 | **Xuất dữ liệu** ra CSV: một dòng mỗi câu × lần lặp (cấu hình, mức, đúng/sai, đáp án con, chi phí, token mô hình mạnh, số bước, bước rẻ, đổi mô hình, cache, độ trễ) và một dòng mỗi bước (đặc trưng, lựa chọn, mô hình, token) | Đầu vào cho mọi phân tích, E3 và gói F | **Xong** 13/11: `bench export RUN... --out DIR` |
 | 2 | **Script chạy ma trận cấu hình**: đặt biến, khởi động lại gateway, chờ sẵn sàng, chạy suite, ghi mã run vào file danh sách lần chạy | Lặp lại được, tránh nhầm nhãn | Trước bước 3 |
 | 3 | **Chạy tiếp run bị gián đoạn** khi hết lượt của gói Plus (gói B2) | Một run 155 câu khó chạy liền | Trước bước 3 |
 | 4 | **Đánh giá ngoại tuyến theo câu hỏi** (E3): chạy router RouteLLM trên prompt, tra kết quả S/C, quét ngưỡng, oracle | RQ3; "chạy lại bài báo" | Sau bước 3 |
 | 5 | Router đề xuất: huấn luyện trên CSV, chính sách có τ và quán tính | Gói F | Bước 4 |
-| 5b | Chính sách `first-strong` (First-Large): mạnh k bước đầu, không nâng lên khi lỗi | Mốc E2b; khoảng 10 dòng qua `register_policy` | Trước bước 3 nếu làm |
+| 5b | Chính sách `first-strong` (First-Large): mạnh k bước đầu, không nâng lên khi lỗi | Mốc E2b; khoảng 10 dòng qua `register_policy` | **Xong** 13/11 |
 | 6 | **Script phân tích**: bootstrap ghép cặp, McNemar, PGR, CPT, các hình mục 7 | Gói G | Bước 6 |
 
 ## 9. Mối đe dọa đến tính hợp lệ

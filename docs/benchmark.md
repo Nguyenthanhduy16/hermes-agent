@@ -148,6 +148,27 @@ các run dùng phiên bản suite khác nhau.
 Gợi ý: chạy mỗi cấu hình với `--repeats 2` trở lên để thấy độ dao động; so sánh
 L3 (tác vụ dài, nhiều bước) là nơi định tuyến khác biệt rõ nhất.
 
+### Xuất CSV
+
+```bash
+python -m assistant_core.bench export RUN [RUN ...] --out DIR
+```
+
+Ghi hai file:
+- `tasks.csv`: mỗi dòng là một task × lần lặp, gồm kết quả, điểm (điểm 0–1 của bộ
+  chấm ngoài nếu có), số bước, số bước mạnh/rẻ, số lần đổi model, token, chi phí,
+  lỗi và quá giờ của công cụ.
+- `steps.csv`: mỗi dòng là một bước (một lần gọi model), gồm đặc trưng của router
+  (`f_*`), lựa chọn, model đã chạy, token, chi phí, các lần gọi công cụ của bước đó,
+  và kết quả của task chứa bước đó (nhãn để học router).
+
+Bước được nối với task qua session id của Hermes. Lần gửi lại cùng
+`api_request_id` gộp thành một bước. Task quá giờ không nhận được header
+`X-Hermes-Session-Id`, nên bench ghi trước session id mà Hermes sẽ suy ra
+(`expected_session_id`); với run cũ, export tự suy ra lại từ prompt trong suite.
+`cost_usd` theo bảng giá thấp điểm trong `pricing.yaml`; `cost_usd_billed` nhân đôi
+các lần gọi DeepSeek vào giờ cao điểm (T2–T6 01–04 và 06–10 UTC).
+
 ## 5. Viết suite riêng
 
 Suite có sẵn: `config/bench/assistant-basics.yaml` (14 tác vụ tiếng Việt và

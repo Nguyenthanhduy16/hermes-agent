@@ -20,8 +20,26 @@ baselines every experiment needs, and a new policy plugs in with
                     turn, cheap after, never escalated on errors (First-Large baseline)
 
 What a policy sees (``features``) is what happened inside the agent, never
-message text: the step number, the tool calls made since the previous model
-call and whether any failed, the previous choice, and the request size.
+message text. Every feature of step t comes from events finished before step t
+(a retry of the step reuses its snapshot), and every one can change from step to
+step, so none of them names the task:
+
+    step                    model calls of this turn, this one included
+    prev_tool_errors        failed tool calls since the previous model call (a
+                            timeout is not counted here), capped at 2
+    prev_tool_timeout       1 when one of those tool calls timed out
+    prev_tool_duration_log  log1p of the longest of those tool calls, in seconds
+    short_exec_streak       consecutive previous steps whose code calls
+                            (execute_code, terminal) all ended ok within 3 s, capped at 5
+    ctx_growth              sign(d) * log1p(|d|), d = request characters minus those
+                            of the first step of the turn
+    prev_choice             the previous step's choice (None on the first step)
+    elapsed_log, tool_time_cum, cum_tool_failures, error_streak
+                            turn-level variants kept for ablations
+    prev_tools, last_tool, messages, chars, session_step
+                            logged for analysis
+
+The design of this set is in docs/thiet-ke-thuc-nghiem.md (step 4).
 
 Limits that come from Hermes (checked on commit 93c9360a):
 
@@ -40,7 +58,9 @@ from dataclasses import dataclass
 import hashlib
 import json
 import logging
+import math
 from threading import RLock
+import time
 
 from .settings import RouterSettings, SettingsError
 
@@ -50,6 +70,9 @@ logger = logging.getLogger(__name__)
 STRONG, CHEAP = "strong", "cheap"
 MAX_SESSIONS = 2000
 SOURCE = "assistant-core-router"
+EXEC_TOOLS = frozenset({"execute_code", "terminal"})
+SHORT_EXEC_S = 3.0          # a code call shorter than this is "short" (sensitivity: 1 / 3 / 5 s)
+MAX_PREV_ERRORS, MAX_SHORT_STREAK = 2, 5
 
 
 @dataclass(frozen=True)
@@ -80,7 +103,7 @@ def _random(features, settings):
 def _rule(features, settings):
     if features["step"] <= settings.strong_first_steps:
         return Decision(STRONG, "first step of the turn")
-    if features["prev_tool_errors"]:
+    if features["prev_tool_errors"] or features.get("prev_tool_timeout"):
         return Decision(STRONG, "tool error in the previous step")
     return Decision(CHEAP, "routine step")
 
@@ -104,7 +127,9 @@ def register_policy(name: str, policy) -> None:
 
 class _Session:
     __slots__ = ("turn_id", "step", "session_step", "last_choice", "tools", "tool_errors", "last_tool",
-                 "error_streak", "step_id", "record")
+                 "error_streak", "step_id", "record", "tool_timeouts", "tool_max_s", "exec_calls",
+                 "exec_all_short", "short_exec_streak", "first_chars", "turn_started", "tool_time_s",
+                 "turn_failures")
 
     def __init__(self):
         self.turn_id = None
@@ -117,6 +142,24 @@ class _Session:
         self.error_streak = 0    # consecutive steps that followed a tool error
         self.step_id = None      # the step the stored record belongs to
         self.record = None
+        self.tool_timeouts = 0   # timed-out tool calls since the previous model call
+        self.tool_max_s = 0.0    # longest tool call since the previous model call
+        self.exec_calls = 0      # code calls since the previous model call
+        self.exec_all_short = True
+        self.short_exec_streak = 0
+        self.first_chars = None  # request size at the first step of the turn
+        self.turn_started = None
+        self.tool_time_s = 0.0   # tool time in the turn
+        self.turn_failures = 0   # failed or timed-out tool calls in the turn
+
+
+def _seconds(duration_ms) -> float:
+    """A tool call's duration in seconds; 0 when it is missing or not a usable number."""
+    try:
+        value = float(duration_ms) / 1000.0
+    except (TypeError, ValueError):
+        return 0.0
+    return value if math.isfinite(value) and value > 0 else 0.0
 
 
 def _size(request: dict):
@@ -163,14 +206,27 @@ class Router:
             self._sessions.move_to_end(key)
         return state
 
-    def tool_result(self, *, session_id=None, task_id=None, tool_name=None, status=None, blocked=False, **_):
+    def tool_result(self, *, session_id=None, task_id=None, tool_name=None, status=None, blocked=False,
+                    duration_ms=None, **_):
         """Note a finished (or vetoed) tool call; the next step's features report it."""
         with self._lock:
             state = self._session(session_id or task_id)
             state.tools += 1
             state.last_tool = str(tool_name)[:80] if tool_name else None
-            if blocked or (status is not None and str(status) not in ("ok", "success")):
+            seconds = _seconds(duration_ms)
+            state.tool_max_s = max(state.tool_max_s, seconds)
+            state.tool_time_s += seconds
+            status = None if status is None else str(status).lower()
+            ok = not blocked and status in (None, "ok", "success")
+            if not blocked and status == "timeout":
+                state.tool_timeouts += 1
+                state.turn_failures += 1
+            elif not ok:
                 state.tool_errors += 1
+                state.turn_failures += 1
+            if tool_name in EXEC_TOOLS:
+                state.exec_calls += 1
+                state.exec_all_short = state.exec_all_short and ok and seconds < SHORT_EXEC_S
 
     # ---- the middleware -------------------------------------------------
 
@@ -207,13 +263,33 @@ class Router:
         return self._apply(request, record)
 
     def _decide(self, state: _Session, request: dict, turn_id: str, step_id: str) -> dict:
+        now = time.monotonic()
         if turn_id != state.turn_id:
             state.turn_id, state.step = turn_id, 0
+            state.first_chars, state.turn_started = None, now
+            state.tool_time_s, state.turn_failures, state.short_exec_streak = 0.0, 0, 0
+        elif state.step:
+            # The previous step of this turn has ended: did its code calls all run short and clean?
+            short = state.exec_calls > 0 and state.exec_all_short
+            state.short_exec_streak = min(state.short_exec_streak + 1, MAX_SHORT_STREAK) if short else 0
         messages, chars = _size(request)
+        if state.step == 0:
+            state.first_chars = chars
+        growth = None
+        if chars is not None and state.first_chars is not None:
+            delta = chars - state.first_chars
+            growth = round(math.copysign(math.log1p(abs(delta)), delta), 4)
         features = dict(step=state.step + 1, session_step=state.session_step + 1, step_id=step_id,
                         prev_choice=state.last_choice, prev_tools=state.tools,
-                        prev_tool_errors=state.tool_errors, last_tool=state.last_tool if state.tools else None,
+                        prev_tool_errors=min(state.tool_errors, MAX_PREV_ERRORS),
+                        prev_tool_timeout=int(state.tool_timeouts > 0),
+                        prev_tool_duration_log=round(math.log1p(state.tool_max_s), 4),
+                        short_exec_streak=state.short_exec_streak, ctx_growth=growth,
+                        last_tool=state.last_tool if state.tools else None,
                         error_streak=state.error_streak + 1 if state.tool_errors else 0,
+                        elapsed_log=round(math.log1p(max(0.0, now - state.turn_started)), 4),
+                        tool_time_cum=round(math.log1p(state.tool_time_s), 4),
+                        cum_tool_failures=state.turn_failures,
                         messages=messages, chars=chars)
         decision = self.policy(features, self.settings)
         if not isinstance(decision, Decision) or decision.choice not in self._models:
@@ -230,7 +306,8 @@ class Router:
         state.session_step += 1
         state.error_streak = features["error_streak"]
         state.last_choice = decision.choice
-        state.tools = state.tool_errors = 0
+        state.tools = state.tool_errors = state.tool_timeouts = state.exec_calls = 0
+        state.tool_max_s, state.exec_all_short = 0.0, True
         state.last_tool = None
         state.step_id, state.record = step_id, record
         return record

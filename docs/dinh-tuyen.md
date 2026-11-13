@@ -95,20 +95,29 @@ của nhà cung cấp đó là không có cache.
 | `always-strong` | Mọi bước dùng mô hình mạnh | Mốc chất lượng cao nhất |
 | `always-cheap` | Mọi bước dùng mô hình rẻ | Mốc chi phí thấp nhất |
 | `random` | Mỗi bước dùng mô hình mạnh với xác suất `STRONG_SHARE` | Đối chứng, và thu dữ liệu "cùng trạng thái, khác mô hình" |
-| `rule` | Bước đầu của lượt và bước ngay sau một lần gọi công cụ lỗi dùng mô hình mạnh; còn lại dùng mô hình rẻ | Đối chứng "luật đơn giản" |
+| `rule` | Bước đầu của lượt và bước ngay sau một lần gọi công cụ lỗi hoặc quá giờ dùng mô hình mạnh; còn lại dùng mô hình rẻ | Đối chứng "luật đơn giản" |
+| `first-strong` | `STRONG_FIRST_STEPS` bước đầu của lượt dùng mô hình mạnh, sau đó rẻ, không nâng lên khi lỗi | Mốc First-Large của Budget-Aware |
 
-Chính sách nhìn thấy các đặc trưng sau, không có nội dung tin nhắn:
+Chính sách nhìn thấy các đặc trưng sau, không có nội dung tin nhắn. Đặc trưng
+của bước t chỉ dùng sự kiện đã xong trước bước t, và đều thay đổi theo bước, nên
+không đặc trưng nào là hằng số của task. Bộ này được chốt sau thảo luận hai vòng
+với Claude và Codex (13/11/2026), xem [thiết kế thực nghiệm](thiet-ke-thuc-nghiem.md#bước-4-xây-và-khóa-bộ-định-tuyến-đề-xuất-gói-f).
 
-| Đặc trưng | Ý nghĩa |
-|---|---|
-| `step`, `session_step` | Bước thứ mấy trong lượt và trong cả phiên |
-| `prev_choice` | Mức đã chọn ở bước trước |
-| `prev_tools`, `prev_tool_errors`, `last_tool` | Số lần gọi công cụ từ bước trước, số lần lỗi, tên công cụ cuối |
-| `error_streak` | Số bước liên tiếp đi sau một lỗi công cụ |
-| `messages`, `chars` | Số tin và số ký tự của hội thoại sắp gửi |
+| Đặc trưng | Ý nghĩa | Dùng cho |
+|---|---|---|
+| `step` | Bước thứ mấy trong lượt | Mô hình chính |
+| `prev_tool_errors` | Số lần gọi công cụ lỗi từ bước trước (không tính quá giờ), chặn ở 2 | Mô hình chính |
+| `prev_tool_timeout` | 1 nếu một lần gọi công cụ từ bước trước bị quá giờ | Mô hình chính |
+| `prev_tool_duration_log` | log1p(giây) của lần gọi công cụ lâu nhất từ bước trước | Mô hình chính |
+| `short_exec_streak` | Số bước liên tiếp trước đó mà mọi lệnh chạy code (`execute_code`, `terminal`) đều ok và dưới 3 s; chặn ở 5 | Mô hình chính |
+| `ctx_growth` | sign(Δ)·log1p(abs(Δ)), Δ = số ký tự request hiện tại trừ số ký tự ở bước đầu của lượt | Mô hình chính |
+| `prev_choice` | Mức đã chọn ở bước trước | Mô hình chính |
+| `elapsed_log`, `tool_time_cum`, `cum_tool_failures`, `error_streak` | Thời gian từ bước đầu của lượt, tổng thời gian công cụ, tổng lỗi và quá giờ trong lượt, số bước liên tiếp đi sau lỗi | Ablation |
+| `prev_tools`, `last_tool`, `messages`, `chars`, `session_step` | Số lần gọi công cụ, tên công cụ cuối, số tin, số ký tự, bước trong phiên | Chỉ ghi lại để phân tích |
 
 Lỗi công cụ lấy từ trạng thái Hermes báo qua hook `post_tool_call` (ví dụ code
-chạy lỗi, lệnh thoát khác 0). Công cụ bị chặn cũng tính là lỗi.
+chạy lỗi, lệnh thoát khác 0). Công cụ bị chặn cũng tính là lỗi. Trạng thái
+`timeout` được đếm riêng.
 
 Thêm chính sách mới:
 

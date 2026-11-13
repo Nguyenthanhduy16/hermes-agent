@@ -100,8 +100,11 @@ class PolicyTests(unittest.TestCase):
         self.assertEqual((STRONG, "tool error in the previous step", True),
                          (record["choice"], record["reason"], record["switched"]))
         self.assertEqual(dict(step=3, session_step=3, prev_choice=CHEAP, prev_tools=1, prev_tool_errors=1,
-                              last_tool="execute_code", error_streak=1, messages=3),
-                         {k: v for k, v in record["features"].items() if k != "chars"})
+                              prev_tool_timeout=0, prev_tool_duration_log=0.0, short_exec_streak=0,
+                              ctx_growth=0.0, last_tool="execute_code", error_streak=1, tool_time_cum=0.0,
+                              cum_tool_failures=1, messages=3),
+                         {k: v for k, v in record["features"].items() if k not in ("chars", "elapsed_log")})
+        self.assertGreaterEqual(record["features"]["elapsed_log"], 0)
         self.assertGreater(record["features"]["chars"], 0)
         target.tool_result(session_id="s1", tool_name="execute_code", status="ok")
         self.assertEqual("small-1", step(target, 4)["request"]["model"])  # the error is consumed
@@ -128,6 +131,62 @@ class PolicyTests(unittest.TestCase):
         self.assertEqual((CHEAP, "after the first steps", 1),
                          (record["choice"], record["reason"], record["features"]["prev_tool_errors"]))
         self.assertIsNone(step(target, 1, turn="t2"))                     # a new turn starts strong again
+
+    def test_rule_escalates_after_a_tool_timeout(self):
+        target = Router(settings("rule"))
+        step(target, 1)
+        target.tool_result(session_id="s1", tool_name="execute_code", status="timeout", duration_ms=420000)
+        self.assertIsNone(step(target, 2))
+        features = target.decision_for(session_id="s1", api_request_id="t1:api:2")["features"]
+        self.assertEqual((0, 1, 0, 1), (features["prev_tool_errors"], features["prev_tool_timeout"],
+                                        features["error_streak"], features["cum_tool_failures"]))
+        self.assertAlmostEqual(round(__import__("math").log1p(420), 4), features["prev_tool_duration_log"])
+
+    def test_trajectory_features_follow_the_steps(self):
+        target = Router(settings("always-cheap"))
+
+        def features(number, messages):
+            step(target, number, request=request(messages=messages))
+            return target.decision_for(session_id="s1", api_request_id=f"t1:api:{number}")["features"]
+
+        first = features(1, 2)
+        self.assertEqual((None, 0, 0.0, 0), (first["prev_choice"], first["short_exec_streak"],
+                                             first["ctx_growth"], first["cum_tool_failures"]))
+        for number in (2, 3, 4):  # each step ran one short, clean code call
+            target.tool_result(session_id="s1", tool_name="execute_code", status="ok", duration_ms=1200)
+            got = features(number, number + 1)
+            self.assertEqual(number - 1, got["short_exec_streak"])
+            self.assertGreater(got["ctx_growth"], 0)          # the conversation grew since step 1
+            self.assertEqual(CHEAP, got["prev_choice"])
+        target.tool_result(session_id="s1", tool_name="execute_code", status="ok", duration_ms=1000)
+        target.tool_result(session_id="s1", tool_name="execute_code", status="ok", duration_ms=95000)
+        got = features(5, 6)
+        self.assertEqual(0, got["short_exec_streak"])        # a long call breaks the streak
+        self.assertEqual(round(__import__("math").log1p(95), 4), got["prev_tool_duration_log"])
+        self.assertEqual(round(__import__("math").log1p(1.2 * 3 + 96), 4), got["tool_time_cum"])
+        target.tool_result(session_id="s1", tool_name="read_file", status="ok", duration_ms=10)
+        self.assertEqual(0, features(6, 7)["short_exec_streak"])  # no code call: no streak
+        for _ in range(3):
+            target.tool_result(session_id="s1", tool_name="execute_code", status="error", duration_ms=500)
+        got = features(7, 8)
+        self.assertEqual((2, 0, 3), (got["prev_tool_errors"], got["short_exec_streak"], got["cum_tool_failures"]))
+        # A new turn resets the turn-level features; the request size is measured from its first step.
+        target.tool_result(session_id="s1", tool_name="execute_code", status="ok", duration_ms=100)
+        step(target, 1, turn="t2", request=request(messages=1))
+        got = target.decision_for(session_id="s1", api_request_id="t2:api:1")["features"]
+        self.assertEqual((1, 0, 0.0, 0), (got["step"], got["short_exec_streak"], got["ctx_growth"],
+                                          got["cum_tool_failures"]))
+        self.assertEqual(0.0, got["tool_time_cum"])
+
+    def test_bad_durations_count_as_zero(self):
+        target = Router(settings("always-cheap"))
+        step(target, 1)
+        for value in (None, "x", float("nan"), -5):
+            target.tool_result(session_id="s1", tool_name="execute_code", status="ok", duration_ms=value)
+        step(target, 2)
+        got = target.decision_for(session_id="s1", api_request_id="t1:api:2")["features"]
+        self.assertEqual((0.0, 0.0, 1), (got["prev_tool_duration_log"], got["tool_time_cum"],
+                                         got["short_exec_streak"]))
 
     def test_blocked_tool_counts_as_an_error(self):
         target = Router(settings("rule"))
