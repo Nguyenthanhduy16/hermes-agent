@@ -70,7 +70,9 @@ from .telemetry import config_snapshot
 
 BUNDLED_DIR = Path(__file__).resolve().parents[2] / "config" / "bench"
 LEVELS = ("L1", "L2", "L3")
-CHECK_TYPES = ("contains", "not_contains", "regex", "max_latency_s", "min_length", "json_valid", "answers")
+CHECK_TYPES = ("contains", "not_contains", "regex", "max_latency_s", "min_length", "json_valid", "answers", "external")
+# ``external``: scored after the run by a benchmark's own evaluator (value names it); until then it fails.
+EXTERNAL_SCORERS = ("dacode",)
 STATUSES = ("queued", "running", "done", "cancelled", "failed")
 ACTIVE = ("queued", "running")
 SUITE_NAME = re.compile(r"[a-z0-9][a-z0-9-]{0,47}")
@@ -189,6 +191,9 @@ def _check(raw, where) -> Check:
             raise BenchError(f"{where}: answers needs a mapping of 1 to {MAX_ANSWERS} names (letters, digits, '_') "
                              f"to quoted text of at most {MAX_ANSWER_CHARS} characters without ']'.")
         value = tuple(sorted(value.items()))
+    elif kind == "external":
+        if value not in EXTERNAL_SCORERS:
+            raise BenchError(f"{where}: external needs a scorer name: {', '.join(EXTERNAL_SCORERS)}.")
     return Check(kind, value, ignore_case)
 
 
@@ -563,6 +568,22 @@ class BenchStore:
                 self.db.execute("ROLLBACK")
                 raise
 
+    def set_external_scores(self, run_id: str, scored: list):
+        """Replace the checks of scored results: [(task_id, attempt, passed, checks)]; recount the run."""
+        with self._lock:
+            self.db.execute("BEGIN IMMEDIATE")
+            try:
+                for task_id, attempt, passed, checks in scored:
+                    self.db.execute("UPDATE bench_results SET passed=?, checks_json=? WHERE run_id=? AND task_id=? "
+                                    "AND attempt=?", (int(bool(passed)), json.dumps(checks, ensure_ascii=False),
+                                                       run_id, task_id, attempt))
+                self.db.execute("UPDATE bench_runs SET passed=(SELECT COUNT(*) FROM bench_results "
+                                "WHERE run_id=? AND passed=1) WHERE id=?", (run_id, run_id))
+                self.db.execute("COMMIT")
+            except BaseException:
+                self.db.execute("ROLLBACK")
+                raise
+
     def finish(self, run_id: str, status: str, reason: str | None = None):
         if status not in ("done", "cancelled", "failed"):
             raise ValueError(status)
@@ -664,6 +685,10 @@ def evaluate_checks(checks, text: str, latency_s: float | None) -> list:
             matched = sum(_answer_matches(found.get(name), expected, check.ignore_case) for name, expected in value)
             out.append(dict(type=kind, passed=matched == len(value), matched=matched, total=len(value),
                             detail=f"{matched}/{len(value)} answers match"))
+            continue
+        elif kind == "external":
+            out.append(dict(type=kind, scorer=value, passed=False, pending=True,
+                            detail=f"scored after the run by {value}"))
             continue
         else:  # json_valid
             try:
@@ -890,6 +915,25 @@ def answer_accuracy(results: list) -> dict | None:
                 by_subquestion=sum(matched for matched, _ in scored) / sum(total for _, total in scored))
 
 
+def external_score(results: list) -> float | None:
+    """Mean score (0..1) an external evaluator gave; unscored results count as 0, none scored = None."""
+    scores, any_scored = [], False
+    for r in results:
+        checks = r.get("checks")
+        if checks is None:
+            try:
+                checks = json.loads(r.get("checks_json") or "[]")
+            except ValueError:
+                checks = []
+        external = [c for c in checks if isinstance(c, dict) and c.get("type") == "external"]
+        if not external:
+            continue
+        score = external[0].get("score")
+        any_scored = any_scored or isinstance(score, (int, float))
+        scores.append(float(score) if isinstance(score, (int, float)) else 0.0)
+    return (sum(scores) / len(scores)) if any_scored and scores else None
+
+
 def summarize(run: dict, results: list, *, sessions: dict | None = None, pricing: dict | None = None) -> dict:
     """Pass rates (overall and per level), latency, tokens, API calls and cost per task for one run."""
     sessions, pricing = sessions or {}, pricing or {}
@@ -932,10 +976,10 @@ def summarize(run: dict, results: list, *, sessions: dict | None = None, pricing
         # the model changed from one step to the next within a task.
         cheap_step_share=(sum(r["cheap"] for r in routed) / sum(r["steps"] for r in routed)) if routed else None,
         switches_per_task=(sum(r["switches"] for r in routed) / len(routed)) if routed else None,
-        answers=answer_accuracy(results))
+        answers=answer_accuracy(results), external_score=external_score(results))
 
 
-COMPARE_ROWS = (("pass_rate", "Pass rate", "percent"), ("L1", "Pass rate L1", "percent"),
+COMPARE_ROWS = (("pass_rate", "Pass rate", "percent"), ("external_score", "Score (external evaluator)", "percent"), ("L1", "Pass rate L1", "percent"),
                 ("L2", "Pass rate L2", "percent"), ("L3", "Pass rate L3", "percent"),
                 ("median_latency_s", "Median latency", "seconds"), ("p95_latency_s", "p95 latency", "seconds"),
                 ("tokens_per_task", "Tokens per task", "number"), ("api_calls_per_task", "API calls per task", "number"),
@@ -1119,6 +1163,8 @@ def _command(args, store, home, data_dir, environ, write) -> int:
             write(f"Answers ({answers['questions']} scored replies): by question {answers['by_question']:.1%}"
                   f"  proportional by sub-question {answers['proportional']:.1%}"
                   f"  by sub-question {answers['by_subquestion']:.1%}")
+        if summary.get("external_score") is not None:
+            write(f"Score from the external evaluator (mean over results, 0-1): {summary['external_score']:.3f}")
         return 0
     matrix = compare([(run, _summary_for(store, run, data_dir, pricing)[1]) for run in runs])
     write(_table(["Metric", *[_clean(c["label"] or c["id"]) for c in matrix["columns"]]],

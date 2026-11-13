@@ -95,6 +95,7 @@ class RouterSettings:
     strong_model: str = ""
     cheap_model: str = ""
     provider: str = ""             # when set, only requests of this Hermes provider are routed
+    cheap_provider: str = ""       # cheap tier on another Hermes provider: switch the agent's runtime per step
     platforms: frozenset = frozenset()  # empty = every platform
     strong_share: float = 0.5      # random: probability of the strong model at each step
     seed: int = 0                  # random: same seed and step ids give the same draws
@@ -109,7 +110,7 @@ class RouterSettings:
     def describe(self) -> dict:
         """Secret-free summary stored with the run."""
         return dict(policy=self.policy, strong_model=self.strong_model, cheap_model=self.cheap_model,
-                    provider=self.provider, platforms=sorted(self.platforms), strong_share=self.strong_share,
+                    provider=self.provider, cheap_provider=self.cheap_provider, platforms=sorted(self.platforms), strong_share=self.strong_share,
                     seed=self.seed, strong_first_steps=self.strong_first_steps,
                     strong_request_keys=[key for key, _ in self.strong_request],
                     cheap_request_keys=[key for key, _ in self.cheap_request])
@@ -130,6 +131,9 @@ class RouterSettings:
         provider = (values.get("ASSISTANT_ROUTER_PROVIDER") or "").strip()
         if provider and not MODEL_NAME.fullmatch(provider):
             raise SettingsError("ASSISTANT_ROUTER_PROVIDER không hợp lệ.")
+        cheap_provider = (values.get("ASSISTANT_ROUTER_CHEAP_PROVIDER") or "").strip().lower()
+        if cheap_provider and not MODEL_NAME.fullmatch(cheap_provider):
+            raise SettingsError("ASSISTANT_ROUTER_CHEAP_PROVIDER không hợp lệ.")
         seed_raw = (values.get("ASSISTANT_ROUTER_SEED") or "0").strip()
         if not re.fullmatch(r"[0-9]{1,9}", seed_raw):
             raise SettingsError("ASSISTANT_ROUTER_SEED cần là số nguyên không âm.")
@@ -137,6 +141,7 @@ class RouterSettings:
         if not re.fullmatch(r"[0-9]{1,2}", first_raw):
             raise SettingsError("ASSISTANT_ROUTER_STRONG_FIRST_STEPS cần là số nguyên từ 0 đến 99.")
         return cls(policy=policy, strong_model=models["STRONG"], cheap_model=models["CHEAP"], provider=provider,
+                   cheap_provider=cheap_provider,
                    platforms=_names(values.get("ASSISTANT_ROUTER_PLATFORMS"), ()),
                    strong_share=_fraction(values, "ASSISTANT_ROUTER_STRONG_SHARE", 0.5),
                    seed=int(seed_raw), strong_first_steps=int(first_raw),

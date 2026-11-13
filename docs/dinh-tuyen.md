@@ -21,8 +21,9 @@ ASSISTANT_RUN_LABEL=luat
 
 - Đặt **mô hình mặc định của Hermes bằng mô hình mạnh**. Khi khung gặp lỗi,
   bước đó chạy bằng mô hình mặc định.
-- Hai mô hình phải cùng nhà cung cấp và cùng giao thức với phiên, vì khung chỉ
-  đổi tên mô hình trong request.
+- Mặc định hai mô hình phải cùng nhà cung cấp và cùng giao thức với phiên, vì
+  khung chỉ đổi tên mô hình trong request. Mức rẻ ở nhà cung cấp khác: xem
+  [mục 1b](#1b-mức-rẻ-ở-nhà-cung-cấp-khác).
 - Giá trị sai (thiếu tên mô hình, tỷ lệ ngoài 0..1...) làm plugin dừng nạp và
   ghi lỗi vào log, thay vì âm thầm chạy sai cấu hình.
 
@@ -34,6 +35,7 @@ ASSISTANT_RUN_LABEL=luat
 | `ASSISTANT_ROUTER_SEED` | `random`: cùng seed và cùng mã bước cho cùng kết quả | `0` |
 | `ASSISTANT_ROUTER_STRONG_FIRST_STEPS` | `rule`: số bước đầu của mỗi lượt dùng mô hình mạnh | `1` |
 | `ASSISTANT_ROUTER_PROVIDER` | Chỉ định tuyến request của nhà cung cấp này | mọi nhà cung cấp |
+| `ASSISTANT_ROUTER_CHEAP_PROVIDER` | Nhà cung cấp Hermes của mức rẻ, khi khác nhà cung cấp của phiên (ví dụ `deepseek`) | cùng nhà cung cấp |
 | `ASSISTANT_ROUTER_PLATFORMS` | Chỉ định tuyến các nền tảng này, ví dụ `api_server` | mọi nền tảng |
 | `ASSISTANT_ROUTER_STRONG_REQUEST`, `ASSISTANT_ROUTER_CHEAP_REQUEST` | JSON các trường request đặt thêm cho từng mức; `null` để bỏ một trường | không |
 
@@ -46,6 +48,45 @@ ASSISTANT_ROUTER_CHEAP_REQUEST={"reasoning": {"effort": "low"}}
 
 Các trường `model`, `messages`, `input`, `instructions`, `system`, `tools`,
 `stream` không được đặt qua đây.
+
+## 1b. Mức rẻ ở nhà cung cấp khác
+
+Ví dụ mạnh là `gpt-6.1-sol` qua `openai-codex` (gói ChatGPT Plus), rẻ là
+`deepseek-flash` qua API DeepSeek:
+
+```
+ASSISTANT_ROUTER_STRONG_MODEL=gpt-6.1-sol
+ASSISTANT_ROUTER_CHEAP_MODEL=deepseek-flash
+ASSISTANT_ROUTER_CHEAP_PROVIDER=deepseek
+DEEPSEEK_API_KEY=...
+```
+
+Middleware `llm_request` chạy khi request đã dựng xong cho nhà cung cấp của
+phiên (endpoint, khóa, định dạng Responses hay Chat Completions đã cố định), nên
+không chuyển được một bước sang nhà cung cấp khác. Khi đặt
+`ASSISTANT_ROUTER_CHEAP_PROVIDER`, khung quyết định ở **đầu mỗi bước**, ngay
+sau `prepare_iteration` của Hermes và trước khi request được dựng, rồi chuyển
+runtime của agent bằng chính cơ chế fallback của Hermes:
+
+| Mức | Hàm Hermes | Tác dụng |
+|---|---|---|
+| rẻ | `agent.route_binding.bind_route_entry` với `{provider, model}` | Hermes tự lấy client và khóa, chọn giao thức, giữ nguyên lịch sử `messages` |
+| mạnh | `agent.agent_runtime_helpers.restore_primary_runtime` | Về runtime chính của phiên; Hermes cũng gọi hàm này đầu mỗi lượt |
+
+Hermes không có hook nào ở đầu bước mà đưa đối tượng agent cho plugin, nên
+`assistant_core.provider_switch.install` bọc đúng một hàm pha
+(`agent.conversation_loop.prepare_iteration`). Phần này kiểm tra trên commit
+Hermes `dce1e9b3` (`tests/test_hermes_provider_switch.py`); nâng Hermes thì
+chạy lại `scripts/run.sh TestHermes`. Middleware vẫn ghi quyết định cho
+telemetry nhưng không sửa request. Khi chuyển lỗi, bước đó chạy bằng runtime
+chính; khi mô hình chính đang bị giới hạn lượt, Hermes giữ mức rẻ và lý do ghi
+thêm `primary unavailable, stayed cheap`.
+
+Đã chạy thật (12/11/2026, `random` 0,5): các bước xen kẽ `deepseek` ↔
+`openai-codex` trong cùng phiên, công cụ chạy bình thường. Cache của mỗi nhà
+cung cấp vẫn còn sau một bước ở nhà cung cấp kia (bước Sol sau bước DeepSeek
+vẫn đọc khoảng 4.900 token từ cache); chỉ phần hội thoại mới từ lần gọi trước
+của nhà cung cấp đó là không có cache.
 
 ## 2. Các chính sách
 

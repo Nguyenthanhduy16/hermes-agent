@@ -98,7 +98,7 @@ mọi cấu hình; đổi bất kỳ giá trị nào thì phải chạy lại m�
 
 | Nhóm | Cố định |
 |---|---|
-| Agent | Commit Hermes (`93c9360a`), `agent.max_turns`, compression, memory tắt |
+| Agent | Commit Hermes (`dce1e9b3`, 2026-10-09; không chạy `hermes update` trong thời gian thực nghiệm), `agent.max_turns`, compression, memory tắt |
 | Mô hình | Tên chính xác (có phiên bản) của mô hình mạnh và rẻ; mô hình mặc định của Hermes = mô hình mạnh; temperature, reasoning effort của từng mức |
 | Công cụ | `platform_toolsets.api_server` cố định, **không có web**; Docker sandbox; thư mục dữ liệu chỉ đọc |
 | Benchmark | Mã băm suite (in trong `bench list`), `timeout_s`, số request song song (ví dụ 2) |
@@ -339,16 +339,45 @@ Quyết định trước khi chạy và ghi lại.
 
 | Ngày | Bước | Suite (mã băm) | Cấu hình | Tham số | Nhãn | Mã run | Commit repo | Ghi chú |
 |---|---|---|---|---|---|---|---|---|
-| | | | | | | | | |
+| 2026-11-12 | 1 | dabench-smoke@822a1354 | S | — | smoke-strong | 20261112-085253-a7f4f5 | 89989bf+ | Sau khi bật `execute_code`; run 085013 trước đó bị chặn `execute_code`, bỏ |
+| 2026-11-12 | 1 | dabench-smoke@822a1354 | C | — | smoke-cheap | 20261112-085401-dfdfb1 | 89989bf+ | |
+| 2026-11-12 | 2 | dabench-pilot | S | repeats 2 | pilot-S | 20261112-085514-2adbfb | 89989bf+ | 14/18; 77,8% theo câu; 2,8 bước/câu; $0,015/câu |
+| 2026-11-12 | 2 | dabench-pilot | C | repeats 2 | pilot-C | 20261112-090000-a2dd4f | 89989bf+ | 15/18; 83,3% theo câu; 3,1 bước/câu; $0,0010/câu |
+| 2026-11-12 | 2 | dabench-pilot | C' (`deepseek-flash`, provider `deepseek`, giờ cao điểm) | repeats 2, router tắt | pilot-DSF | 20261112-091702-380fb9 | 89989bf+ | 15/18; 83,3% theo câu; 4,8 bước/câu (tối đa 16); $0,0019/câu |
+| 2026-11-12 | 1 | dabench-smoke@822a1354 | R50 Sol ↔ DeepSeek (`ASSISTANT_ROUTER_CHEAP_PROVIDER=deepseek`) | seed 11 | smoke-sol-ds | 20261112-093503-a81ef1 | 89989bf+ | Kiểm tra đổi nhà cung cấp theo bước: 7 bước, xen kẽ, không lỗi |
+| 2026-11-12 | 2 | dacode-pilot@d590d2c45ac7 | S | sandbox `:2`, timeout 1800 s | dacode-S1 | 20261112-101706-4d15b8 | 89989bf+ | Điểm DA-Code 0,755; 5,9 bước/câu; $0,039/câu |
+| 2026-11-12 | 2 | dacode-pilot@d590d2c45ac7 | S | như trên | dacode-S2 | 20261112-103717-aa9366 | 89989bf+ | Dừng sau 8 câu (runner bị dừng tay); 8 câu giống hệt S1 |
+| 2026-11-12 | 2 | dacode-pilot-ml2@95fe06322716 | S | như trên | dacode-S2b | 20261112-133103-a53f89 | 89989bf+ | Bù 2 câu S2 thiếu (ml-competition-008, ml-regression-002): 0,99 / 1,0; 14 bước/câu. S2 + S2b = 0,755 |
+| 2026-11-12 | 2 | dacode-pilot@d590d2c45ac7 | C (DeepSeek V4 Flash, `deepseek-flash`) | như trên; 11:36–12:30 UTC (thứ 5), giờ thấp điểm | dacode-C1 | 20261112-113633-747b7a | 89989bf+ | 0,556; 13,7 bước/câu; 2 câu ML chạm `max_turns` 25 không ghi file kết quả |
+| 2026-11-12 | 2 | dacode-pilot@d590d2c45ac7 | C (DeepSeek V4 Flash, `deepseek-flash`) | như trên; 12:32–13:29 UTC (thứ 5), giờ thấp điểm | dacode-C2 | 20261112-123231-c41e00 | 89989bf+ | 0,623; 10,3 bước/câu; ml-competition-008 chạm `max_turns`, ml-regression-002 quá 1800 s |
+
+**Cổng quyết định, pilot DABench (2026-11-12): không đạt.** C ≥ S (83,3% so với
+77,8%); khác biệt là lỗi so khớp của bộ chấm (0,89/0,88, NaN/nan); quỹ đạo khoảng 3
+bước. DABench quá dễ và quá ngắn cho định tuyến theo bước.
+
+**Cổng quyết định, pilot DA-Code (2026-11-12): đạt tạm thời.** Trung bình hai lần: S
+0,755 / 0,755, C 0,556 / 0,623 → khoảng trống khoảng 16,5 điểm, nhưng 95% CI bootstrap
+theo câu là [−8; +45] điểm (xác suất khoảng trống dưới 10 điểm khoảng 35%). Toàn bộ
+khoảng trống nằm ở 2 câu ML dài (S 0,99–1,0 cả hai lần; C 0 cả hai lần, chạm `max_turns`
+hoặc quá giờ); 8 câu còn lại C ngang hoặc hơn S. Chi phí S $0,041/câu, C $0,0059/câu
+(khoảng 7 lần). Cả 4 run C đều chạy vào **giờ thấp điểm** của DeepSeek (cao điểm là
+T2–T6 01–04 và 06–10 UTC, theo `agent/usage_pricing.py` của Hermes); bản ghi trước ghi
+nhầm là giờ giá thường và tỷ lệ 3,5 lần. C tốn token gấp khoảng 4 lần S (167–186k so với
+44k mỗi câu). Quỹ đạo nhiều bước (S 5,9, C 10–14 bước/câu). Giới hạn: 10 câu, khoảng
+trống chỉ dựa vào 2 câu và có thể phụ thuộc ngân sách `max_turns`/timeout; C2 thiếu
+token của câu quá giờ nên chi phí C2 hơi thấp. Kiểm tra tiếp bằng thử nghiệm nhỏ trên 2
+câu ML (R50, FL, C với `max_turns` 50).
 
 Giá trị cố định (mục 3):
 
 | Mục | Giá trị |
 |---|---|
-| Mô hình mạnh | |
-| Mô hình rẻ | |
-| Hermes commit | `93c9360a` |
-| `max_turns`, `timeout_s`, song song | |
-| Bộ công cụ `api_server` | |
-| Ngày bảng giá | |
+| Mô hình mạnh | `gpt-6.1-sol` (provider `openai-codex`, gói ChatGPT Plus), `reasoning_effort: high` |
+| Mô hình rẻ | DeepSeek V4 Flash, ID API `deepseek-flash` (provider `deepseek`, đổi qua Hermes theo bước: [dinh-tuyen](dinh-tuyen.md)), `reasoning_effort: high`. Pilot DABench đầu tiên dùng `gpt-6-luna` |
+| Hermes commit | `dce1e9b3` (2026-10-09) |
+| `max_turns`, `timeout_s`, song song | 25; 900 s (DABench), 1800 s (DA-Code); 1 |
+| Bộ công cụ `api_server` | `code_execution`, `file`, `todo` (không có web); `approvals.unattended_mode: approve` |
+| Sandbox | `hermes-bench-sandbox:2` (pilot DABench dùng `:1`; `:2` thêm thư viện DA-Code) ([Dockerfile](../deploy/bench-sandbox/Dockerfile), thư viện ghim), `docker_network: false`, `/data/dabench` chỉ đọc |
+| Profile Hermes | `.runtime/hermes-home/profiles/bench`, gateway riêng cổng 8650 ([benchmark](benchmark.md#10-profile-thực-nghiệm)) |
+| Ngày bảng giá | 2026-11-12: sol 2.00 / 10.00 / cache 0.10, luna 0.10 / 0.50 / cache 0.01, deepseek-flash 0.15 / 0.60 / cache 0.003 (giờ thấp điểm; giờ cao điểm T2–T6 01–04 và 06–10 UTC gấp đôi) USD mỗi 1M token. Chi phí DeepSeek phải tính theo giờ của từng lệnh gọi |
 | Tag bộ định tuyến đã khóa, τ | |

@@ -16,6 +16,8 @@ baselines every experiment needs, and a new policy plugs in with
                     step; the draw depends only on the seed and the step id
     rule            strong for the first step(s) of a turn and for the step right
                     after a failed tool call, cheap otherwise
+    first-strong    strong for the first ASSISTANT_ROUTER_STRONG_FIRST_STEPS steps of a
+                    turn, cheap after, never escalated on errors (First-Large baseline)
 
 What a policy sees (``features``) is what happened inside the agent, never
 message text: the step number, the tool calls made since the previous model
@@ -83,7 +85,16 @@ def _rule(features, settings):
     return Decision(CHEAP, "routine step")
 
 
-POLICIES = {"always-strong": _always_strong, "always-cheap": _always_cheap, "random": _random, "rule": _rule}
+def _first_strong(features, settings):
+    # First-Large baseline (Budget-Aware): the first steps on the strong model, the rest cheap,
+    # with no escalation after a tool error.
+    if features["step"] <= settings.strong_first_steps:
+        return Decision(STRONG, "first steps of the turn")
+    return Decision(CHEAP, "after the first steps")
+
+
+POLICIES = {"always-strong": _always_strong, "always-cheap": _always_cheap, "random": _random, "rule": _rule,
+            "first-strong": _first_strong}
 
 
 def register_policy(name: str, policy) -> None:
@@ -122,11 +133,17 @@ def _size(request: dict):
 
 
 class Router:
-    def __init__(self, settings: RouterSettings):
+    def __init__(self, settings: RouterSettings, switcher=None):
         if settings.policy not in POLICIES:
             raise SettingsError("ASSISTANT_ROUTER_POLICY cần là một trong: off, " + ", ".join(sorted(POLICIES)) + ".")
         self.settings = settings
         self.policy = POLICIES[settings.policy]
+        # Cheap tier on another provider: decide and swap the agent's runtime at the start of
+        # each step (before_step); the middleware then only keeps the decision for telemetry.
+        self.switcher = switcher
+        if switcher is None and settings.cheap_provider:
+            from .provider_switch import HermesSwitcher
+            self.switcher = HermesSwitcher(settings.cheap_provider, settings.cheap_model)
         self._models = {STRONG: settings.strong_model, CHEAP: settings.cheap_model}
         self._overrides = {STRONG: settings.strong_request, CHEAP: settings.cheap_request}
         self._sessions: OrderedDict[str, _Session] = OrderedDict()
@@ -171,6 +188,8 @@ class Router:
         settings = self.settings
         if not isinstance(request, dict) or not isinstance(request.get("model"), str):
             return None
+        if self.switcher is not None:
+            return None  # decided and applied in before_step; the request is already for that provider
         platform = str(context.get("platform") or "")
         if settings.platforms and platform not in settings.platforms:
             return None
@@ -228,6 +247,49 @@ class Router:
                 routed[key] = value
         return {"request": routed, "source": SOURCE, "name": record["policy"],
                 "reason": f"{record['choice']}: {record['reason']}"}
+
+    # ---- provider switching (cheap tier on another provider) -------------
+
+    def before_step(self, agent, messages, api_call_count):
+        """Start of a Hermes loop iteration: decide this step and put the agent on that tier."""
+        try:
+            self._before_step(agent, messages, api_call_count)
+        except Exception:
+            self._failures += 1
+            if self._failures <= 3:
+                logger.warning("assistant-core router failed; the step runs on the primary model", exc_info=True)
+            try:  # never leave a failed step on a half-switched or cheap runtime
+                if self.switcher.on_cheap(agent):
+                    self.switcher.to_strong(agent)
+            except Exception:
+                logger.warning("assistant-core router could not restore the primary runtime", exc_info=True)
+
+    def _before_step(self, agent, messages, api_call_count):
+        settings, switcher = self.settings, self.switcher
+        primary_provider, primary_model = switcher.primary(agent)
+        platform = str(getattr(agent, "platform", "") or "")
+        if settings.platforms and platform not in settings.platforms:
+            return
+        if settings.provider and primary_provider != settings.provider:
+            return
+        session_id = str(getattr(agent, "session_id", "") or "")
+        turn_id = str(getattr(agent, "_current_turn_id", "") or "")
+        # Same id Hermes gives this model call (api_request_id), so telemetry finds the decision.
+        step_id = f"{turn_id}:api:{api_call_count}"
+        with self._lock:
+            state = self._session(session_id)
+            if state.step_id == step_id and state.record is not None:
+                record = state.record  # the iteration was re-issued; keep its decision
+            else:
+                record = self._decide(state, {"model": primary_model, "messages": messages}, turn_id, step_id)
+            on_cheap = switcher.on_cheap(agent)
+            if record["choice"] == CHEAP and not on_cheap:
+                switcher.to_cheap(agent)
+            elif record["choice"] == STRONG and on_cheap and not switcher.to_strong(agent):
+                # Hermes keeps a fallback while the primary is in a rate-limit cooldown.
+                record["reason"] = (record["reason"] + "; primary unavailable, stayed cheap")[:120]
+            record["model"] = str(getattr(agent, "model", "") or "")
+            record["provider"] = str(getattr(agent, "provider", "") or "")
 
     # ---- telemetry ------------------------------------------------------
 
