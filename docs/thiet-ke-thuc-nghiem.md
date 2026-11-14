@@ -447,6 +447,31 @@ bằng gold Drive (không tốn lượt gọi model): S 0,855 / 0,856 như cũ, 
 0,656 (`data-sa-031` đạt 1), C2 giữ 0,656, nên S − C là khoảng 20 thay vì 25 điểm. Cổng vẫn
 đạt. Báo cáo kết quả của 6 câu này kèm độ nhạy theo bản gold.
 
+**Chạy song song làm hỏng thời gian train (đo 2026-11-14): giữ song song 1.** Các task chạy
+song song trên cùng một profile dùng chung một container sandbox (12 CPU, 5 GB RAM). Đã đo
+bằng một script giống bước train điển hình của `ml-competition-008` (760k dòng huấn luyện, [`train_contention.py`](../deploy/bench-sandbox/bench/train_contention.py); XGBoost
+`hist` 300 cây; RandomForest 100 cây trên 200k dòng; mọi lõi), chạy trong container có cùng
+giới hạn:
+
+| Cách chạy | XGBoost | RandomForest | Tổng mỗi bản |
+|---|---|---|---|
+| 1 bản | 3,1–3,3 s | 8,2–8,3 s | 12 s |
+| 2 bản cùng lúc | 104–108 s | 23–25 s | 130–132 s |
+| 3 bản cùng lúc | 199–210 s | 32–40 s | 239–243 s |
+| 1 bản, `OMP_NUM_THREADS=4` | 7,0 s | 8,9 s | 16 s |
+| 3 bản, `OMP_NUM_THREADS=4` | 10,7–11,5 s | 41–42 s | 52–54 s |
+
+Mỗi tiến trình thấy 16 CPU (`os.cpu_count()`) nên mở 16 luồng, trong khi quota chỉ có 12;
+XGBoost bị chậm 30–60 lần vì quá nhiều luồng tranh nhau (RAM không phải vấn đề). Với song
+song 2–3, một lệnh train vài giây thành vài phút, dễ chạm hạn 600 s, làm đổi kết quả của C
+và đặc trưng `prev_tool_duration_log`. Giới hạn luồng chỉ giảm bớt, vẫn chậm 3–5 lần, và
+đổi môi trường cho mọi task. Lần thử `--concurrency 3` trên 7 câu ngắn trước đó không thấy
+vấn đề này vì các câu đó gần như không train. Kết luận: giữ song song 1 (env-v1). Đợt chạy
+dài dùng `scripts/bench_queue.py`, dừng được và chạy tiếp được. Nếu cần nhanh hơn, cách
+duy nhất không gây tranh chấp là mỗi cấu hình một profile, một gateway và một container
+riêng chia CPU (ví dụ 3 × 4 CPU). Nhưng đó là môi trường mới (env-v2) với ít CPU hơn cho mỗi
+task, nên phải chạy mọi cấu hình trong cùng điều kiện đó.
+
 Giá trị cố định (mục 3), áp dụng từ env-v1. Giá trị trước 14/11 ghi trong ngoặc:
 
 | Mục | Giá trị |
