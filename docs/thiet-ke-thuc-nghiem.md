@@ -424,6 +424,29 @@ khoảng 2 lần số bước (13,2 so với 6,9 bước mỗi câu). Nối dữ
 id trực tiếp. Giới hạn: vẫn chỉ 10 câu, khoảng chênh dựa vào 3 câu. Bước 3 cần một tập phát
 triển DA-Code lớn hơn: trên máy hiện chỉ có 52 câu mẫu, bản đầy đủ có 500 câu.
 
+**Tập phát triển và tập kiểm tra DA-Code (chốt 2026-11-14).** Dùng bản đầy đủ 500 câu (file
+`source.zip` và `gold.zip` trên Google Drive của tác giả, ghi trong README của DA-Code). Bỏ
+nhóm `dw` và các câu vẽ biểu đồ như trước, còn 322 câu dùng được. Chọn 255 câu, chia làm 100
+câu phát triển và 155 câu kiểm tra, phân tầng theo nhóm × độ khó với seed 2026
+(`python -m assistant_core.dacode split --dev 100 --test 155 --seed 2026`; danh sách câu ở
+[`config/dacode/split-2026.json`](../config/dacode/split-2026.json)). 10 câu pilot bắt buộc nằm
+trong tập phát triển, nên tập kiểm tra không có câu nào đã dùng để quyết định cổng. Suite
+`dacode-dev` có 100 câu (sa 23, di 24, dm 22, ml 31), `dacode-test` có 155 câu (sa 33, di 38,
+dm 36, ml 48). Chỉ giải nén 255 câu này vào checkout có sẵn, không ghi đè file nào; source
+của các câu mẫu trùng khớp từng byte với bản đầy đủ. Thư mục làm việc khi chạy cần khoảng
+2,7 GB cho `dacode-dev` và khoảng 4,1 GB cho `dacode-test`, nên phải xóa thư mục của tập
+phát triển trước khi chạy tập kiểm tra.
+
+**Hai bản gold khác nhau.** Gold của repo GitHub (bản đang dùng) và gold trên Drive (ngày
+2024-10-06) khác nhau ở 6 câu: `data-sa-001`, `data-sa-031`, `di-text-004`, `dm-csv-001`,
+`dm-csv-010`, `dm-csv-015`. Ví dụ, `data-sa-031` đổi dấu khoảng tin cậy; `dm-csv-015` đổi tên
+cầu thủ; `di-text-004` đổi nhãn (đề bài dẫn tới `tips.md`, nhưng file này không có trong cả
+hai bản). Cả 6 câu đều nằm trong tập phát triển hoặc tập kiểm tra. Quy ước: dùng gold GitHub
+cho mọi câu có trong repo (bản mới hơn), gold Drive cho các câu còn lại. Chấm lại 4 run env1
+bằng gold Drive (không tốn lượt gọi model): S 0,855 / 0,856 như cũ, C1 tăng từ 0,556 lên
+0,656 (`data-sa-031` đạt 1), C2 giữ 0,656, nên S − C là khoảng 20 thay vì 25 điểm. Cổng vẫn
+đạt. Báo cáo kết quả của 6 câu này kèm độ nhạy theo bản gold.
+
 Giá trị cố định (mục 3), áp dụng từ env-v1. Giá trị trước 14/11 ghi trong ngoặc:
 
 | Mục | Giá trị |

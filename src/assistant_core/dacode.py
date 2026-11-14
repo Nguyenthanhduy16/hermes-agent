@@ -4,6 +4,8 @@ DA-Code tasks give a folder of files (data, README.md, templates) and an instruc
 writes result files (``result.csv``, a filled template, predictions) or answers in text. The
 original evaluator compares ``<output>/<id>/`` with ``gold/<id>/``. Here:
 
+0. ``split``  chooses disjoint development and test sets (stratified, seeded) into a JSON file;
+   ``build --split FILE`` then writes the ``dacode-dev`` and ``dacode-test`` suites.
 1. ``build``  writes suites whose prompts point to ``<container dir>/<id>`` (default
    ``/dacode/<id>``), the task's working folder in the Hermes sandbox. Mount the host work folder
    there read-write (``terminal.docker_volumes``). Visualization tasks are left out: the
@@ -71,8 +73,12 @@ def _jsonl(path: Path) -> list:
         return [json.loads(line) for line in handle if line.strip()]
 
 
-def load_tasks(data: Path) -> list:
-    """DA-Code tasks that have source files and an evaluation config, minus visualization."""
+def load_tasks(data: Path, available=None) -> list:
+    """DA-Code tasks that have source files and an evaluation config, minus visualization.
+
+    ``available`` (a set of task ids) replaces the check for ``source/<id>``, for example the task
+    folders listed in the full dataset's ``source.zip`` before it is extracted.
+    """
     root = Path(data).expanduser() / "da_code"
     if not (root / "configs" / "task" / "all.jsonl").is_file():
         raise DacodeError(f"{data} is not a DA-Code checkout (da_code/configs/task/all.jsonl missing).")
@@ -80,7 +86,8 @@ def load_tasks(data: Path) -> list:
     tasks = []
     for task in _jsonl(root / "configs" / "task" / "all.jsonl"):
         task_id = task["id"]
-        if not (root / "source" / task_id).is_dir() or task_id not in evals or _group(task_id) is None:
+        present = task_id in available if available is not None else (root / "source" / task_id).is_dir()
+        if not present or task_id not in evals or _group(task_id) is None:
             continue
         if task.get("post_process") or evals[task_id].get("config", {}).get("task") == "data visualization":
             continue
@@ -111,6 +118,81 @@ def pick_pilot(tasks: list, seed: int) -> list:
         else:
             chosen += rng.sample(pool, min(count, len(pool)))
     return sorted(chosen, key=lambda t: t["id"])
+
+
+def _quotas(n: int, weights: dict) -> dict:
+    """Split ``n`` over the keys in proportion to ``weights`` (largest remainder, ties by key)."""
+    total = sum(weights.values())
+    if n > total:
+        raise DacodeError(f"Cannot take {n} of {total} tasks.")
+    exact = {k: n * w / total if total else 0 for k, w in weights.items()}
+    out = {k: int(v) for k, v in exact.items()}
+    for k in sorted(exact, key=lambda k: (-(exact[k] - out[k]), k))[:n - sum(out.values())]:
+        out[k] += 1
+    return out
+
+
+def pick_split(tasks: list, seed: int, n_dev: int, n_test: int, dev_include=()) -> dict:
+    """Disjoint development and test sets, stratified by group x hardness, reproducible from ``seed``.
+
+    Each stratum gives the two sets together its share of ``n_dev + n_test``; ``dev_include`` (the
+    pilot tasks) go to the development set, the rest of it is again shared out in proportion.
+    """
+    by_id = {t["id"]: t for t in tasks}
+    include = sorted(set(dev_include))
+    missing = [task_id for task_id in include if task_id not in by_id]
+    if missing:
+        raise DacodeError(f"Tasks to include are not available: {', '.join(missing)}.")
+    if n_dev < len(include) or n_dev < 0 or n_test < 0:
+        raise DacodeError("The development set must hold the included tasks.")
+    rng = random.Random(seed)
+    strata = {}
+    for task in sorted(tasks, key=lambda t: t["id"]):
+        strata.setdefault(f"{_group(task['id'])}/{task.get('hardness') or 'Unknown'}", []).append(task["id"])
+    for key in sorted(strata):
+        rest = [i for i in strata[key] if i not in include]
+        rng.shuffle(rest)
+        strata[key] = [i for i in strata[key] if i in include] + rest
+    chosen = _quotas(n_dev + n_test, {k: len(v) for k, v in strata.items()})
+    pinned = {k: sum(1 for i in v if i in include) for k, v in strata.items()}
+    if any(pinned[k] > chosen[k] for k in strata):
+        raise DacodeError("A stratum has more included tasks than its share; raise --dev/--test.")
+    extra = _quotas(n_dev - len(include), {k: chosen[k] - pinned[k] for k in strata})
+    dev, test = [], []
+    for key in sorted(strata):
+        take = pinned[key] + extra[key]
+        dev += strata[key][:take]
+        test += strata[key][take:chosen[key]]
+    return {"seed": seed, "dev_include": include,
+            "strata": {k: dict(available=len(strata[k]), dev=pinned[k] + extra[k], test=chosen[k] - pinned[k] - extra[k])
+                       for k in sorted(strata)},
+            "dacode-dev": sorted(dev), "dacode-test": sorted(test)}
+
+
+def build_split(data: Path, out_dir: Path, split: dict, *, container_dir: str, timeout_s: float, force: bool) -> list:
+    """Write the dacode-dev and dacode-test suites of a split; their source folders must be extracted."""
+    tasks = {t["id"]: t for t in load_tasks(data)}
+    out_dir.mkdir(parents=True, exist_ok=True)
+    written = []
+    for name in ("dacode-dev", "dacode-test"):
+        missing = [task_id for task_id in split[name] if task_id not in tasks]
+        if missing:
+            raise DacodeError(f"{name}: {len(missing)} tasks have no source folder yet ({', '.join(missing[:5])}...).")
+        path = out_dir / f"{name}.yaml"
+        if path.exists() and not force:
+            raise DacodeError(f"{path} exists; runs may refer to it. Use --force to rewrite it.")
+        chosen = [tasks[task_id] for task_id in split[name]]
+        description = f"DA-Code {name.split('-')[1]} set: {len(chosen)} tasks by group x hardness, seed {split['seed']}"
+        body = dict(name=name, description=description, tasks=[bench_task(t, container_dir, timeout_s) for t in chosen])
+        path.write_text(yaml.safe_dump(body, allow_unicode=True, sort_keys=False, width=120), encoding="utf-8")
+        written.append((name, chosen))
+    manifest_path = out_dir / "dacode-manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8")) if manifest_path.is_file() else {}
+    manifest.setdefault("suites", {}).update({name: [t["id"] for t in chosen] for name, chosen in written})
+    manifest["split"] = dict(seed=split["seed"], dev_include=split["dev_include"], strata=split["strata"],
+                             data=str(Path(data).expanduser()), created_at=time.time())
+    manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    return written
 
 
 def build(data: Path, out_dir: Path, *, container_dir: str, timeout_s: float, pilot: int, seed: int,
@@ -328,6 +410,14 @@ def main(argv=None) -> int:
     b.add_argument("--pilot", type=int, default=1, help="0 to skip the pilot suite")
     b.add_argument("--seed", type=int, default=2026)
     b.add_argument("--force", action="store_true")
+    b.add_argument("--split", help="write only dacode-dev and dacode-test from this split file (see 'split')")
+    sp = sub.add_parser("split", help="choose disjoint development and test sets (writes a JSON file)")
+    sp.add_argument("--dev", type=int, required=True)
+    sp.add_argument("--test", type=int, required=True)
+    sp.add_argument("--seed", type=int, default=2026)
+    sp.add_argument("--dev-include", default="dacode-pilot", help="suite whose tasks go to the development set ('' for none)")
+    sp.add_argument("--source-zip", help="take available tasks from the full dataset's source.zip instead of source/")
+    sp.add_argument("--out", required=True)
     r = sub.add_parser("reset", help="fresh working folders for every task of a suite")
     r.add_argument("--suite", required=True)
     r.add_argument("--run", help="resume: reset only the tasks without a result in this run (their folders may hold "
@@ -339,9 +429,28 @@ def main(argv=None) -> int:
     home, data, work = Path(args.home).expanduser(), Path(args.data).expanduser(), Path(args.work).expanduser()
     data_dir = Path(os.environ.get("ASSISTANT_DATA_DIR") or home / "assistant-core")
     try:
-        if args.command == "build":
-            for name, chosen in build(data, home / "benchmarks", container_dir=args.container_dir,
-                                      timeout_s=args.timeout, pilot=args.pilot, seed=args.seed, force=args.force):
+        if args.command == "split":
+            available = None
+            if args.source_zip:
+                import zipfile
+                with zipfile.ZipFile(args.source_zip) as archive:
+                    available = {name.split("/")[1] for name in archive.namelist()
+                                 if name.startswith("source/") and name.count("/") >= 2}
+            include = _suite_ids(home, args.dev_include) if args.dev_include else []
+            split = pick_split(load_tasks(data, available), args.seed, args.dev, args.test, include)
+            Path(args.out).write_text(json.dumps(split, indent=2), encoding="utf-8")
+            for key, row in split["strata"].items():
+                print(f"  {key:16s} available {row['available']:3d}  dev {row['dev']:3d}  test {row['test']:3d}")
+            print(f"dev {len(split['dacode-dev'])}, test {len(split['dacode-test'])} -> {args.out}")
+        elif args.command == "build":
+            if args.split:
+                split = json.loads(Path(args.split).read_text(encoding="utf-8"))
+                built = build_split(data, home / "benchmarks", split, container_dir=args.container_dir,
+                                    timeout_s=args.timeout, force=args.force)
+            else:
+                built = build(data, home / "benchmarks", container_dir=args.container_dir,
+                              timeout_s=args.timeout, pilot=args.pilot, seed=args.seed, force=args.force)
+            for name, chosen in built:
                 counts = {}
                 for t in chosen:
                     counts[_group(t["id"])] = counts.get(_group(t["id"]), 0) + 1

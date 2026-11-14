@@ -153,6 +153,47 @@ class DacodeTests(unittest.TestCase):
             dacode.score(run["id"], home=self.home, data_dir=self.home / "assistant-core", data=self.data,
                          work=self.dir / "work", image=dacode.DEFAULT_IMAGE)
 
+    def test_split_is_disjoint_stratified_reproducible_and_keeps_included_tasks_in_dev(self):
+        tasks = dacode.load_tasks(self.data)
+        split = dacode.pick_split(tasks, 3, 4, 5, dev_include=["ml-binary-001"])
+        dev, test = split["dacode-dev"], split["dacode-test"]
+        self.assertEqual((4, 5, set()), (len(dev), len(test), set(dev) & set(test)))
+        self.assertIn("ml-binary-001", dev)
+        self.assertEqual(split, dacode.pick_split(tasks, 3, 4, 5, dev_include=["ml-binary-001"]))
+        self.assertEqual(9, sum(r["dev"] + r["test"] for r in split["strata"].values()))
+        self.assertEqual({"di/Hard": 2, "dm/Hard": 2, "ml/Hard": 5, "sa/Hard": 3},
+                         {k: r["available"] for k, r in split["strata"].items()})
+        self.assertEqual(4, split["strata"]["ml/Hard"]["dev"] + split["strata"]["ml/Hard"]["test"])  # 9 * 5/12
+        everything = dacode.pick_split(tasks, 3, 5, 7)
+        self.assertEqual(sorted(t["id"] for t in tasks), sorted(everything["dacode-dev"] + everything["dacode-test"]))
+        for bad in (dict(n_dev=10, n_test=10), dict(n_dev=0, n_test=1, dev_include=["ml-binary-001"]),
+                    dict(n_dev=1, n_test=1, dev_include=["nope"])):
+            with self.assertRaises(dacode.DacodeError):
+                dacode.pick_split(tasks, 3, **bad)
+        # tasks listed in a zip count as available before extraction
+        self.assertEqual(["data-sa-099"], [t["id"] for t in dacode.load_tasks(self.data, {"data-sa-099"})])
+
+    def test_build_split_writes_dev_and_test_suites_and_keeps_other_manifest_entries(self):
+        dacode.build(self.data, self.home / "benchmarks", container_dir="/dacode", timeout_s=900, pilot=1, seed=7,
+                     force=False)
+        pilot = (self.home / "benchmarks" / "dacode-pilot.yaml").read_text(encoding="utf-8")
+        split = dacode.pick_split(dacode.load_tasks(self.data), 3, 4, 5)
+        written = dacode.build_split(self.data, self.home / "benchmarks", split, container_dir="/dacode",
+                                     timeout_s=1800, force=False)
+        self.assertEqual(["dacode-dev", "dacode-test"], [name for name, _ in written])
+        dev = bench.load_suite_file(self.home / "benchmarks" / "dacode-dev.yaml", source="home")
+        self.assertEqual(sorted("dc-" + i for i in split["dacode-dev"]), sorted(t.id for t in dev.tasks))
+        self.assertEqual(pilot, (self.home / "benchmarks" / "dacode-pilot.yaml").read_text(encoding="utf-8"))
+        manifest = json.loads((self.home / "benchmarks" / "dacode-manifest.json").read_text(encoding="utf-8"))
+        self.assertEqual({"dacode-sample", "dacode-pilot", "dacode-dev", "dacode-test"}, set(manifest["suites"]))
+        self.assertEqual(3, manifest["split"]["seed"])
+        with self.assertRaises(dacode.DacodeError):  # exists
+            dacode.build_split(self.data, self.home / "benchmarks", split, container_dir="/dacode", timeout_s=1800,
+                               force=False)
+        with self.assertRaises(dacode.DacodeError):  # a task without source
+            dacode.build_split(self.data, self.home / "benchmarks", dict(split, **{"dacode-dev": ["data-sa-099"]}),
+                               container_dir="/dacode", timeout_s=1800, force=True)
+
     def test_reset_for_resume_keeps_finished_folders(self):
         dacode.build(self.data, self.home / "benchmarks", container_dir="/dacode", timeout_s=900, pilot=0, seed=7,
                      force=False)
