@@ -44,12 +44,15 @@ CLI::
     python -m assistant_core.bench show RUN
     python -m assistant_core.bench compare RUN RUN [RUN RUN]
     python -m assistant_core.bench cancel RUN
-    python -m assistant_core.bench resume RUN [--retry-errors connection_error] [--force]
+    python -m assistant_core.bench resume RUN [--retry-errors connection_error,provider_unavailable] [--force]
 
 A stopped run (``cancel``, Ctrl-C, or a runner that died: marked failed on the next load) can be
 finished with ``resume``: it keeps every recorded result, sends only the tasks without one, and
 refuses if the suite or ``config.yaml`` changed. Results whose error is listed in
-``--retry-errors`` are dropped and sent again; that is the only re-send, and only on request.
+``--retry-errors`` are dropped and sent again (default: ``connection_error`` and
+``provider_unavailable``, Hermes's notice that the model provider did not answer any retry; neither
+says anything about the agent). A done run that has such results can be resumed the same way.
+Three ``provider_unavailable`` tasks in a row stop the run as failed so it can be resumed later.
 """
 
 import argparse
@@ -102,6 +105,14 @@ MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 STORED_RESPONSE_CHARS = 2000
 STALE_AFTER_S = 900
 HEARTBEAT_S = 20
+# Hermes answers HTTP 200 with a notice when every retry to the model provider failed (network down,
+# provider outage). That is an infrastructure failure, not the agent's answer: record it as an error.
+PROVIDER_DOWN = re.compile(r"didn't respond in time on any of \d+ attempts|Hermes can't reach the model provider")
+# Result errors that say nothing about the agent and are run again on resume by default.
+RETRYABLE_ERRORS = ("connection_error", "provider_unavailable")
+# This many provider_unavailable results in a row stop the run (failed, resumable) instead of
+# burning through the rest of the suite while the provider is down.
+PROVIDER_DOWN_STREAK = 3
 PROCESS_TOKEN = secrets.token_hex(4)
 _SECRETISH = re.compile(r"(?i)\b(?:sk|pk|rk|ghp|gho|xox[abp]|hf)[-_][A-Za-z0-9_-]{12,}|\bbearer\s+[A-Za-z0-9._~+/=-]{12,}"
                         r"|\bAIza[0-9A-Za-z_-]{20,}")
@@ -604,6 +615,7 @@ class BenchStore:
         Results already recorded are kept and their tasks are not sent again, except results whose
         error is in ``retry_errors`` (for example ``connection_error`` when the gateway was down):
         those are deleted and their tasks run again. Counters are recounted from the kept results.
+        A finished (done) run can be reopened too when it has results with such errors.
         """
         retry_errors = tuple(retry_errors)
         now = time.time()
@@ -614,13 +626,18 @@ class BenchStore:
                 row = self.db.execute("SELECT status FROM bench_runs WHERE id=?", (run_id,)).fetchone()
                 if row is None:
                     raise BenchError("No such run.")
-                if row[0] not in ("cancelled", "failed"):
-                    raise BenchError(f"Only a cancelled or failed run can be resumed (this one is {row[0]}).")
+                marks = ", ".join("?" * len(retry_errors))
+                retryable = bool(retry_errors) and self.db.execute(
+                    f"SELECT 1 FROM bench_results WHERE run_id=? AND error IN ({marks})",
+                    (run_id, *retry_errors)).fetchone() is not None
+                if row[0] not in ("cancelled", "failed") and not (row[0] == "done" and retryable):
+                    raise BenchError(f"Only a cancelled or failed run, or a done run with retryable errors, "
+                                     f"can be resumed (this one is {row[0]}).")
                 if self.db.execute("SELECT 1 FROM bench_runs WHERE status IN ('queued', 'running')").fetchone():
                     raise BenchError("Another benchmark run is in progress. Wait for it or cancel it first.")
                 if retry_errors:
-                    self.db.execute(f"DELETE FROM bench_results WHERE run_id=? AND error IN "
-                                    f"({', '.join('?' * len(retry_errors))})", (run_id, *retry_errors))
+                    self.db.execute(f"DELETE FROM bench_results WHERE run_id=? AND error IN ({marks})",
+                                    (run_id, *retry_errors))
                 self.db.execute(
                     "UPDATE bench_runs SET status='queued', reason=NULL, finished_at=NULL, cancel_requested=0, "
                     "heartbeat_at=?, owner=?, "
@@ -816,6 +833,8 @@ def execute_task(client, target: Target, run_id: str, task: Task, attempt: int, 
         result["passed"] = all(check["passed"] for check in result["checks"]) and bool(content.strip())
         if not content.strip():
             result["error"] = "empty_reply"
+        elif PROVIDER_DOWN.search(content[:2000]):
+            result.update(error="provider_unavailable", passed=False, checks=[])
     except BenchError as error:
         result["error"] = str(error)
     except httpx.TimeoutException:
@@ -870,9 +889,9 @@ class BenchRunner:
         with httpx.Client(timeout=httpx.Timeout(120.0, connect=10.0), follow_redirects=False,
                           trust_env=False, limits=limits, transport=self.transport) as client, \
                 futures.ThreadPoolExecutor(max_workers=run["concurrency"], thread_name_prefix="bench") as pool:
-            pending, queue, last_beat = set(), list(reversed(jobs)), time.monotonic()
+            pending, queue, last_beat, down = set(), list(reversed(jobs)), time.monotonic(), 0
             while queue or pending:
-                if self.cancelled():
+                if self.cancelled() or down >= PROVIDER_DOWN_STREAK:
                     queue.clear()  # no new requests; in-flight ones finish and are recorded
                 while queue and len(pending) < run["concurrency"]:
                     task, attempt = queue.pop()
@@ -884,11 +903,15 @@ class BenchRunner:
                 for future in done:
                     result = future.result()
                     self.store.add_result(self.run_id, result)
+                    down = down + 1 if result.get("error") == "provider_unavailable" else 0
                     if self.progress:
                         self.progress(result)
                 if time.monotonic() - last_beat >= HEARTBEAT_S:
                     self.store.heartbeat(self.run_id)
                     last_beat = time.monotonic()
+        if down >= PROVIDER_DOWN_STREAK:
+            raise BenchError(f"provider_unavailable: {down} tasks in a row could not reach the model provider; "
+                             "resume once it is back")
         return "cancelled" if self.cancel_event.is_set() else "done"
 
 
@@ -1135,8 +1158,9 @@ def main(argv=None, environ=None, out=None) -> int:
     resume_cmd = commands.add_parser("resume", help="finish a cancelled or failed run (tasks with a result are kept)")
     resume_cmd.add_argument("run")
     resume_cmd.add_argument("--api-url", help="override HERMES_BENCH_API_URL (key still from the environment)")
-    resume_cmd.add_argument("--retry-errors", default="connection_error",
-                            help="comma-separated result errors to run again (default connection_error; '' for none)")
+    resume_cmd.add_argument("--retry-errors", default=",".join(RETRYABLE_ERRORS),
+                            help="comma-separated result errors to run again "
+                                 f"(default {','.join(RETRYABLE_ERRORS)}; '' for none)")
     resume_cmd.add_argument("--force", action="store_true", help="resume even if config.yaml changed")
     resume_cmd.add_argument("--no-responses", action="store_true", help="do not store reply excerpts")
     list_cmd = commands.add_parser("list", help="recent runs")

@@ -268,7 +268,7 @@ class FakeHermes:
     """Loopback stand-in for the Hermes API server; counts every request."""
 
     def __init__(self):
-        self.requests, self.gate, self.hold = [], threading.Event(), False
+        self.requests, self.gate, self.hold, self.down = [], threading.Event(), False, False
         outer = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -288,6 +288,9 @@ class FakeHermes:
                     time.sleep(1.5)
                 content = "The answer is 42." if "ok" in prompt else (
                     "A long reply sk-abcdefghijklmnop0123456789 " + "x" * 5000)
+                if outer.down:  # what Hermes answers when every retry to the model provider failed
+                    content = ("custom didn't respond in time on any of 3 attempts — it looks temporarily "
+                               "unavailable.\n\nProvider said: Hermes can't reach the model provider.")
                 self._send(200, {"model": "hermes-agent", "choices": [{"message": {"role": "assistant", "content": content}}],
                                  "usage": {"prompt_tokens": 120, "completion_tokens": 30, "total_tokens": 150}},
                            session="api-" + str(len(outer.requests)).zfill(4))
@@ -467,6 +470,41 @@ class RunnerTests(unittest.TestCase):
         before = len(self.fake.requests)
         final = bench.BenchRunner(self.store, run["id"], self.suite, self.target).run()
         self.assertEqual((1, "done", 3), (len(self.fake.requests) - before, final["status"], final["completed"]))
+
+    def test_provider_outage_stops_the_run_and_resume_sends_those_tasks_again(self):
+        suite = bench.parse_suite(dict(SUITE, name="outage", tasks=[
+            dict(id=f"t{i}", prompt=f"please answer ok {i}", level="L1") for i in range(5)]))
+        self.fake.down = True
+        run = bench.prepare_run(self.store, suite, self.target, label="O1", home=self.home)
+        with self.assertRaises(bench.BenchError):
+            bench.BenchRunner(self.store, run["id"], suite, self.target).run()
+        failed = self.store.get_run(run["id"])
+        self.assertEqual(("failed", bench.PROVIDER_DOWN_STREAK, bench.PROVIDER_DOWN_STREAK, 0),
+                         (failed["status"], failed["completed"], failed["errors"], failed["passed"]))
+        self.assertTrue(failed["reason"].startswith("provider_unavailable"))
+        self.assertEqual({"provider_unavailable"}, {r["error"] for r in self.store.results(run["id"])})
+        self.fake.down = False
+        reopened = bench.resume_run(self.store, run["id"], suite, home=self.home,
+                                    retry_errors=bench.RETRYABLE_ERRORS)
+        self.assertEqual((0, 0), (reopened["completed"], reopened["errors"]))
+        final = bench.BenchRunner(self.store, run["id"], suite, self.target).run()
+        self.assertEqual(("done", 5, 5, 0), (final["status"], final["completed"], final["passed"], final["errors"]))
+        self.assertEqual(bench.PROVIDER_DOWN_STREAK + 5, len(self.fake.requests))
+
+    def test_done_run_with_provider_failures_can_be_resumed_for_those_tasks_only(self):
+        run = bench.prepare_run(self.store, self.suite, self.target, label="O2", home=self.home)
+        bench.BenchRunner(self.store, run["id"], self.suite, self.target).run()
+        with self.assertRaises(bench.BenchError):  # nothing retryable: a done run stays done
+            bench.resume_run(self.store, run["id"], self.suite, home=self.home, retry_errors=bench.RETRYABLE_ERRORS)
+        self.store.db.execute("UPDATE bench_results SET error='provider_unavailable', passed=0 "
+                              "WHERE run_id=? AND task_id='ok-task'", (run["id"],))
+        before = len(self.fake.requests)
+        bench.resume_run(self.store, run["id"], self.suite, home=self.home, retry_errors=bench.RETRYABLE_ERRORS)
+        final = bench.BenchRunner(self.store, run["id"], self.suite, self.target).run()
+        self.assertEqual((1, "done", 3, 2), (len(self.fake.requests) - before, final["status"], final["completed"],
+                                             final["passed"]))
+        self.assertEqual("The answer is 42.", self.fake.requests[-1] and next(
+            r["response_text"] for r in self.store.results(run["id"]) if r["task_id"] == "ok-task"))
 
     def test_bounds(self):
         for kwargs in (dict(repeats=0), dict(repeats=6), dict(concurrency=5), dict(repeats=1.5), dict(label="x" * 61),

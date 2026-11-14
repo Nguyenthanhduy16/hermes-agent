@@ -40,7 +40,7 @@ import time
 
 import yaml
 
-from .bench import BenchStore
+from .bench import RETRYABLE_ERRORS, BenchStore
 
 
 GROUPS = (("sa", "data-sa-"), ("di", "di-"), ("dm", "dm-"), ("ml", "ml-"))
@@ -241,13 +241,17 @@ def _remove(folder: Path, image: str):
                         "rm", "-rf", f"/w/{folder.name}"], check=True, capture_output=True, timeout=300)
 
 
-def pending_ids(data_dir: Path, run_id: str, ids: list) -> list:
-    """Task ids (without ``dc-``) of ``ids`` that have no result yet in ``run_id``."""
+def pending_ids(data_dir: Path, run_id: str, ids: list, retry_errors=RETRYABLE_ERRORS) -> list:
+    """Task ids (without ``dc-``) of ``ids`` that ``bench resume`` sends again in ``run_id``.
+
+    That is tasks with no result yet, or with a retryable error (``retry_errors``), whose results resume drops.
+    """
     store = BenchStore(Path(data_dir) / "bench.sqlite3")
     try:
         if store.get_run(run_id) is None:
             raise DacodeError(f"No run {run_id}.")
-        done = {r["task_id"].removeprefix("dc-") for r in store.results(run_id)}
+        done = {r["task_id"].removeprefix("dc-") for r in store.results(run_id)
+                if (r.get("error") or "") not in retry_errors}
     finally:
         store.close()
     return [task_id for task_id in ids if task_id not in done]
@@ -337,8 +341,18 @@ def run_evaluator(data: Path, out: Path, image: str, timeout_s: int) -> dict:
     return {item["id"]: item for item in json.loads(marker[len("@@RESULTS@@"):])}
 
 
+def _scored(result: dict) -> bool:
+    return any(c.get("type") == "external" and "score" in c for c in result.get("checks") or [])
+
+
 def score(run_id: str, *, home: Path, data_dir: Path, data: Path, work: Path, image: str,
-          eval_timeout: int = 120) -> list:
+          eval_timeout: int = 120, rescore_all: bool = False) -> list:
+    """Score the results of ``run_id`` that have no DA-Code score yet, from the working folders.
+
+    Results already scored keep their score: by now a later run may have reset their folders
+    (tasks run again after a provider outage are the usual case). ``rescore_all`` scores every
+    result again, which is right only while the folders still hold this run's work.
+    """
     store = BenchStore(data_dir / "bench.sqlite3")
     try:
         run = store.get_run(run_id)
@@ -347,17 +361,23 @@ def score(run_id: str, *, home: Path, data_dir: Path, data: Path, work: Path, im
         results = [r for r in store.results(run_id) if r["task_id"].startswith("dc-")]
         if not results:
             raise DacodeError(f"Run {run_id} has no DA-Code results.")
+        if not rescore_all:
+            results = [r for r in results if not _scored(r)]
+            if not results:
+                return []
         if any(r["attempt"] != 1 for r in results):
             raise DacodeError("DA-Code runs must use --repeats 1 (repeats would share a working folder).")
         evals = {t["id"]: t["eval"] for t in load_tasks(data)}
         source = Path(data).expanduser() / "da_code" / "source"
         out = data_dir / "dacode" / run_id
-        _remove(out, image)
-        out.mkdir(parents=True)
+        if rescore_all:
+            _remove(out, image)
+        out.mkdir(parents=True, exist_ok=True)
         configs, notes = [], {}
         for r in results:
             task_id = r["task_id"].removeprefix("dc-")
             folder, target = work / task_id, out / task_id
+            _remove(target, image)
             (target / "dabench").mkdir(parents=True)
             added, changed = changed_files(source / task_id, folder) if folder.is_dir() else ([], [])
             for rel in added + changed:
@@ -425,6 +445,8 @@ def main(argv=None) -> int:
     s = sub.add_parser("score", help="score a finished run with the DA-Code evaluator")
     s.add_argument("run_id")
     s.add_argument("--eval-timeout", type=int, default=120)
+    s.add_argument("--all", action="store_true", help="score every result again, not only unscored ones "
+                                                      "(only while the folders still hold this run's work)")
     args = parser.parse_args(argv)
     home, data, work = Path(args.home).expanduser(), Path(args.data).expanduser(), Path(args.work).expanduser()
     data_dir = Path(os.environ.get("ASSISTANT_DATA_DIR") or home / "assistant-core")
@@ -464,11 +486,14 @@ def main(argv=None) -> int:
             print(f"{len(ids)} working folders reset under {work}")
         else:
             report = score(args.run_id, home=home, data_dir=data_dir, data=data, work=work, image=args.image,
-                           eval_timeout=args.eval_timeout)
+                           eval_timeout=args.eval_timeout, rescore_all=args.all)
+            if not report:
+                print("nothing to score: every result already has a DA-Code score (--all scores again)")
             for task_id, value, note in report:
                 print(f"  {task_id:24s} {value:5.2f}  files {note['files']:2d}  "
                       f"{'answer' if note['answered'] else 'NO ANSWER'}{'' if note['finished'] else '  unfinished'}")
-            print(f"mean score {sum(v for _, v, _ in report) / len(report):.3f} over {len(report)} tasks")
+            if report:
+                print(f"mean score {sum(v for _, v, _ in report) / len(report):.3f} over {len(report)} tasks scored now")
     except DacodeError as error:
         print(error, file=sys.stderr)
         return 1

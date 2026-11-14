@@ -13,7 +13,13 @@ A plan is a text file, one run per line (``#`` starts a comment):
   ``bench run``, then ``dacode score``;
 - a cancelled or failed run (stopped, Ctrl-C, machine off): reset only the folders of tasks without
   a result, ``bench resume`` it (finished tasks are kept), then score;
+- done but with tasks that never reached the model provider (``connection_error``,
+  ``provider_unavailable``: network or provider down): reset those folders and resume, which runs them again;
 - done but not scored yet: score; done and scored: skip.
+
+When the provider is down (a run stops itself after three provider_unavailable tasks in a row, or
+ends with such tasks), the queue waits ``RETRY_WAIT_S`` and tries the label again, up to
+``RETRY_PASSES`` times, before it gives up.
 
 So the same command continues where the last one stopped. A label is never started while an
 earlier one in the plan is unfinished, because DA-Code runs share their working folders.
@@ -41,6 +47,9 @@ ROOT = Path(__file__).resolve().parent.parent
 PY = str(ROOT / ".runtime" / "venv" / "bin" / "python")
 GATEWAY = str(ROOT / "scripts" / "bench-gateway.sh")
 CURRENT = []  # the child process running now, so SIGTERM can stop it too
+RETRYABLE = ("connection_error", "provider_unavailable")  # same as assistant_core.bench.RETRYABLE_ERRORS
+RETRY_WAIT_S = int(os.environ.get("BENCH_QUEUE_RETRY_WAIT_S") or 300)
+RETRY_PASSES = 6
 
 
 def profile_dir() -> Path:
@@ -110,7 +119,7 @@ def latest_run(label: str):
     recover_stale(db_path)
     db = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=30)
     try:
-        row = db.execute("SELECT id, status, completed, total FROM bench_runs WHERE label=? "
+        row = db.execute("SELECT id, status, completed, total, reason FROM bench_runs WHERE label=? "
                          "ORDER BY created_at DESC LIMIT 1", (label,)).fetchone()
         if row is None:
             return None
@@ -118,14 +127,30 @@ def latest_run(label: str):
             "SELECT checks_json FROM bench_results WHERE run_id=? AND task_id LIKE 'dc-%'", (row[0],))]
         scores = [c.get("score") for cs in checks for c in cs if c.get("type") == "external"]
         pending = any(c.get("pending") for cs in checks for c in cs)
+        retry = db.execute(f"SELECT COUNT(*) FROM bench_results WHERE run_id=? AND error IN "
+                           f"({', '.join('?' * len(RETRYABLE))})", (row[0], *RETRYABLE)).fetchone()[0]
     finally:
         db.close()
-    return dict(id=row[0], status=row[1], completed=row[2], total=row[3], dacode=bool(checks),
-                pending=pending, score=(sum(s or 0 for s in scores) / len(scores)) if scores and not pending else None)
+    return dict(id=row[0], status=row[1], completed=row[2], total=row[3], reason=row[4] or "", retry=retry,
+                dacode=bool(checks), pending=pending, score=(sum(s or 0 for s in scores) / len(scores)) if scores and not pending else None)
 
 
 def stop_requested() -> bool:
     return (state_dir() / "stop").exists()
+
+
+def provider_down(run) -> bool:
+    return bool(run) and (run["retry"] > 0 or run["reason"].startswith("provider_unavailable"))
+
+
+def wait_or_stop(seconds: int) -> bool:
+    """Sleep ``seconds``; False if a stop was requested meanwhile."""
+    end = time.monotonic() + seconds
+    while time.monotonic() < end:
+        if stop_requested():
+            return False
+        time.sleep(min(5, end - time.monotonic()))
+    return not stop_requested()
 
 
 def call(args: list, env: dict, log) -> int:
@@ -184,20 +209,28 @@ def do_run(args) -> int:
             if run and run["status"] in ("queued", "running"):
                 say(f"{label}: run {run['id']} is active in another process; stop it first")
                 return 1
-            if run and run["status"] == "done" and not run["pending"]:
+            if run and run["status"] == "done" and not run["pending"] and not run["retry"]:
                 say(f"{label}: done ({run['completed']}/{run['total']}"
                     + (f", score {run['score']:.3f})" if run["score"] is not None else ")"))
                 continue
             with open(logs / f"{label}.log", "a", encoding="utf-8") as log:
                 log.write(f"\n==== {time.strftime('%F %T')} queue run\n")
-                if not run or run["status"] != "done":
+                passes = 0
+                while not run or run["status"] != "done" or run["retry"]:
+                    passes += 1
                     resume = run is not None
-                    action = f"resume {run['id']} ({run['completed']}/{run['total']} kept)" if resume else "start"
+                    if not resume:
+                        action = "start"
+                    elif run["status"] == "done":
+                        action = f"run again the {run['retry']} tasks that did not reach the provider in {run['id']}"
+                    else:
+                        action = f"resume {run['id']} ({run['completed']}/{run['total']} kept)"
                     say(f"{label}: {action} {entry['suite']} policy={entry['policy']} {' '.join(entry['env'])}".rstrip())
-                    if call([GATEWAY, "start", entry["policy"], label, *entry["env"]], env, log) != 0:
-                        say(f"{label}: the bench gateway did not start; see the log above")
-                        return 1
-                    gateway_up = True
+                    if passes == 1:  # this label's policy; later passes keep the same gateway
+                        if call([GATEWAY, "start", entry["policy"], label, *entry["env"]], env, log) != 0:
+                            say(f"{label}: the bench gateway did not start; see the log above")
+                            return 1
+                        gateway_up = True
                     reset = [PY, "-m", "assistant_core.dacode", "reset", "--suite", entry["suite"]]
                     if resume:
                         reset += ["--run", run["id"]]
@@ -211,14 +244,24 @@ def do_run(args) -> int:
                                  "--repeats", "1", "--concurrency", str(args.concurrency)]
                     code = call(bench, env, log)
                     run = latest_run(label)
-                    if run is None or run["status"] != "done":
-                        status = run["status"] if run else "missing"
-                        if stop_requested() or status == "cancelled":
-                            say(f"{label}: stopped ({run['completed']}/{run['total']} kept); "
-                                "'run' again to continue")
-                            return 0
+                    status = run["status"] if run else "missing"
+                    if status == "done" and not run["retry"]:
+                        break
+                    if run and (stop_requested() or status == "cancelled"):
+                        say(f"{label}: stopped ({run['completed']}/{run['total']} kept); 'run' again to continue")
+                        return 0
+                    if not provider_down(run):
                         say(f"{label}: run ended as {status} (exit {code}); fix the cause, then 'run' again")
                         return 1
+                    if passes >= RETRY_PASSES:
+                        say(f"{label}: the model provider is still unreachable after {passes} passes; "
+                            "check the network, then 'run' again")
+                        return 1
+                    say(f"{label}: the model provider was unreachable ({run['retry']} tasks); "
+                        f"trying again in {RETRY_WAIT_S // 60} min")
+                    if not wait_or_stop(RETRY_WAIT_S):
+                        say(f"{label}: stop requested; 'run' again to continue")
+                        return 0
                 if run["dacode"] and run["pending"]:
                     if call([PY, "-m", "assistant_core.dacode", "score", run["id"]], env, log) != 0:
                         say(f"{label}: scoring failed; 'run' again retries it")

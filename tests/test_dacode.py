@@ -140,6 +140,28 @@ class DacodeTests(unittest.TestCase):
         self.assertEqual(1, store.get_run(run["id"])["passed"])
         summary = bench.summarize(store.get_run(run["id"]), results)
         self.assertAlmostEqual(1.4 / len(ids), summary["external_score"])
+        # A task run again later (provider outage) is scored alone; the others keep their score even
+        # though a later run may have reset their folders.
+        store.db.execute("DELETE FROM bench_results WHERE run_id=? AND task_id=?", (run["id"], suite.tasks[1].id))
+        store.add_result(run["id"], dict(task_id=suite.tasks[1].id, attempt=1, level="L1", category="c", passed=False,
+                                         checks=[], session_id="s1", response_text="<answer>x</answer>"))
+        dacode.reset(self.data, work, [ids[0]], dacode.DEFAULT_IMAGE)  # ids[0]'s work is gone now
+        seen.clear()
+
+        def again(data, out, image, timeout_s):
+            seen.update(lines=(out / "eval.jsonl").read_text(encoding="utf-8").splitlines())
+            return {ids[1]: {"id": ids[1], "total_score": 1.0}}
+
+        with patch.object(dacode, "run_evaluator", side_effect=again):
+            report = dacode.score(run["id"], home=self.home, data_dir=data_dir, data=self.data, work=work,
+                                  image=dacode.DEFAULT_IMAGE)
+        self.assertEqual(([ids[1]], 1), ([task_id for task_id, _, _ in report], len(seen["lines"])))
+        scores = {r["task_id"]: r["checks"][0]["score"] for r in store.results(run["id"])}
+        self.assertEqual((1.0, 1.0), (scores[suite.tasks[0].id], scores[suite.tasks[1].id]))
+        self.assertEqual(2, store.get_run(run["id"])["passed"])
+        with patch.object(dacode, "run_evaluator", side_effect=AssertionError("nothing to score")):
+            self.assertEqual([], dacode.score(run["id"], home=self.home, data_dir=data_dir, data=self.data,
+                                              work=work, image=dacode.DEFAULT_IMAGE))
 
     def test_repeats_are_refused(self):
         dacode.build(self.data, self.home / "benchmarks", container_dir="/dacode", timeout_s=900, pilot=0, seed=7,
@@ -203,6 +225,7 @@ class DacodeTests(unittest.TestCase):
         run = store.create_run(suite, label="t", repeats=1, concurrency=1)
         store.add_result(run["id"], dict(task_id="dc-data-sa-001", attempt=1, passed=False, checks=[]))
         store.close()
+        ids = [t.id.removeprefix("dc-") for t in suite.tasks]
         work = self.dir / "work"
         dacode.main(["--home", str(self.home), "--data", str(self.data), "--work", str(work),
                      "reset", "--suite", "dacode-sample"])
@@ -213,10 +236,16 @@ class DacodeTests(unittest.TestCase):
                                              "reset", "--suite", "dacode-sample", "--run", run["id"]]))
         self.assertEqual("answer\n", (work / "data-sa-001" / "result.csv").read_text(encoding="utf-8"))  # finished
         self.assertEqual("template\n", (work / "data-sa-002" / "result.csv").read_text(encoding="utf-8"))  # half-done
-        ids = [t.id.removeprefix("dc-") for t in suite.tasks]
         self.assertEqual(ids[1:], dacode.pending_ids(data_dir, run["id"], ids))
         with self.assertRaises(dacode.DacodeError):
             dacode.pending_ids(data_dir, "nope", ids)
+        # a task that never reached the model provider runs again on resume, so its folder is reset too
+        store = bench.BenchStore(data_dir / "bench.sqlite3")
+        store.add_result(run["id"], dict(task_id="dc-" + ids[1], attempt=1, passed=False, checks=[],
+                                         error="provider_unavailable"))
+        store.close()
+        self.assertEqual(ids[1:], dacode.pending_ids(data_dir, run["id"], ids))
+        self.assertEqual(ids[2:], dacode.pending_ids(data_dir, run["id"], ids, retry_errors=()))
 
 
 class ExternalCheckTests(unittest.TestCase):
