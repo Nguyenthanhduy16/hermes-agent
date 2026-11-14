@@ -363,6 +363,12 @@ Quyết định trước khi chạy và ghi lại.
 | 2026-11-13 | 2 | dacode-pilot-ml2-long@b0a76c9211c6 | C `always-cheap` | `max_turns` 50, timeout 3600 s (wrapper nâng `MAX_TIMEOUT_S`) | ml2-C50 | 20261113-154131-4d5802 | b30e1b2 | 0,887 / 1,00; 35 / 50 bước; reg-002 3286 s; $0,026/câu |
 | 2026-11-13 | 2 | dacode-pilot-ml2@95fe06322716 | R50 `random` | share 0,5, seed 22 | ml2-R50-b | 20261113-164539-ad013a | b30e1b2 | 0,986 / 1,00; 13 / 11 bước; 31% / 73% bước Sol; $0,078/câu |
 | 2026-11-13 | 2 | dacode-pilot-ml2@95fe06322716 | FL `first-strong` | `STRONG_FIRST_STEPS=2` | ml2-FL-b | 20261113-165613-d32c12 | b30e1b2 | 0,995 / 0; cả hai 25 bước; reg-002 chạm `max_turns` chưa ghi file; $0,026/câu |
+| 2026-11-14 | 2 | dacode-pilot@d590d2c45ac7 | S | env-v1 | env1-S1 | 20261114-035004-800088 | 37c2202 | Bỏ: dừng tay sau 1 câu để quyết định chạy song song (gateway khởi động lại) |
+| 2026-11-14 | 2 | dacode-pilot@d590d2c45ac7 | S | env-v1; 03:56–04:33 UTC (thứ 7) | env1-S1b | 20261114-035622-ac3af2 | 37c2202 | 0,855; 7,0 bước/câu; $0,062/câu; 2 lần gateway GPT treo khoảng 600 s rồi thử lại (`APIConnectionError`) |
+| 2026-11-14 | 2 | dacode-pilot@d590d2c45ac7 | S | env-v1; 04:33–04:53 UTC | env1-S2 | 20261114-043316-280aeb | 37c2202 | 0,856; 6,8 bước/câu; $0,088/câu |
+| 2026-11-14 | 2 | dacode-pilot@d590d2c45ac7 | C | env-v1; 04:53–05:11 UTC, thứ 7 nên không có giờ cao điểm | env1-C1 | 20261114-045328-1555af | 37c2202 | 0,556; 13,5 bước/câu; $0,0064/câu |
+| 2026-11-14 | 2 | dacode-pilot@d590d2c45ac7 | C | env-v1; 05:11–06:00 UTC | env1-C2 | 20261114-051122-f22b29 | 37c2202 | 0,656; 12,8 bước/câu; $0,0070/câu; 1 cell bị script cắt ở 600 s (đúng thiết kế); reg-002 không có câu trả lời cuối nhưng file đầu ra được chấm 1,0 |
+| 2026-11-14 | — | dacode-conc (7 câu ngắn của pilot) | C | `--concurrency 3`, profile tách riêng `bench2` (cổng 8651, `container_cpu: 4`) | conc3-test | 20261114-041459-8de342 | 37c2202 | Gỡ lỗi, không dùng để học hay báo cáo. 3,1 phút so với 5,5–6,0 phút tuần tự (khoảng 1,8 lần); điểm 0,651; tổng độ trễ theo câu tăng khoảng 60% |
 
 **Cổng quyết định, pilot DABench (2026-11-12): không đạt.** C ≥ S (83,3% so với
 77,8%); khác biệt là lỗi so khớp của bộ chấm (0,89/0,88, NaN/nan); quỹ đạo khoảng 3
@@ -396,17 +402,40 @@ có cơ sở (C có 8–22 lệnh ngắn mỗi câu, S có 1–4). Nối dữ li
 sang bước bằng `bench export` (câu C2 quá giờ lấy lại qua session id suy ra). Giới hạn: 2
 câu cùng loại, được chọn vì C thua ở pilot (hồi quy về trung bình), 1–2 lần mỗi cấu hình.
 
-Giá trị cố định (mục 3):
+**Môi trường `env-v1` (chốt 2026-11-14).** Mọi run từ `env1-S1` trở đi dùng bảng giá trị cố
+định bên dưới. Ba thay đổi so với trước: Sol gọi qua gateway API trả tiền thay cho ChatGPT
+Plus, sandbox 12 CPU thay cho 1, và hạn tool 660 s thay cho 420 s. Đổi bất kỳ giá trị nào
+thì phải chạy lại mọi cấu hình. Các run trước 14/11 (pilot DABench và DA-Code ngày 12/11,
+thử nghiệm 2 câu ML ngày 13/11) **chỉ dùng để gỡ lỗi, không dùng để học hay báo cáo chung
+với run env-v1**. Gateway GPT tự chèn khoảng 4,2k token hướng dẫn ẩn vào mọi lệnh gọi
+(phần lớn được cache). Nội dung hướng dẫn này không biết, nên là biến gây nhiễu không kiểm
+soát được và phải ghi vào phần giới hạn. Chi phí báo cáo vẫn tính theo giá API công bố
+trong `pricing.yaml`, không phải giá gateway thu thật.
+
+**Cổng quyết định, pilot DA-Code env-v1 (2026-11-14): đạt.** S được 0,855 / 0,856, C được
+0,556 / 0,656. Trung bình S 0,855 và C 0,606, chênh khoảng **25 điểm**, vượt ngưỡng 10.
+Chi phí S/C khoảng **11 lần** ($0,075 so với $0,0067 mỗi câu), vượt ngưỡng 3. Khoảng chênh
+chỉ nằm ở 3 câu: `ml-competition-008` (S 2/2, C 0/2), `ml-regression-002` (S 2/2, C 1/2)
+và `di-text-004` (S 2/2, C 0/2). 7 câu còn lại cho S và C điểm như nhau: `data-sa-031` luôn
+0, `ml-cluster-002` luôn 0,56, các câu khác luôn 1. So với pilot 12/11, S tăng từ 0,755 lên
+0,855, toàn bộ nhờ `di-text-004`, còn C gần như giữ nguyên. Không còn lần nào Hermes cắt
+tool ở 420 s. C dùng gấp khoảng 2,2 lần token đầu vào (khoảng 184k so với 82k mỗi câu) và
+khoảng 2 lần số bước (13,2 so với 6,9 bước mỗi câu). Nối dữ liệu: 40/40 kết quả có session
+id trực tiếp. Giới hạn: vẫn chỉ 10 câu, khoảng chênh dựa vào 3 câu. Bước 3 cần một tập phát
+triển DA-Code lớn hơn: trên máy hiện chỉ có 52 câu mẫu, bản đầy đủ có 500 câu.
+
+Giá trị cố định (mục 3), áp dụng từ env-v1. Giá trị trước 14/11 ghi trong ngoặc:
 
 | Mục | Giá trị |
 |---|---|
-| Mô hình mạnh | `gpt-6.1-sol` (provider `openai-codex`, gói ChatGPT Plus), `reasoning_effort: high` |
+| Mô hình mạnh | `gpt-6.1-sol`, provider custom `xingchi` (gateway bên thứ ba tương thích OpenAI, key API trả tiền), chat completions, `reasoning_effort: high` gửi qua `providers.xingchi.extra_body`; telemetry ghi provider `custom` (trước: provider `openai-codex`, gói ChatGPT Plus, Responses API) |
 | Mô hình rẻ | DeepSeek V4 Flash, ID API `deepseek-flash` (provider `deepseek`, đổi qua Hermes theo bước: [dinh-tuyen](dinh-tuyen.md)), `reasoning_effort: high`. Pilot DABench đầu tiên dùng `gpt-6-luna` |
-| Hermes commit | `dce1e9b3` (2026-10-09) |
-| `max_turns`, `timeout_s`, song song | 25; 900 s (DABench), 1800 s (DA-Code); 1 |
-| Hạn mỗi lệnh tool | 420 s (`_DEFAULT_CONCURRENT_TOOL_TIMEOUT_S` trong `agent/tool_executor.py` của Hermes; thắng `code_execution.timeout: 600` vì profile không đặt `timeouts.tools.*`) |
+| Hermes commit | `dce1e9b3` (2026-10-09); không chạy `hermes update` |
+| Repo, config | `37c2202` (nhánh `exp/dacode-pilot`), plugin chép từ `src/` khi start gateway; config hash `960074a95e9ab73b` (`bench_runs.config_hash`; trước: `170133675ecc0ba0`) |
+| `max_turns`, `timeout_s`, song song | 25; 900 s (DABench), 1800 s (DA-Code); 1 (`BENCH_CONCURRENCY` trong `run1.sh`, mặc định 1) |
+| Hạn mỗi lệnh tool | `code_execution.timeout` 600 s (script tự dừng); `timeouts.tools.sequential_call` = `concurrent_batch` = 660 s (trước: 420 s mặc định của Hermes, `_DEFAULT_CONCURRENT_TOOL_TIMEOUT_S` trong `agent/tool_executor.py`, cắt trước 600 s) |
 | Bộ công cụ `api_server` | `code_execution`, `file`, `todo` (không có web); `approvals.unattended_mode: approve` |
-| Sandbox | `hermes-bench-sandbox:2` (pilot DABench dùng `:1`; `:2` thêm thư viện DA-Code) ([Dockerfile](../deploy/bench-sandbox/Dockerfile), thư viện ghim), `docker_network: false`, `/data/dabench` chỉ đọc |
+| Sandbox | `hermes-bench-sandbox:2` (pilot DABench dùng `:1`; `:2` thêm thư viện DA-Code) ([Dockerfile](../deploy/bench-sandbox/Dockerfile), thư viện ghim), **`container_cpu: 12`** (trước: 1), RAM 5 GB, `docker_network: false`, `/data/dabench` chỉ đọc, `/dacode` ghi được |
 | Profile Hermes | `.runtime/hermes-home/profiles/bench`, gateway riêng cổng 8650 ([benchmark](benchmark.md#10-profile-thực-nghiệm)) |
 | Ngày bảng giá | 2026-11-12: sol 2.00 / 10.00 / cache 0.10, luna 0.10 / 0.50 / cache 0.01, deepseek-flash 0.15 / 0.60 / cache 0.003 (giờ thấp điểm; giờ cao điểm T2–T6 01–04 và 06–10 UTC gấp đôi) USD mỗi 1M token. Chi phí DeepSeek phải tính theo giờ của từng lệnh gọi |
 | Tag bộ định tuyến đã khóa, τ | |
