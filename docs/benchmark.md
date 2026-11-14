@@ -148,6 +148,27 @@ các run dùng phiên bản suite khác nhau.
 Gợi ý: chạy mỗi cấu hình với `--repeats 2` trở lên để thấy độ dao động; so sánh
 L3 (tác vụ dài, nhiều bước) là nơi định tuyến khác biệt rõ nhất.
 
+### Xuất CSV
+
+```bash
+python -m assistant_core.bench export RUN [RUN ...] --out DIR
+```
+
+Ghi hai file:
+- `tasks.csv`: mỗi dòng là một task × lần lặp, gồm kết quả, điểm (điểm 0–1 của bộ
+  chấm ngoài nếu có), số bước, số bước mạnh/rẻ, số lần đổi model, token, chi phí,
+  lỗi và quá giờ của công cụ.
+- `steps.csv`: mỗi dòng là một bước (một lần gọi model), gồm đặc trưng của router
+  (`f_*`), lựa chọn, model đã chạy, token, chi phí, các lần gọi công cụ của bước đó,
+  và kết quả của task chứa bước đó (nhãn để học router).
+
+Bước được nối với task qua session id của Hermes. Lần gửi lại cùng
+`api_request_id` gộp thành một bước. Task quá giờ không nhận được header
+`X-Hermes-Session-Id`, nên bench ghi trước session id mà Hermes sẽ suy ra
+(`expected_session_id`); với run cũ, export tự suy ra lại từ prompt trong suite.
+`cost_usd` theo bảng giá thấp điểm trong `pricing.yaml`; `cost_usd_billed` nhân đôi
+các lần gọi DeepSeek vào giờ cao điểm (T2–T6 01–04 và 06–10 UTC).
+
 ## 5. Viết suite riêng
 
 Suite có sẵn: `config/bench/assistant-basics.yaml` (14 tác vụ tiếng Việt và
@@ -305,3 +326,49 @@ Ba điểm khác với quy trình gốc cần ghi rõ khi báo cáo số liệu:
 - Request lỗi hoặc quá thời gian tính là sai trong `Pass rate`. Ba chỉ số ở
   trên bỏ qua các câu không có câu trả lời, giống script gốc; nên báo cáo kèm
   số câu đã chấm.
+
+## 10. Profile thực nghiệm
+
+Thực nghiệm của đồ án chạy trong profile Hermes riêng
+`.runtime/hermes-home/profiles/bench`, có gateway riêng ở cổng 8650. Gateway
+của bot (profile `default`, cổng 8642) không bị khởi động lại khi đổi cấu
+hình, và dữ liệu thực nghiệm (`state.db`, `assistant-core/telemetry.sqlite3`,
+`bench.sqlite3`) không lẫn với hội thoại thật. Profile dùng chung đăng nhập
+Codex với `default` qua cơ chế profile của Hermes (không chép `auth.json`, vì
+refresh token chỉ dùng được một lần).
+
+Những gì profile cố định (xem [thiết kế thực nghiệm](thiet-ke-thuc-nghiem.md#11-sổ-thực-nghiệm)):
+
+- `config.yaml`: `gateway.standalone: true`; `platform_toolsets.api_server`
+  chỉ gồm `code_execution`, `file`, `todo`; `agent.max_turns: 25`;
+  `approvals.unattended_mode: approve` (mặc định Hermes chặn `execute_code`
+  trên `api_server`); sandbox `hermes-bench-sandbox:1` không có mạng
+  (`docker_network: false`), bảng DABench gắn chỉ đọc ở `/data/dabench`.
+- `.env`: `API_SERVER_KEY`, `API_SERVER_PORT=8650`, tên hai mô hình định
+  tuyến, `ASSISTANT_ROUTER_PLATFORMS=api_server`, quota đủ lớn.
+- `assistant-core/pricing.yaml`: giá API để quy đổi chi phí.
+
+Dựng image sandbox một lần:
+
+```bash
+docker build -t hermes-bench-sandbox:1 deploy/bench-sandbox
+```
+
+Mỗi cấu hình là một lần khởi động gateway. Script chép plugin từ `src/` vào
+profile (Hermes nạp bản chép, không đọc `src/`), chờ cổng mở và kiểm tra
+telemetry đã ghi đúng chính sách:
+
+```bash
+scripts/bench-gateway.sh start always-strong pilot-S
+scripts/bench-gateway.sh start random R25 ASSISTANT_ROUTER_STRONG_SHARE=0.25
+scripts/bench-gateway.sh stop
+
+export HERMES_HOME=$PWD/.runtime/hermes-home/profiles/bench
+export HERMES_BENCH_API_URL=http://127.0.0.1:8650/v1
+export API_SERVER_KEY=$(grep '^API_SERVER_KEY=' $HERMES_HOME/.env | cut -d= -f2-)
+PYTHONPATH=src .runtime/venv/bin/python -m assistant_core.bench run --suite dabench-pilot --label pilot-S --repeats 2
+```
+
+Sao lưu `state.db` của profile sau mỗi đợt chạy: đây là nơi duy nhất giữ nội
+dung hội thoại, cần khi muốn tính thêm đặc trưng cho bộ định tuyến mà không
+chạy lại.

@@ -5,9 +5,11 @@
 - pre_tool_call: veto tools that are not yet isolated per person.
 - pre/post_api_request, api_request_error, post_tool_call: telemetry.
 - llm_request middleware: per-step model routing, only when
-  ASSISTANT_ROUTER_POLICY is set (see assistant_core.router).
+  ASSISTANT_ROUTER_POLICY is set (see assistant_core.router). With
+  ASSISTANT_ROUTER_CHEAP_PROVIDER the cheap tier runs on another provider and
+  the switch happens at each step start (see assistant_core.provider_switch).
 
-Hooks observe or veto; only the router middleware changes which model runs a step.
+Hooks observe or veto; only the router changes which model runs a step.
 """
 
 import hashlib
@@ -211,8 +213,13 @@ def register(ctx) -> None:
     if core.router:
         # The router guards itself: on any failure the step runs on the default model.
         ctx.register_middleware("llm_request", core.llm_request)
+        if settings.router.cheap_provider:
+            # Cheap tier on another provider: swap the agent's runtime at each step start.
+            from .provider_switch import install
+            install(core.router.before_step)
     logger.info("assistant-core loaded: quota %s/%s per day, blocked tools %s, telemetry %s, router %s",
                 settings.user_daily_limit, settings.total_daily_limit,
                 ",".join(sorted(settings.blocked_tools)), "on" if core.telemetry else "off",
-                f"{settings.router.policy} ({settings.router.strong_model} / {settings.router.cheap_model})"
+                f"{settings.router.policy} ({settings.router.strong_model} / "
+                f"{settings.router.cheap_provider + ':' if settings.router.cheap_provider else ''}{settings.router.cheap_model})"
                 if core.router else "off")

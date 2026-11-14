@@ -21,8 +21,9 @@ ASSISTANT_RUN_LABEL=luat
 
 - Đặt **mô hình mặc định của Hermes bằng mô hình mạnh**. Khi khung gặp lỗi,
   bước đó chạy bằng mô hình mặc định.
-- Hai mô hình phải cùng nhà cung cấp và cùng giao thức với phiên, vì khung chỉ
-  đổi tên mô hình trong request.
+- Mặc định hai mô hình phải cùng nhà cung cấp và cùng giao thức với phiên, vì
+  khung chỉ đổi tên mô hình trong request. Mức rẻ ở nhà cung cấp khác: xem
+  [mục 1b](#1b-mức-rẻ-ở-nhà-cung-cấp-khác).
 - Giá trị sai (thiếu tên mô hình, tỷ lệ ngoài 0..1...) làm plugin dừng nạp và
   ghi lỗi vào log, thay vì âm thầm chạy sai cấu hình.
 
@@ -34,6 +35,7 @@ ASSISTANT_RUN_LABEL=luat
 | `ASSISTANT_ROUTER_SEED` | `random`: cùng seed và cùng mã bước cho cùng kết quả | `0` |
 | `ASSISTANT_ROUTER_STRONG_FIRST_STEPS` | `rule`: số bước đầu của mỗi lượt dùng mô hình mạnh | `1` |
 | `ASSISTANT_ROUTER_PROVIDER` | Chỉ định tuyến request của nhà cung cấp này | mọi nhà cung cấp |
+| `ASSISTANT_ROUTER_CHEAP_PROVIDER` | Nhà cung cấp Hermes của mức rẻ, khi khác nhà cung cấp của phiên (ví dụ `deepseek`) | cùng nhà cung cấp |
 | `ASSISTANT_ROUTER_PLATFORMS` | Chỉ định tuyến các nền tảng này, ví dụ `api_server` | mọi nền tảng |
 | `ASSISTANT_ROUTER_STRONG_REQUEST`, `ASSISTANT_ROUTER_CHEAP_REQUEST` | JSON các trường request đặt thêm cho từng mức; `null` để bỏ một trường | không |
 
@@ -47,6 +49,45 @@ ASSISTANT_ROUTER_CHEAP_REQUEST={"reasoning": {"effort": "low"}}
 Các trường `model`, `messages`, `input`, `instructions`, `system`, `tools`,
 `stream` không được đặt qua đây.
 
+## 1b. Mức rẻ ở nhà cung cấp khác
+
+Ví dụ mạnh là `gpt-6.1-sol` qua `openai-codex` (gói ChatGPT Plus), rẻ là
+`deepseek-flash` qua API DeepSeek:
+
+```
+ASSISTANT_ROUTER_STRONG_MODEL=gpt-6.1-sol
+ASSISTANT_ROUTER_CHEAP_MODEL=deepseek-flash
+ASSISTANT_ROUTER_CHEAP_PROVIDER=deepseek
+DEEPSEEK_API_KEY=...
+```
+
+Middleware `llm_request` chạy khi request đã dựng xong cho nhà cung cấp của
+phiên (endpoint, khóa, định dạng Responses hay Chat Completions đã cố định), nên
+không chuyển được một bước sang nhà cung cấp khác. Khi đặt
+`ASSISTANT_ROUTER_CHEAP_PROVIDER`, khung quyết định ở **đầu mỗi bước**, ngay
+sau `prepare_iteration` của Hermes và trước khi request được dựng, rồi chuyển
+runtime của agent bằng chính cơ chế fallback của Hermes:
+
+| Mức | Hàm Hermes | Tác dụng |
+|---|---|---|
+| rẻ | `agent.route_binding.bind_route_entry` với `{provider, model}` | Hermes tự lấy client và khóa, chọn giao thức, giữ nguyên lịch sử `messages` |
+| mạnh | `agent.agent_runtime_helpers.restore_primary_runtime` | Về runtime chính của phiên; Hermes cũng gọi hàm này đầu mỗi lượt |
+
+Hermes không có hook nào ở đầu bước mà đưa đối tượng agent cho plugin, nên
+`assistant_core.provider_switch.install` bọc đúng một hàm pha
+(`agent.conversation_loop.prepare_iteration`). Phần này kiểm tra trên commit
+Hermes `dce1e9b3` (`tests/test_hermes_provider_switch.py`); nâng Hermes thì
+chạy lại `scripts/run.sh TestHermes`. Middleware vẫn ghi quyết định cho
+telemetry nhưng không sửa request. Khi chuyển lỗi, bước đó chạy bằng runtime
+chính; khi mô hình chính đang bị giới hạn lượt, Hermes giữ mức rẻ và lý do ghi
+thêm `primary unavailable, stayed cheap`.
+
+Đã chạy thật (12/11/2026, `random` 0,5): các bước xen kẽ `deepseek` ↔
+`openai-codex` trong cùng phiên, công cụ chạy bình thường. Cache của mỗi nhà
+cung cấp vẫn còn sau một bước ở nhà cung cấp kia (bước Sol sau bước DeepSeek
+vẫn đọc khoảng 4.900 token từ cache); chỉ phần hội thoại mới từ lần gọi trước
+của nhà cung cấp đó là không có cache.
+
 ## 2. Các chính sách
 
 | Chính sách | Cách chọn | Dùng để |
@@ -54,20 +95,29 @@ Các trường `model`, `messages`, `input`, `instructions`, `system`, `tools`,
 | `always-strong` | Mọi bước dùng mô hình mạnh | Mốc chất lượng cao nhất |
 | `always-cheap` | Mọi bước dùng mô hình rẻ | Mốc chi phí thấp nhất |
 | `random` | Mỗi bước dùng mô hình mạnh với xác suất `STRONG_SHARE` | Đối chứng, và thu dữ liệu "cùng trạng thái, khác mô hình" |
-| `rule` | Bước đầu của lượt và bước ngay sau một lần gọi công cụ lỗi dùng mô hình mạnh; còn lại dùng mô hình rẻ | Đối chứng "luật đơn giản" |
+| `rule` | Bước đầu của lượt và bước ngay sau một lần gọi công cụ lỗi hoặc quá giờ dùng mô hình mạnh; còn lại dùng mô hình rẻ | Đối chứng "luật đơn giản" |
+| `first-strong` | `STRONG_FIRST_STEPS` bước đầu của lượt dùng mô hình mạnh, sau đó rẻ, không nâng lên khi lỗi | Mốc First-Large của Budget-Aware |
 
-Chính sách nhìn thấy các đặc trưng sau, không có nội dung tin nhắn:
+Chính sách nhìn thấy các đặc trưng sau, không có nội dung tin nhắn. Đặc trưng
+của bước t chỉ dùng sự kiện đã xong trước bước t, và đều thay đổi theo bước, nên
+không đặc trưng nào là hằng số của task. Bộ này được chốt sau thảo luận hai vòng
+với Claude và Codex (13/11/2026), xem [thiết kế thực nghiệm](thiet-ke-thuc-nghiem.md#bước-4-xây-và-khóa-bộ-định-tuyến-đề-xuất-gói-f).
 
-| Đặc trưng | Ý nghĩa |
-|---|---|
-| `step`, `session_step` | Bước thứ mấy trong lượt và trong cả phiên |
-| `prev_choice` | Mức đã chọn ở bước trước |
-| `prev_tools`, `prev_tool_errors`, `last_tool` | Số lần gọi công cụ từ bước trước, số lần lỗi, tên công cụ cuối |
-| `error_streak` | Số bước liên tiếp đi sau một lỗi công cụ |
-| `messages`, `chars` | Số tin và số ký tự của hội thoại sắp gửi |
+| Đặc trưng | Ý nghĩa | Dùng cho |
+|---|---|---|
+| `step` | Bước thứ mấy trong lượt | Mô hình chính |
+| `prev_tool_errors` | Số lần gọi công cụ lỗi từ bước trước (không tính quá giờ), chặn ở 2 | Mô hình chính |
+| `prev_tool_timeout` | 1 nếu một lần gọi công cụ từ bước trước bị quá giờ | Mô hình chính |
+| `prev_tool_duration_log` | log1p(giây) của lần gọi công cụ lâu nhất từ bước trước | Mô hình chính |
+| `short_exec_streak` | Số bước liên tiếp trước đó mà mọi lệnh chạy code (`execute_code`, `terminal`) đều ok và dưới 3 s; chặn ở 5 | Mô hình chính |
+| `ctx_growth` | sign(Δ)·log1p(abs(Δ)), Δ = số ký tự request hiện tại trừ số ký tự ở bước đầu của lượt | Mô hình chính |
+| `prev_choice` | Mức đã chọn ở bước trước | Mô hình chính |
+| `elapsed_log`, `tool_time_cum`, `cum_tool_failures`, `error_streak` | Thời gian từ bước đầu của lượt, tổng thời gian công cụ, tổng lỗi và quá giờ trong lượt, số bước liên tiếp đi sau lỗi | Ablation |
+| `prev_tools`, `last_tool`, `messages`, `chars`, `session_step` | Số lần gọi công cụ, tên công cụ cuối, số tin, số ký tự, bước trong phiên | Chỉ ghi lại để phân tích |
 
 Lỗi công cụ lấy từ trạng thái Hermes báo qua hook `post_tool_call` (ví dụ code
-chạy lỗi, lệnh thoát khác 0). Công cụ bị chặn cũng tính là lỗi.
+chạy lỗi, lệnh thoát khác 0). Công cụ bị chặn cũng tính là lỗi. Trạng thái
+`timeout` được đếm riêng.
 
 Thêm chính sách mới:
 

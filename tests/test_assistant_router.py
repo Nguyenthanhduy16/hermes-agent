@@ -5,6 +5,7 @@ from pathlib import Path
 import sqlite3
 import tempfile
 import unittest
+import unittest.mock
 
 from assistant_core import bench, reporting, router
 from assistant_core.hermes_plugin import AssistantCore
@@ -99,8 +100,11 @@ class PolicyTests(unittest.TestCase):
         self.assertEqual((STRONG, "tool error in the previous step", True),
                          (record["choice"], record["reason"], record["switched"]))
         self.assertEqual(dict(step=3, session_step=3, prev_choice=CHEAP, prev_tools=1, prev_tool_errors=1,
-                              last_tool="execute_code", error_streak=1, messages=3),
-                         {k: v for k, v in record["features"].items() if k != "chars"})
+                              prev_tool_timeout=0, prev_tool_duration_log=0.0, short_exec_streak=0,
+                              ctx_growth=0.0, last_tool="execute_code", error_streak=1, tool_time_cum=0.0,
+                              cum_tool_failures=1, messages=3),
+                         {k: v for k, v in record["features"].items() if k not in ("chars", "elapsed_log")})
+        self.assertGreaterEqual(record["features"]["elapsed_log"], 0)
         self.assertGreater(record["features"]["chars"], 0)
         target.tool_result(session_id="s1", tool_name="execute_code", status="ok")
         self.assertEqual("small-1", step(target, 4)["request"]["model"])  # the error is consumed
@@ -115,6 +119,74 @@ class PolicyTests(unittest.TestCase):
         two = Router(settings(ASSISTANT_ROUTER_STRONG_FIRST_STEPS="2"))
         self.assertEqual([None, None, "small-1"],
                          [(step(two, n) or {}).get("request", {}).get("model") for n in (1, 2, 3)])
+
+    def test_first_strong_uses_strong_first_and_never_escalates(self):
+        target = Router(settings("first-strong", ASSISTANT_ROUTER_STRONG_FIRST_STEPS="2"))
+        self.assertIsNone(step(target, 1))                                # strong
+        self.assertIsNone(step(target, 2))                                # strong
+        self.assertEqual("small-1", step(target, 3)["request"]["model"])  # cheap after the first steps
+        target.tool_result(session_id="s1", tool_name="execute_code", status="error")
+        self.assertEqual("small-1", step(target, 4)["request"]["model"])  # a tool error does not escalate
+        record = target.decision_for(session_id="s1", api_request_id="t1:api:4")
+        self.assertEqual((CHEAP, "after the first steps", 1),
+                         (record["choice"], record["reason"], record["features"]["prev_tool_errors"]))
+        self.assertIsNone(step(target, 1, turn="t2"))                     # a new turn starts strong again
+
+    def test_rule_escalates_after_a_tool_timeout(self):
+        target = Router(settings("rule"))
+        step(target, 1)
+        target.tool_result(session_id="s1", tool_name="execute_code", status="timeout", duration_ms=420000)
+        self.assertIsNone(step(target, 2))
+        features = target.decision_for(session_id="s1", api_request_id="t1:api:2")["features"]
+        self.assertEqual((0, 1, 0, 1), (features["prev_tool_errors"], features["prev_tool_timeout"],
+                                        features["error_streak"], features["cum_tool_failures"]))
+        self.assertAlmostEqual(round(__import__("math").log1p(420), 4), features["prev_tool_duration_log"])
+
+    def test_trajectory_features_follow_the_steps(self):
+        target = Router(settings("always-cheap"))
+
+        def features(number, messages):
+            step(target, number, request=request(messages=messages))
+            return target.decision_for(session_id="s1", api_request_id=f"t1:api:{number}")["features"]
+
+        first = features(1, 2)
+        self.assertEqual((None, 0, 0.0, 0), (first["prev_choice"], first["short_exec_streak"],
+                                             first["ctx_growth"], first["cum_tool_failures"]))
+        for number in (2, 3, 4):  # each step ran one short, clean code call
+            target.tool_result(session_id="s1", tool_name="execute_code", status="ok", duration_ms=1200)
+            got = features(number, number + 1)
+            self.assertEqual(number - 1, got["short_exec_streak"])
+            self.assertGreater(got["ctx_growth"], 0)          # the conversation grew since step 1
+            self.assertEqual(CHEAP, got["prev_choice"])
+        target.tool_result(session_id="s1", tool_name="execute_code", status="ok", duration_ms=1000)
+        target.tool_result(session_id="s1", tool_name="execute_code", status="ok", duration_ms=95000)
+        got = features(5, 6)
+        self.assertEqual(0, got["short_exec_streak"])        # a long call breaks the streak
+        self.assertEqual(round(__import__("math").log1p(95), 4), got["prev_tool_duration_log"])
+        self.assertEqual(round(__import__("math").log1p(1.2 * 3 + 96), 4), got["tool_time_cum"])
+        target.tool_result(session_id="s1", tool_name="read_file", status="ok", duration_ms=10)
+        self.assertEqual(0, features(6, 7)["short_exec_streak"])  # no code call: no streak
+        for _ in range(3):
+            target.tool_result(session_id="s1", tool_name="execute_code", status="error", duration_ms=500)
+        got = features(7, 8)
+        self.assertEqual((2, 0, 3), (got["prev_tool_errors"], got["short_exec_streak"], got["cum_tool_failures"]))
+        # A new turn resets the turn-level features; the request size is measured from its first step.
+        target.tool_result(session_id="s1", tool_name="execute_code", status="ok", duration_ms=100)
+        step(target, 1, turn="t2", request=request(messages=1))
+        got = target.decision_for(session_id="s1", api_request_id="t2:api:1")["features"]
+        self.assertEqual((1, 0, 0.0, 0), (got["step"], got["short_exec_streak"], got["ctx_growth"],
+                                          got["cum_tool_failures"]))
+        self.assertEqual(0.0, got["tool_time_cum"])
+
+    def test_bad_durations_count_as_zero(self):
+        target = Router(settings("always-cheap"))
+        step(target, 1)
+        for value in (None, "x", float("nan"), -5):
+            target.tool_result(session_id="s1", tool_name="execute_code", status="ok", duration_ms=value)
+        step(target, 2)
+        got = target.decision_for(session_id="s1", api_request_id="t1:api:2")["features"]
+        self.assertEqual((0.0, 0.0, 1), (got["prev_tool_duration_log"], got["tool_time_cum"],
+                                         got["short_exec_streak"]))
 
     def test_blocked_tool_counts_as_an_error(self):
         target = Router(settings("rule"))
@@ -157,6 +229,132 @@ class PolicyTests(unittest.TestCase):
         step(target, 1, session="b")
         self.assertEqual("small-1", step(target, 2, session="b")["request"]["model"])
         self.assertIsNone(step(target, 2, session="a"))
+
+
+class FakeAgent:
+    """The parts of a Hermes agent the provider switch reads and changes."""
+
+    def __init__(self):
+        self.session_id, self.platform, self._current_turn_id = "s1", "api_server", "t1"
+        self._primary_runtime = {"provider": "openai-codex", "model": "big-1"}
+        self.provider, self.model, self._fallback_activated = "openai-codex", "big-1", False
+
+
+class FakeSwitcher:
+    def __init__(self, *, fail_cheap=False, keep_cheap=False):
+        self.calls, self.fail_cheap, self.keep_cheap = [], fail_cheap, keep_cheap
+
+    def on_cheap(self, agent):
+        return agent._fallback_activated
+
+    def to_cheap(self, agent):
+        self.calls.append("cheap")
+        agent.provider, agent._fallback_activated = "deepseek", True
+        if self.fail_cheap:
+            raise RuntimeError("no client")
+        agent.model = "small-1"
+
+    def to_strong(self, agent):
+        self.calls.append("strong")
+        if self.keep_cheap:
+            return False
+        agent.provider, agent.model, agent._fallback_activated = "openai-codex", "big-1", False
+        return True
+
+    @staticmethod
+    def primary(agent):
+        return agent._primary_runtime["provider"], agent._primary_runtime["model"]
+
+
+def switching(policy="rule", **extra):
+    return settings(policy, **{"ASSISTANT_ROUTER_CHEAP_PROVIDER": "DeepSeek", **extra})
+
+
+class ProviderSwitchTests(unittest.TestCase):
+    def test_setting_is_parsed_and_described(self):
+        parsed = switching()
+        self.assertEqual("deepseek", parsed.cheap_provider)
+        self.assertEqual("deepseek", parsed.describe()["cheap_provider"])
+        with self.assertRaises(SettingsError):
+            switching(ASSISTANT_ROUTER_CHEAP_PROVIDER="bad provider!")
+
+    def test_steps_move_the_agent_and_the_middleware_leaves_requests_alone(self):
+        agent, switcher = FakeAgent(), FakeSwitcher()
+        target = Router(switching("rule"), switcher=switcher)
+        messages = [{"role": "user", "content": "private text"}]
+        target.before_step(agent, messages, 1)                      # first step: strong, nothing to do
+        self.assertEqual([], switcher.calls)
+        self.assertIsNone(step(target, 1))
+        target.before_step(agent, messages, 2)                      # routine step: cheap provider
+        self.assertEqual(("deepseek", "small-1"), (agent.provider, agent.model))
+        self.assertIsNone(step(target, 2, request=request("small-1"), provider="deepseek"))
+        record = target.decision_for(session_id="s1", api_request_id="t1:api:2")
+        self.assertEqual(("cheap", "small-1", "big-1"), (record["choice"], record["model"], record["default_model"]))
+        target.before_step(agent, messages, 3)                      # still cheap: no second bind
+        target.tool_result(session_id="s1", tool_name="execute_code", status="error")
+        target.before_step(agent, messages, 4)                      # after a tool error: back to primary
+        self.assertEqual(["cheap", "strong"], switcher.calls)
+        self.assertEqual(("openai-codex", "big-1"), (agent.provider, agent.model))
+        self.assertEqual("strong", target.decision_for(session_id="s1", api_request_id="t1:api:4")["choice"])
+
+    def test_a_reissued_iteration_keeps_its_decision(self):
+        agent, switcher = FakeAgent(), FakeSwitcher()
+        target = Router(switching("always-cheap"), switcher=switcher)
+        target.before_step(agent, [], 1)
+        first = target.decision_for(session_id="s1", api_request_id="t1:api:1")
+        target.before_step(agent, [], 1)
+        self.assertIs(first, target.decision_for(session_id="s1", api_request_id="t1:api:1"))
+        self.assertEqual(["cheap"], switcher.calls)
+
+    def test_a_failed_switch_falls_back_to_the_primary(self):
+        agent, switcher = FakeAgent(), FakeSwitcher(fail_cheap=True)
+        target = Router(switching("always-cheap"), switcher=switcher)
+        with self.assertLogs("assistant_core.router", "WARNING"):
+            target.before_step(agent, [], 1)
+        self.assertEqual(["cheap", "strong"], switcher.calls)
+        self.assertEqual(("openai-codex", "big-1", False), (agent.provider, agent.model, agent._fallback_activated))
+
+    def test_a_primary_in_cooldown_is_recorded(self):
+        agent, switcher = FakeAgent(), FakeSwitcher(keep_cheap=True)
+        target = Router(switching("random", ASSISTANT_ROUTER_STRONG_SHARE="0"), switcher=switcher)
+        target.before_step(agent, [], 1)
+        target.settings = switching("always-strong")
+        target.policy = router.POLICIES["always-strong"]
+        target.before_step(agent, [], 2)
+        record = target.decision_for(session_id="s1", api_request_id="t1:api:2")
+        self.assertEqual(("strong", "small-1"), (record["choice"], record["model"]))
+        self.assertIn("stayed cheap", record["reason"])
+
+    def test_scope_limits_apply_before_switching(self):
+        agent, switcher = FakeAgent(), FakeSwitcher()
+        Router(switching("always-cheap", ASSISTANT_ROUTER_PLATFORMS="telegram"), switcher=switcher).before_step(agent, [], 1)
+        Router(switching("always-cheap", ASSISTANT_ROUTER_PROVIDER="openrouter"), switcher=switcher).before_step(agent, [], 1)
+        self.assertEqual([], switcher.calls)
+
+    def test_install_wraps_the_phase_once_and_replaces_the_hook(self):
+        import sys
+        import types
+        from assistant_core import provider_switch
+
+        seen = []
+
+        def prepare_iteration(agent, *, messages, api_call_count, user_message=None):
+            seen.append(("phase", api_call_count))
+            return "verdict"
+
+        loop = types.ModuleType("agent.conversation_loop")
+        loop.prepare_iteration = prepare_iteration
+        package = types.ModuleType("agent")
+        package.conversation_loop = loop
+        with unittest.mock.patch.dict(sys.modules, {"agent": package, "agent.conversation_loop": loop}):
+            provider_switch.install(lambda agent, messages, count: seen.append(("old", count)))
+            wrapped = loop.prepare_iteration
+            provider_switch.install(lambda agent, messages, count: seen.append(("hook", count)))
+            self.assertIs(wrapped, loop.prepare_iteration)
+            import inspect
+            self.assertIn("api_call_count", inspect.signature(loop.prepare_iteration).parameters)
+            self.assertEqual("verdict", loop.prepare_iteration(object(), messages=[], api_call_count=4))
+        self.assertEqual([("phase", 4), ("hook", 4)], seen)
 
 
 class MiddlewareTests(unittest.TestCase):

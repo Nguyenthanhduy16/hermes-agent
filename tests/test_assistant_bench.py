@@ -378,6 +378,10 @@ class RunnerTests(unittest.TestCase):
             result = bench.execute_task(client, self.target, "20260101-000000-abcdef", task, 1)
         self.assertEqual(("timeout", False), (result["error"], result["passed"]))
         self.assertEqual(1, len(self.fake.requests))
+        # No response header arrived, yet the step telemetry can still be joined to this task.
+        sent = self.fake.requests[0]["body"]["messages"]
+        self.assertEqual(bench.expected_session_id(sent[0]["content"], sent[1]["content"]), result["session_id"])
+        self.assertRegex(result["session_id"], r"^api-[0-9a-f]{16}$")
 
     def test_unreachable_target_is_a_connection_error(self):
         target = bench.resolve_target({"HERMES_BENCH_API_URL": "http://127.0.0.1:9/v1", "API_SERVER_KEY": "k"})

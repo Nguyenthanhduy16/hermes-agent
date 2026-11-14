@@ -70,7 +70,9 @@ from .telemetry import config_snapshot
 
 BUNDLED_DIR = Path(__file__).resolve().parents[2] / "config" / "bench"
 LEVELS = ("L1", "L2", "L3")
-CHECK_TYPES = ("contains", "not_contains", "regex", "max_latency_s", "min_length", "json_valid", "answers")
+CHECK_TYPES = ("contains", "not_contains", "regex", "max_latency_s", "min_length", "json_valid", "answers", "external")
+# ``external``: scored after the run by a benchmark's own evaluator (value names it); until then it fails.
+EXTERNAL_SCORERS = ("dacode",)
 STATUSES = ("queued", "running", "done", "cancelled", "failed")
 ACTIVE = ("queued", "running")
 SUITE_NAME = re.compile(r"[a-z0-9][a-z0-9-]{0,47}")
@@ -189,6 +191,9 @@ def _check(raw, where) -> Check:
             raise BenchError(f"{where}: answers needs a mapping of 1 to {MAX_ANSWERS} names (letters, digits, '_') "
                              f"to quoted text of at most {MAX_ANSWER_CHARS} characters without ']'.")
         value = tuple(sorted(value.items()))
+    elif kind == "external":
+        if value not in EXTERNAL_SCORERS:
+            raise BenchError(f"{where}: external needs a scorer name: {', '.join(EXTERNAL_SCORERS)}.")
     return Check(kind, value, ignore_case)
 
 
@@ -563,6 +568,22 @@ class BenchStore:
                 self.db.execute("ROLLBACK")
                 raise
 
+    def set_external_scores(self, run_id: str, scored: list):
+        """Replace the checks of scored results: [(task_id, attempt, passed, checks)]; recount the run."""
+        with self._lock:
+            self.db.execute("BEGIN IMMEDIATE")
+            try:
+                for task_id, attempt, passed, checks in scored:
+                    self.db.execute("UPDATE bench_results SET passed=?, checks_json=? WHERE run_id=? AND task_id=? "
+                                    "AND attempt=?", (int(bool(passed)), json.dumps(checks, ensure_ascii=False),
+                                                       run_id, task_id, attempt))
+                self.db.execute("UPDATE bench_runs SET passed=(SELECT COUNT(*) FROM bench_results "
+                                "WHERE run_id=? AND passed=1) WHERE id=?", (run_id, run_id))
+                self.db.execute("COMMIT")
+            except BaseException:
+                self.db.execute("ROLLBACK")
+                raise
+
     def finish(self, run_id: str, status: str, reason: str | None = None):
         if status not in ("done", "cancelled", "failed"):
             raise ValueError(status)
@@ -665,6 +686,10 @@ def evaluate_checks(checks, text: str, latency_s: float | None) -> list:
             out.append(dict(type=kind, passed=matched == len(value), matched=matched, total=len(value),
                             detail=f"{matched}/{len(value)} answers match"))
             continue
+        elif kind == "external":
+            out.append(dict(type=kind, scorer=value, passed=False, pending=True,
+                            detail=f"scored after the run by {value}"))
+            continue
         else:  # json_valid
             try:
                 json.loads(_strip_fences(text))
@@ -685,17 +710,26 @@ def _int_or_none(value):
     return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None
 
 
+def expected_session_id(system_prompt: str, first_user_message: str) -> str:
+    """The session id the Hermes chat-completions endpoint derives for this conversation
+    (``_derive_chat_session_id`` in gateway/platforms/api_server.py, no profile prefix).
+    Recorded before the request so a task that times out, and so never gets the
+    X-Hermes-Session-Id response header, can still be joined to its telemetry steps."""
+    digest = hashlib.sha256(f"{system_prompt or ''}\n{first_user_message}".encode("utf-8")).hexdigest()[:16]
+    return f"api-{digest}"
+
+
 def execute_task(client, target: Target, run_id: str, task: Task, attempt: int, *, store_response=True) -> dict:
     """Send one task as a fresh conversation. Exactly one request; failures are recorded, not retried."""
     # The nonce gives each task its own Hermes session: the chat-completions
     # endpoint derives the session from the system prompt and first message.
-    messages = [{"role": "system", "content": f"Benchmark run {run_id}, task {task.id}, attempt {attempt}."},
-                {"role": "user", "content": task.prompt}]
+    system = f"Benchmark run {run_id}, task {task.id}, attempt {attempt}."
+    messages = [{"role": "system", "content": system}, {"role": "user", "content": task.prompt}]
     headers = {"Authorization": "Bearer " + target.key, "User-Agent": f"hermes-console-bench/1 run={run_id}"}
     result = dict(task_id=task.id, attempt=attempt, level=task.level, category=task.category, passed=False,
                   checks=[], latency_s=None, input_tokens=None, output_tokens=None, total_tokens=None,
-                  response_model=None, session_id=None, error=None, status_code=None, response_length=None,
-                  response_text=None)
+                  response_model=None, session_id=expected_session_id(system, task.prompt), error=None,
+                  status_code=None, response_length=None, response_text=None)
     started = time.monotonic()
     import httpx
     try:
@@ -890,6 +924,25 @@ def answer_accuracy(results: list) -> dict | None:
                 by_subquestion=sum(matched for matched, _ in scored) / sum(total for _, total in scored))
 
 
+def external_score(results: list) -> float | None:
+    """Mean score (0..1) an external evaluator gave; unscored results count as 0, none scored = None."""
+    scores, any_scored = [], False
+    for r in results:
+        checks = r.get("checks")
+        if checks is None:
+            try:
+                checks = json.loads(r.get("checks_json") or "[]")
+            except ValueError:
+                checks = []
+        external = [c for c in checks if isinstance(c, dict) and c.get("type") == "external"]
+        if not external:
+            continue
+        score = external[0].get("score")
+        any_scored = any_scored or isinstance(score, (int, float))
+        scores.append(float(score) if isinstance(score, (int, float)) else 0.0)
+    return (sum(scores) / len(scores)) if any_scored and scores else None
+
+
 def summarize(run: dict, results: list, *, sessions: dict | None = None, pricing: dict | None = None) -> dict:
     """Pass rates (overall and per level), latency, tokens, API calls and cost per task for one run."""
     sessions, pricing = sessions or {}, pricing or {}
@@ -932,10 +985,10 @@ def summarize(run: dict, results: list, *, sessions: dict | None = None, pricing
         # the model changed from one step to the next within a task.
         cheap_step_share=(sum(r["cheap"] for r in routed) / sum(r["steps"] for r in routed)) if routed else None,
         switches_per_task=(sum(r["switches"] for r in routed) / len(routed)) if routed else None,
-        answers=answer_accuracy(results))
+        answers=answer_accuracy(results), external_score=external_score(results))
 
 
-COMPARE_ROWS = (("pass_rate", "Pass rate", "percent"), ("L1", "Pass rate L1", "percent"),
+COMPARE_ROWS = (("pass_rate", "Pass rate", "percent"), ("external_score", "Score (external evaluator)", "percent"), ("L1", "Pass rate L1", "percent"),
                 ("L2", "Pass rate L2", "percent"), ("L3", "Pass rate L3", "percent"),
                 ("median_latency_s", "Median latency", "seconds"), ("p95_latency_s", "p95 latency", "seconds"),
                 ("tokens_per_task", "Tokens per task", "number"), ("api_calls_per_task", "API calls per task", "number"),
@@ -1026,6 +1079,9 @@ def main(argv=None, environ=None, out=None) -> int:
     cmp.add_argument("runs", nargs="+")
     stop = commands.add_parser("cancel", help="ask a running run to stop")
     stop.add_argument("run")
+    export_cmd = commands.add_parser("export", help="write tasks.csv and steps.csv for runs (analysis, router data)")
+    export_cmd.add_argument("runs", nargs="+")
+    export_cmd.add_argument("--out", required=True, help="output directory")
     args = parser.parse_args(argv)
     home, data_dir = _paths(args, environ)
     write = lambda text="": print(text, file=out)
@@ -1091,6 +1147,18 @@ def _command(args, store, home, data_dir, environ, write) -> int:
             raise BenchError("That run is not active.")
         write("Cancellation requested; in-flight requests finish first.")
         return 0
+    if args.command == "export":
+        from . import bench_export
+        try:
+            suites, _ = load_suites(home)
+            prompts = {name: {task.id: task.prompt for task in suite.tasks} for name, suite in suites.items()}
+            done = bench_export.export(store, data_dir, args.runs, Path(args.out), pricing, prompts)
+        except ValueError as error:
+            raise BenchError(str(error)) from None
+        write(f"{done['tasks']} task rows, {done['steps']} step rows -> {', '.join(done['files'])}")
+        for item in done["unjoined"]:
+            write(f"! no telemetry steps for {_clean(item)}")
+        return 0
     ids = [args.run] if args.command == "show" else args.runs
     if args.command == "compare" and not 2 <= len(ids) <= 4:
         raise BenchError("Compare 2 to 4 runs.")
@@ -1119,6 +1187,8 @@ def _command(args, store, home, data_dir, environ, write) -> int:
             write(f"Answers ({answers['questions']} scored replies): by question {answers['by_question']:.1%}"
                   f"  proportional by sub-question {answers['proportional']:.1%}"
                   f"  by sub-question {answers['by_subquestion']:.1%}")
+        if summary.get("external_score") is not None:
+            write(f"Score from the external evaluator (mean over results, 0-1): {summary['external_score']:.3f}")
         return 0
     matrix = compare([(run, _summary_for(store, run, data_dir, pricing)[1]) for run in runs])
     write(_table(["Metric", *[_clean(c["label"] or c["id"]) for c in matrix["columns"]]],
