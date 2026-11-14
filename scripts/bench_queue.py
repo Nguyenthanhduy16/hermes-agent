@@ -47,7 +47,7 @@ ROOT = Path(__file__).resolve().parent.parent
 PY = str(ROOT / ".runtime" / "venv" / "bin" / "python")
 GATEWAY = str(ROOT / "scripts" / "bench-gateway.sh")
 CURRENT = []  # the child process running now, so SIGTERM can stop it too
-RETRYABLE = ("connection_error", "provider_unavailable")  # same as assistant_core.bench.RETRYABLE_ERRORS
+RETRYABLE = ("connection_error", "provider_unavailable", "suspended")  # same as assistant_core.bench.RETRYABLE_ERRORS
 RETRY_WAIT_S = int(os.environ.get("BENCH_QUEUE_RETRY_WAIT_S") or 300)
 RETRY_PASSES = 6
 

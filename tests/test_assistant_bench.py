@@ -9,6 +9,7 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest.mock import patch
 
 from assistant_core import bench, reporting
 from assistant_core.hermes_plugin import AssistantCore
@@ -490,6 +491,17 @@ class RunnerTests(unittest.TestCase):
         final = bench.BenchRunner(self.store, run["id"], suite, self.target).run()
         self.assertEqual(("done", 5, 5, 0), (final["status"], final["completed"], final["passed"], final["errors"]))
         self.assertEqual(bench.PROVIDER_DOWN_STREAK + 5, len(self.fake.requests))
+
+    def test_a_request_failing_across_a_machine_sleep_is_recorded_as_suspended(self):
+        suite = bench.parse_suite(SUITE)
+        import httpx
+        fail = suite.tasks[1]  # the fake answers 500
+        wall = iter([1000.0, 1000.0 + 3600])  # an hour of wall clock, a moment of monotonic clock
+        with httpx.Client(trust_env=False) as client, patch.object(bench, "_wall", side_effect=lambda: next(wall)):
+            result = bench.execute_task(client, self.target, "r", fail, 1)
+        self.assertEqual("suspended", result["error"])
+        with httpx.Client(trust_env=False) as client:
+            self.assertEqual("http_500", bench.execute_task(client, self.target, "r", fail, 1)["error"])
 
     def test_done_run_with_provider_failures_can_be_resumed_for_those_tasks_only(self):
         run = bench.prepare_run(self.store, self.suite, self.target, label="O2", home=self.home)

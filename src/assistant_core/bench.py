@@ -50,8 +50,8 @@ A stopped run (``cancel``, Ctrl-C, or a runner that died: marked failed on the n
 finished with ``resume``: it keeps every recorded result, sends only the tasks without one, and
 refuses if the suite or ``config.yaml`` changed. Results whose error is listed in
 ``--retry-errors`` are dropped and sent again (default: ``connection_error`` and
-``provider_unavailable``, Hermes's notice that the model provider did not answer any retry; neither
-says anything about the agent). A done run that has such results can be resumed the same way.
+``provider_unavailable``, Hermes's notice that the model provider did not answer any retry, and
+``suspended``, a request that failed across a machine sleep; none says anything about the agent). A done run that has such results can be resumed the same way.
 Three ``provider_unavailable`` tasks in a row stop the run as failed so it can be resumed later.
 """
 
@@ -109,7 +109,11 @@ HEARTBEAT_S = 20
 # provider outage). That is an infrastructure failure, not the agent's answer: record it as an error.
 PROVIDER_DOWN = re.compile(r"didn't respond in time on any of \d+ attempts|Hermes can't reach the model provider")
 # Result errors that say nothing about the agent and are run again on resume by default.
-RETRYABLE_ERRORS = ("connection_error", "provider_unavailable")
+RETRYABLE_ERRORS = ("connection_error", "provider_unavailable", "suspended")
+# A failed request during which the wall clock ran this much ahead of the monotonic clock spanned a
+# machine sleep (lid closed): the error is the sleep's, recorded as ``suspended``.
+SUSPEND_GAP_S = 30
+_wall = time.time  # patched in tests
 # This many provider_unavailable results in a row stop the run (failed, resumable) instead of
 # burning through the rest of the suite while the provider is down.
 PROVIDER_DOWN_STREAK = 3
@@ -782,6 +786,14 @@ def expected_session_id(system_prompt: str, first_user_message: str) -> str:
 
 def execute_task(client, target: Target, run_id: str, task: Task, attempt: int, *, store_response=True) -> dict:
     """Send one task as a fresh conversation. Exactly one request; failures are recorded, not retried."""
+    started, started_wall = time.monotonic(), _wall()
+    result = _send_task(client, target, run_id, task, attempt, store_response=store_response)
+    if result["error"] and (_wall() - started_wall) - (time.monotonic() - started) > SUSPEND_GAP_S:
+        result["error"] = "suspended"
+    return result
+
+
+def _send_task(client, target: Target, run_id: str, task: Task, attempt: int, *, store_response=True) -> dict:
     # The nonce gives each task its own Hermes session: the chat-completions
     # endpoint derives the session from the system prompt and first message.
     system = f"Benchmark run {run_id}, task {task.id}, attempt {attempt}."
