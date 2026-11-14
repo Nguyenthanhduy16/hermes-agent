@@ -1,0 +1,13 @@
+# Bước 3: thu dữ liệu trên tập phát triển DA-Code (100 câu), env-v1, song song 1.
+# Chạy / chạy tiếp:  .runtime/venv/bin/python scripts/bench_queue.py run config/dacode/dev-env1.plan
+# Trạng thái:        .runtime/venv/bin/python scripts/bench_queue.py status config/dacode/dev-env1.plan
+# Dừng:              .runtime/venv/bin/python scripts/bench_queue.py stop [--now]
+#
+# Bắt buộc trước (S, C, R50, L), sau đó "nên có" (R25, R75). Seed random khác các run cũ (11, 21, 22).
+# nhãn       suite        chính sách     biến cho gateway
+dev-S        dacode-dev   always-strong
+dev-C        dacode-dev   always-cheap
+dev-R50      dacode-dev   random         ASSISTANT_ROUTER_STRONG_SHARE=0.5 ASSISTANT_ROUTER_SEED=31
+dev-L        dacode-dev   rule
+dev-R25      dacode-dev   random         ASSISTANT_ROUTER_STRONG_SHARE=0.25 ASSISTANT_ROUTER_SEED=32
+dev-R75      dacode-dev   random         ASSISTANT_ROUTER_STRONG_SHARE=0.75 ASSISTANT_ROUTER_SEED=33
