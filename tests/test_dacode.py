@@ -153,6 +153,30 @@ class DacodeTests(unittest.TestCase):
             dacode.score(run["id"], home=self.home, data_dir=self.home / "assistant-core", data=self.data,
                          work=self.dir / "work", image=dacode.DEFAULT_IMAGE)
 
+    def test_reset_for_resume_keeps_finished_folders(self):
+        dacode.build(self.data, self.home / "benchmarks", container_dir="/dacode", timeout_s=900, pilot=0, seed=7,
+                     force=False)
+        suite = bench.load_suite_file(self.home / "benchmarks" / "dacode-sample.yaml", source="home")
+        data_dir = self.home / "assistant-core"
+        store = bench.BenchStore(data_dir / "bench.sqlite3")
+        run = store.create_run(suite, label="t", repeats=1, concurrency=1)
+        store.add_result(run["id"], dict(task_id="dc-data-sa-001", attempt=1, passed=False, checks=[]))
+        store.close()
+        work = self.dir / "work"
+        dacode.main(["--home", str(self.home), "--data", str(self.data), "--work", str(work),
+                     "reset", "--suite", "dacode-sample"])
+        for task_id in ("data-sa-001", "data-sa-002"):
+            (work / task_id / "result.csv").write_text("answer\n", encoding="utf-8")
+        with patch.dict("os.environ", {"ASSISTANT_DATA_DIR": str(data_dir)}):
+            self.assertEqual(0, dacode.main(["--home", str(self.home), "--data", str(self.data), "--work", str(work),
+                                             "reset", "--suite", "dacode-sample", "--run", run["id"]]))
+        self.assertEqual("answer\n", (work / "data-sa-001" / "result.csv").read_text(encoding="utf-8"))  # finished
+        self.assertEqual("template\n", (work / "data-sa-002" / "result.csv").read_text(encoding="utf-8"))  # half-done
+        ids = [t.id.removeprefix("dc-") for t in suite.tasks]
+        self.assertEqual(ids[1:], dacode.pending_ids(data_dir, run["id"], ids))
+        with self.assertRaises(dacode.DacodeError):
+            dacode.pending_ids(data_dir, "nope", ids)
+
 
 class ExternalCheckTests(unittest.TestCase):
     def test_external_checks_parse_and_stay_pending(self):

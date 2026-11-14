@@ -114,12 +114,21 @@ PYTHONPATH=src .runtime/venv/bin/python -m assistant_core.bench list
 PYTHONPATH=src .runtime/venv/bin/python -m assistant_core.bench show <RUN_ID>
 PYTHONPATH=src .runtime/venv/bin/python -m assistant_core.bench compare <RUN_A> <RUN_B> [<RUN_C> <RUN_D>]
 PYTHONPATH=src .runtime/venv/bin/python -m assistant_core.bench cancel <RUN_ID>
+PYTHONPATH=src .runtime/venv/bin/python -m assistant_core.bench resume <RUN_ID> [--retry-errors connection_error] [--force]
 ```
 
 Tùy chọn chung: `--home` (mặc định `HERMES_HOME` hoặc `~/.hermes`),
 `--data-dir` (mặc định `ASSISTANT_DATA_DIR` hoặc `<home>/assistant-core`).
 `run --api-url` ghi đè URL (khóa vẫn lấy từ môi trường); `--no-responses` không
 lưu đoạn trích câu trả lời. Ctrl+C khi đang chạy = hủy run.
+
+`resume` chạy tiếp một run đã dừng: run bị hủy, bị Ctrl+C, hoặc có tiến trình
+chạy đã chết (lần đọc sau tự đánh dấu run đó là `failed`). Các kết quả đã có
+được giữ lại, chỉ những task chưa có kết quả mới được gửi đi. Lệnh từ chối
+chạy nếu suite hoặc `config.yaml` đã thay đổi; `--force` bỏ qua kiểm tra
+`config.yaml`. Kết quả có lỗi nằm trong danh sách `--retry-errors` (mặc định
+`connection_error`, ví dụ khi gateway bị tắt) sẽ bị xóa và gửi lại. Đây là
+trường hợp duy nhất bench gửi lại một task, và chỉ khi được yêu cầu.
 
 ### Mỗi run lưu gì
 
@@ -368,6 +377,54 @@ export HERMES_BENCH_API_URL=http://127.0.0.1:8650/v1
 export API_SERVER_KEY=$(grep '^API_SERVER_KEY=' $HERMES_HOME/.env | cut -d= -f2-)
 PYTHONPATH=src .runtime/venv/bin/python -m assistant_core.bench run --suite dabench-pilot --label pilot-S --repeats 2
 ```
+
+### Hàng đợi chạy được, dừng được, chạy tiếp được
+
+Một đợt chạy dài (tập phát triển, tập kiểm tra) đi qua `scripts/bench_queue.py`
+và một file kế hoạch, mỗi dòng là một run:
+
+```text
+# nhãn       suite        chính sách     [BIẾN=giá trị ...] cho gateway
+dev-S        dacode-dev   always-strong
+dev-C        dacode-dev   always-cheap
+dev-R50      dacode-dev   random         ASSISTANT_ROUTER_STRONG_SHARE=0.5
+```
+
+```bash
+.runtime/venv/bin/python scripts/bench_queue.py run plans/dev.plan     # chạy, hoặc chạy tiếp
+.runtime/venv/bin/python scripts/bench_queue.py status plans/dev.plan  # nhãn nào xong, điểm
+.runtime/venv/bin/python scripts/bench_queue.py stop                   # dừng nhẹ
+.runtime/venv/bin/python scripts/bench_queue.py stop --now             # dừng ngay
+```
+
+Với mỗi nhãn trong kế hoạch, `run` xử lý theo trạng thái:
+
+- **Chưa có run:** khởi động gateway với chính sách của nhãn → `dacode reset` →
+  `bench run` → `dacode score`.
+- **Đã dừng (cancelled/failed):** `dacode reset --run` chỉ đặt lại thư mục của
+  các task chưa có kết quả → `bench resume` → chấm điểm.
+- **Xong nhưng chưa chấm:** chấm điểm.
+- **Xong và đã chấm:** bỏ qua.
+
+Vì vậy cứ chạy lại đúng lệnh đó là tiếp tục từ chỗ đã dừng, kể cả sau khi tắt
+máy. Hai cách dừng:
+
+- `stop`: không bắt đầu task mới; task đang chạy được làm xong và giữ lại.
+- `stop --now`: dừng ngay; task đang chạy bị bỏ và sẽ chạy lại từ đầu ở lần
+  `run` sau.
+
+Queue không bắt đầu nhãn sau khi nhãn trước còn dở, vì các run DA-Code dùng
+chung thư mục làm việc. Không chạy tay một run khác trên cùng profile khi đang
+có nhãn dở. Run mới bắt đầu dùng `--concurrency` (mặc định `BENCH_CONCURRENCY`
+hoặc 1); run được chạy tiếp giữ concurrency cũ. `BENCH_PROFILE` chọn profile
+khác (cổng lấy từ `.env` của profile), `DACODE_WORK_DIR` chọn thư mục làm việc
+khác. Log của từng nhãn nằm ở `<profile>/bench-queue/logs/`. Nên chạy queue
+trong một pane herdr hoặc tmux để nó không chết khi đóng terminal.
+
+Mỗi lần chạy tiếp, gateway khởi động lại, nên telemetry có thêm một bản ghi
+khởi động mới cho cùng nhãn. Dữ liệu từng bước vẫn nối với task qua session id,
+còn thời gian tổng của run (`finished_at − started_at`) có tính cả lúc nghỉ.
+Khi phân tích, dùng độ trễ của từng task.
 
 Sao lưu `state.db` của profile sau mỗi đợt chạy: đây là nơi duy nhất giữ nội
 dung hội thoại, cần khi muốn tính thêm đặc trưng cho bộ định tuyến mà không

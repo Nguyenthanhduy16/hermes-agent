@@ -44,6 +44,12 @@ CLI::
     python -m assistant_core.bench show RUN
     python -m assistant_core.bench compare RUN RUN [RUN RUN]
     python -m assistant_core.bench cancel RUN
+    python -m assistant_core.bench resume RUN [--retry-errors connection_error] [--force]
+
+A stopped run (``cancel``, Ctrl-C, or a runner that died: marked failed on the next load) can be
+finished with ``resume``: it keeps every recorded result, sends only the tasks without one, and
+refuses if the suite or ``config.yaml`` changed. Results whose error is listed in
+``--retry-errors`` are dropped and sent again; that is the only re-send, and only on request.
 """
 
 import argparse
@@ -540,8 +546,8 @@ class BenchStore:
     def mark_running(self, run_id: str):
         now = time.time()
         with self._lock:
-            self.db.execute("UPDATE bench_runs SET status='running', started_at=?, heartbeat_at=?, owner=? "
-                            "WHERE id=? AND status='queued'", (now, now, _owner(), run_id))
+            self.db.execute("UPDATE bench_runs SET status='running', started_at=COALESCE(started_at, ?), "
+                            "heartbeat_at=?, owner=? WHERE id=? AND status='queued'", (now, now, _owner(), run_id))
 
     def heartbeat(self, run_id: str):
         with self._lock:
@@ -591,6 +597,44 @@ class BenchStore:
             self.db.execute("UPDATE bench_runs SET status=?, reason=?, finished_at=? "
                             "WHERE id=? AND status IN ('queued', 'running')",
                             (status, (reason or None) and str(reason)[:300], time.time(), run_id))
+
+    def reopen(self, run_id: str, *, retry_errors=()) -> dict:
+        """Queue a cancelled or failed run again so a runner finishes it (``resume``).
+
+        Results already recorded are kept and their tasks are not sent again, except results whose
+        error is in ``retry_errors`` (for example ``connection_error`` when the gateway was down):
+        those are deleted and their tasks run again. Counters are recounted from the kept results.
+        """
+        retry_errors = tuple(retry_errors)
+        now = time.time()
+        with self._lock:
+            self.recover_stale(now)
+            self.db.execute("BEGIN IMMEDIATE")
+            try:
+                row = self.db.execute("SELECT status FROM bench_runs WHERE id=?", (run_id,)).fetchone()
+                if row is None:
+                    raise BenchError("No such run.")
+                if row[0] not in ("cancelled", "failed"):
+                    raise BenchError(f"Only a cancelled or failed run can be resumed (this one is {row[0]}).")
+                if self.db.execute("SELECT 1 FROM bench_runs WHERE status IN ('queued', 'running')").fetchone():
+                    raise BenchError("Another benchmark run is in progress. Wait for it or cancel it first.")
+                if retry_errors:
+                    self.db.execute(f"DELETE FROM bench_results WHERE run_id=? AND error IN "
+                                    f"({', '.join('?' * len(retry_errors))})", (run_id, *retry_errors))
+                self.db.execute(
+                    "UPDATE bench_runs SET status='queued', reason=NULL, finished_at=NULL, cancel_requested=0, "
+                    "heartbeat_at=?, owner=?, "
+                    "completed=(SELECT COUNT(*) FROM bench_results WHERE run_id=?), "
+                    "passed=(SELECT COUNT(*) FROM bench_results WHERE run_id=? AND passed=1), "
+                    "errors=(SELECT COUNT(*) FROM bench_results WHERE run_id=? AND error IS NOT NULL AND error != ''), "
+                    "input_tokens=(SELECT COALESCE(SUM(input_tokens), 0) FROM bench_results WHERE run_id=?), "
+                    "output_tokens=(SELECT COALESCE(SUM(output_tokens), 0) FROM bench_results WHERE run_id=?) "
+                    "WHERE id=?", (now, _owner(), *([run_id] * 6)))
+                self.db.execute("COMMIT")
+            except BaseException:
+                self.db.execute("ROLLBACK")
+                raise
+        return self.get_run(run_id)
 
     def request_cancel(self, run_id: str) -> bool:
         with self._lock:
@@ -819,7 +863,9 @@ class BenchRunner:
 
     def _execute(self, run) -> str:
         import httpx
-        jobs = [(task, attempt) for attempt in range(1, run["repeats"] + 1) for task in self.suite.tasks]
+        done = {(r["task_id"], r["attempt"]) for r in self.store.results(self.run_id)}  # resumed runs
+        jobs = [(task, attempt) for attempt in range(1, run["repeats"] + 1) for task in self.suite.tasks
+                if (task.id, attempt) not in done]
         limits = httpx.Limits(max_connections=run["concurrency"], max_keepalive_connections=run["concurrency"])
         with httpx.Client(timeout=httpx.Timeout(120.0, connect=10.0), follow_redirects=False,
                           trust_env=False, limits=limits, transport=self.transport) as client, \
@@ -858,6 +904,21 @@ def prepare_run(store: BenchStore, suite: Suite, target: Target, *, label="", re
     return store.create_run(suite, label=label, repeats=repeats, concurrency=concurrency, target_host=target.host,
                             model=target.model, config_hash=config_hash,
                             gateway_hash=gateway_config_hash(telemetry_db), snapshot=snapshot)
+
+
+def resume_run(store: BenchStore, run_id: str, suite: Suite, *, retry_errors=(), home: Path | None = None,
+               force: bool = False) -> dict:
+    """Reopen a stopped run of ``suite``; refuses when the suite or config.yaml changed (unless ``force``)."""
+    run = store.get_run(run_id)
+    if run is None:
+        raise BenchError("No such run.")
+    if suite.name != run["suite"] or (run["suite_hash"] and suite.digest != run["suite_hash"]):
+        raise BenchError("The suite changed since this run started; start a new run instead.")
+    config_hash, _ = config_identity(home)
+    if not force and run["config_hash"] and config_hash and config_hash != run["config_hash"]:
+        raise BenchError(f"config.yaml changed since this run started ({run['config_hash']} -> {config_hash}); "
+                         "start a new run, or pass --force to resume anyway.")
+    return store.reopen(run_id, retry_errors=retry_errors)
 
 
 def start_background(store: BenchStore, run: dict, suite: Suite, target: Target, *, transport=None) -> threading.Thread:
@@ -1071,6 +1132,13 @@ def main(argv=None, environ=None, out=None) -> int:
     run_cmd.add_argument("--repeats", type=int, default=1)
     run_cmd.add_argument("--concurrency", type=int, default=1)
     run_cmd.add_argument("--no-responses", action="store_true", help="do not store reply excerpts")
+    resume_cmd = commands.add_parser("resume", help="finish a cancelled or failed run (tasks with a result are kept)")
+    resume_cmd.add_argument("run")
+    resume_cmd.add_argument("--api-url", help="override HERMES_BENCH_API_URL (key still from the environment)")
+    resume_cmd.add_argument("--retry-errors", default="connection_error",
+                            help="comma-separated result errors to run again (default connection_error; '' for none)")
+    resume_cmd.add_argument("--force", action="store_true", help="resume even if config.yaml changed")
+    resume_cmd.add_argument("--no-responses", action="store_true", help="do not store reply excerpts")
     list_cmd = commands.add_parser("list", help="recent runs")
     list_cmd.add_argument("--limit", type=int, default=20)
     show = commands.add_parser("show", help="one run with per-task results")
@@ -1106,18 +1174,34 @@ def main(argv=None, environ=None, out=None) -> int:
 
 def _command(args, store, home, data_dir, environ, write) -> int:
     pricing = reporting.load_pricing(data_dir / "pricing.yaml")
-    if args.command == "run":
+    if args.command in ("run", "resume"):
         suites, _ = load_suites(home)
-        suite = suites.get(args.suite)
-        if suite is None:
-            raise BenchError(f"Unknown suite. Available: {', '.join(sorted(suites)) or 'none'}.")
-        target = resolve_target(environ, args.api_url)
-        run = prepare_run(store, suite, target, label=args.label, repeats=args.repeats,
-                          concurrency=args.concurrency, home=home, telemetry_db=data_dir / "telemetry.sqlite3")
-        if run["gateway_config_hash"] and run["config_hash"] and run["gateway_config_hash"] != run["config_hash"]:
-            write("! config.yaml changed after the gateway started: restart the gateway so it uses these settings.")
-        write(f"Run {run['id']}: {suite.name} x{run['repeats']} -> {target.host} ({run['total']} requests, "
-              f"config {run['config_hash'] or 'unknown'})")
+        if args.command == "resume":
+            old = store.get_run(args.run)
+            if old is None:
+                raise BenchError("No such run.")
+            suite = suites.get(old["suite"])
+            if suite is None:
+                raise BenchError(f"The suite {old['suite']} of this run is no longer available.")
+            target = resolve_target(environ, args.api_url)
+            retry = tuple(e.strip() for e in args.retry_errors.split(",") if e.strip())
+            run = resume_run(store, old["id"], suite, retry_errors=retry, home=home, force=args.force)
+            if run["gateway_config_hash"] and gateway_config_hash(data_dir / "telemetry.sqlite3") not in (
+                    "", run["gateway_config_hash"]):
+                write("! the gateway now runs another config.yaml than when this run started.")
+            write(f"Run {run['id']}: {suite.name} x{run['repeats']} -> {target.host} (resumed: "
+                  f"{run['completed']}/{run['total']} kept, config {run['config_hash'] or 'unknown'})")
+        else:
+            suite = suites.get(args.suite)
+            if suite is None:
+                raise BenchError(f"Unknown suite. Available: {', '.join(sorted(suites)) or 'none'}.")
+            target = resolve_target(environ, args.api_url)
+            run = prepare_run(store, suite, target, label=args.label, repeats=args.repeats,
+                              concurrency=args.concurrency, home=home, telemetry_db=data_dir / "telemetry.sqlite3")
+            if run["gateway_config_hash"] and run["config_hash"] and run["gateway_config_hash"] != run["config_hash"]:
+                write("! config.yaml changed after the gateway started: restart the gateway so it uses these settings.")
+            write(f"Run {run['id']}: {suite.name} x{run['repeats']} -> {target.host} ({run['total']} requests, "
+                  f"config {run['config_hash'] or 'unknown'})")
         event = threading.Event()
         runner = BenchRunner(store, run["id"], suite, target, store_responses=not args.no_responses,
                              cancel_event=event, progress=lambda r: write(
@@ -1128,7 +1212,7 @@ def _command(args, store, home, data_dir, environ, write) -> int:
         except KeyboardInterrupt:
             event.set()
             store.finish(run["id"], "cancelled", "Interrupted from the terminal.")
-            write("Cancelled.")
+            write(f"Cancelled. Continue later with: python -m assistant_core.bench resume {run['id']}")
             return 130
         _, summary = _summary_for(store, run, data_dir, pricing)
         write(f"{run['status']}: {summary['passed']}/{summary['tasks']} passed "

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Gateway of the isolated benchmark profile (.runtime/hermes-home/profiles/bench).
+# Gateway of the isolated benchmark profile (.runtime/hermes-home/profiles/bench, or BENCH_PROFILE).
 # It runs beside the Telegram bot's gateway (default profile) and never touches it.
 #
 #   scripts/bench-gateway.sh start <policy> <label> [VAR=value ...]
@@ -13,7 +13,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PROFILE="$ROOT/.runtime/hermes-home/profiles/bench"
+PROFILE="${BENCH_PROFILE:-$ROOT/.runtime/hermes-home/profiles/bench}"
 PY="$ROOT/.runtime/venv/bin/python"
 LOG="$PROFILE/logs/bench-gateway.log"
 PORT="$(grep -E '^API_SERVER_PORT=' "$PROFILE/.env" | cut -d= -f2- || true)"

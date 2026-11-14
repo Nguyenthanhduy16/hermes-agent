@@ -423,6 +423,51 @@ class RunnerTests(unittest.TestCase):
         self.store.db.execute("UPDATE bench_runs SET heartbeat_at=? WHERE id=?", (time.time() - 3600, other["id"]))
         self.assertEqual(1, self.store.recover_stale())
 
+    def test_resume_keeps_results_and_sends_only_missing_tasks(self):
+        self.fake.hold = True
+        run = bench.prepare_run(self.store, self.suite, self.target, label="R1", home=self.home)
+        with self.assertRaises(bench.BenchError):
+            self.store.reopen(run["id"])  # queued: not resumable
+        thread = bench.start_background(self.store, run, self.suite, self.target)
+        deadline = time.time() + 5
+        while not self.fake.requests and time.time() < deadline:
+            time.sleep(0.02)
+        bench.cancel(self.store, run["id"])
+        self.fake.gate.set()
+        thread.join(10)
+        stopped = self.store.get_run(run["id"])
+        self.assertEqual(("cancelled", 1), (stopped["status"], stopped["completed"]))
+        started_at = stopped["started_at"]
+        self.fake.hold = False
+        reopened = bench.resume_run(self.store, run["id"], self.suite, home=self.home)
+        self.assertEqual(("queued", 1, None), (reopened["status"], reopened["completed"], reopened["finished_at"]))
+        final = bench.BenchRunner(self.store, run["id"], self.suite, self.target).run()
+        self.assertEqual(("done", 3, 2, 1), (final["status"], final["completed"], final["passed"], final["errors"]))
+        self.assertEqual(started_at, final["started_at"])
+        self.assertEqual(3, len(self.fake.requests))  # the first task was not sent again
+        self.assertEqual(["fail-task", "long-task", "ok-task"],
+                         sorted(r["task_id"] for r in self.store.results(run["id"])))
+        with self.assertRaises(bench.BenchError):
+            bench.resume_run(self.store, run["id"], self.suite, home=self.home)  # done: nothing to resume
+
+    def test_resume_retries_listed_errors_and_refuses_changed_inputs(self):
+        run = bench.prepare_run(self.store, self.suite, self.target, label="R2", home=self.home)
+        bench.BenchRunner(self.store, run["id"], self.suite, self.target).run()
+        self.store.finish(run["id"], "done")
+        self.store.db.execute("UPDATE bench_runs SET status='failed' WHERE id=?", (run["id"],))
+        other = bench.parse_suite(dict(SUITE, tasks=SUITE["tasks"][:2]))
+        with self.assertRaises(bench.BenchError):
+            bench.resume_run(self.store, run["id"], other, home=self.home)  # suite changed
+        (self.home / "config.yaml").write_text("model:\n  default: m-two\n")
+        with self.assertRaises(bench.BenchError):
+            bench.resume_run(self.store, run["id"], self.suite, home=self.home)  # config changed
+        reopened = bench.resume_run(self.store, run["id"], self.suite, home=self.home, force=True,
+                                    retry_errors=("http_500",))
+        self.assertEqual((2, 0), (reopened["completed"], reopened["errors"]))  # the 500 was dropped
+        before = len(self.fake.requests)
+        final = bench.BenchRunner(self.store, run["id"], self.suite, self.target).run()
+        self.assertEqual((1, "done", 3), (len(self.fake.requests) - before, final["status"], final["completed"]))
+
     def test_bounds(self):
         for kwargs in (dict(repeats=0), dict(repeats=6), dict(concurrency=5), dict(repeats=1.5), dict(label="x" * 61),
                        dict(label="bad\nlabel")):

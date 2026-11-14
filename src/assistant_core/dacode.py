@@ -10,6 +10,8 @@ original evaluator compares ``<output>/<id>/`` with ``gold/<id>/``. Here:
    original re-runs the agent's plotting script with an instrumented matplotlib.
 2. ``reset``  gives every task of a suite a fresh copy of its source files. Run it before each
    benchmark run; a run uses ``--repeats 1`` because repeats of a task would share its folder.
+   Before ``bench resume``, ``reset --run RUN`` resets only the tasks still without a result, so the
+   folders of finished tasks survive until ``score``. No other run may use the folders in between.
 3. ``score``  collects each task's new and changed files and the agent's final answer (from
    Hermes' session store, so long replies are not cut), writes ``dabench/result.json`` the way
    DA-Agent does, runs the original evaluator in an offline container of the sandbox image and
@@ -155,6 +157,18 @@ def _remove(folder: Path, image: str):
     except PermissionError:
         subprocess.run(["docker", "run", "--rm", "--network", "none", "-v", f"{folder.parent}:/w", image,
                         "rm", "-rf", f"/w/{folder.name}"], check=True, capture_output=True, timeout=300)
+
+
+def pending_ids(data_dir: Path, run_id: str, ids: list) -> list:
+    """Task ids (without ``dc-``) of ``ids`` that have no result yet in ``run_id``."""
+    store = BenchStore(Path(data_dir) / "bench.sqlite3")
+    try:
+        if store.get_run(run_id) is None:
+            raise DacodeError(f"No run {run_id}.")
+        done = {r["task_id"].removeprefix("dc-") for r in store.results(run_id)}
+    finally:
+        store.close()
+    return [task_id for task_id in ids if task_id not in done]
 
 
 def reset(data: Path, work: Path, ids: list, image: str) -> None:
@@ -316,6 +330,8 @@ def main(argv=None) -> int:
     b.add_argument("--force", action="store_true")
     r = sub.add_parser("reset", help="fresh working folders for every task of a suite")
     r.add_argument("--suite", required=True)
+    r.add_argument("--run", help="resume: reset only the tasks without a result in this run (their folders may hold "
+                                 "a half-done attempt); folders of finished tasks are kept for scoring")
     s = sub.add_parser("score", help="score a finished run with the DA-Code evaluator")
     s.add_argument("run_id")
     s.add_argument("--eval-timeout", type=int, default=120)
@@ -333,6 +349,8 @@ def main(argv=None) -> int:
             print(f"Mount {work} read-write at the container dir (terminal.docker_volumes), then restart the gateway.")
         elif args.command == "reset":
             ids = _suite_ids(home, args.suite)
+            if args.run:
+                ids = pending_ids(data_dir, args.run, ids)
             reset(data, work, ids, args.image)
             print(f"{len(ids)} working folders reset under {work}")
         else:
