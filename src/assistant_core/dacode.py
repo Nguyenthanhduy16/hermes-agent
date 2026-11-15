@@ -341,6 +341,9 @@ def run_evaluator(data: Path, out: Path, image: str, timeout_s: int) -> dict:
     return {item["id"]: item for item in json.loads(marker[len("@@RESULTS@@"):])}
 
 
+SCRATCH_SUFFIXES = (".pkl", ".pickle", ".joblib")
+
+
 def _scored(result: dict) -> bool:
     return any(c.get("type") == "external" and "score" in c for c in result.get("checks") or [])
 
@@ -380,6 +383,10 @@ def score(run_id: str, *, home: Path, data_dir: Path, data: Path, work: Path, im
             _remove(target, image)
             (target / "dabench").mkdir(parents=True)
             added, changed = changed_files(source / task_id, folder) if folder.is_dir() else ([], [])
+            # pickles are the agent's scratch (cached features, folds, models, often hundreds of MB);
+            # no DA-Code task is scored on one, so they are not copied for the evaluator
+            added, changed = ([rel for rel in files if Path(rel).suffix.lower() not in SCRATCH_SUFFIXES]
+                              for files in (added, changed))
             for rel in added + changed:
                 (target / rel).parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(folder / rel, target / rel)
