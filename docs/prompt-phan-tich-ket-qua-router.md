@@ -1,21 +1,27 @@
 # Prompt: phân tích kết quả bước 3 (dev-env1) để tìm thuật toán router
 
-Cách dùng: chạy bằng chính Hermes với profile `research`, model `gpt-6.1-sol` đi qua gateway xingchi. Profile này đã cấu hình sẵn:
-- tắt router assistant-core;
-- tối đa 500 bước, giới hạn 6 giờ;
-- code chạy trong Docker `hermes-bench-sandbox:2`, đã tắt mạng, có pandas, scikit-learn và statsmodels;
-- có `web_search` và `web_extract` để tra paper. Hai tool này chạy từ tiến trình Hermes trên máy thật, nên sandbox vẫn tắt mạng;
-- thư mục nghiên cứu được mount vào `/workspace`.
+Cách dùng: chuẩn bị thư mục nghiên cứu, rồi chạy bằng Codex (cách chính) hoặc Hermes.
 
 ```bash
-R=.runtime/research/router-$(date +%Y%m%d)        # phải khớp docker_volumes trong profiles/research/config.yaml
+R=.runtime/research/router-$(date +%Y%m%d)
 mkdir -p $R && cp .runtime/exports/dev-env1/*.csv docs/thuat-toan-router-chuyen-mot-lan.md \
   docs/phan-bien-chot-router.md docs/ban-chat-va-thiet-ke-lai-router.md $R/
 sed -n '/^---$/,$p' docs/prompt-phan-tich-ket-qua-router.md | tail -n +2 > $R/PROMPT.md
+```
+
+**Codex** (đăng nhập ChatGPT, `gpt-6.1-sol`, có web search sẵn). Sandbox bwrap của Codex không chạy được trên máy này, nên Codex chạy thẳng trên máy thật. Các giới hạn an toàn nằm trong mục 5 của prompt.
+
+```bash
+cd $R && codex --search -s danger-full-access -a never "Đọc file PROMPT.md trong thư mục này và làm đúng theo nó, tự chủ đến khi xong."
+```
+
+**Hermes** (gateway xingchi). Profile `research` chạy code trong Docker `hermes-bench-sandbox:2` không có mạng, và tra paper bằng `web_search` / `web_extract`. Đường dẫn `docker_volumes` trong `profiles/research/config.yaml` phải khớp với `$R`.
+
+```bash
 cd $R && HERMES_HOME=$OLDPWD/.runtime/hermes-home/profiles/research hermes chat --yolo --query-file PROMPT.md
 ```
 
-Nếu dùng ngày khác, sửa đường dẫn trong `docker_volumes`. Khi agent đã xong, có thể hỏi tiếp trong cùng phiên chat.
+Khi agent đã xong, có thể hỏi tiếp trong cùng phiên.
 
 Tạo lại hai file CSV:
 
@@ -29,7 +35,7 @@ Số liệu trong mục 3 tính trên đủ 6 run, xuất ngày 16/11/2026.
 
 ---
 
-Bạn là nhà nghiên cứu về tác tử LLM, ra quyết định tuần tự và suy luận nhân quả. Bạn làm việc **tự chủ** trong một sandbox có Python và dữ liệu thực nghiệm thật (mô tả ở mục 2). Không ai trả lời câu hỏi giữa chừng: khi gặp chỗ mơ hồ, chọn giả định hợp lý nhất, ghi lại, rồi làm tiếp.
+Bạn là nhà nghiên cứu về tác tử LLM, ra quyết định tuần tự và suy luận nhân quả. Bạn làm việc **tự chủ** trong một thư mục làm việc có Python và dữ liệu thực nghiệm thật (mô tả ở mục 2), và có thể tra cứu web. Không ai trả lời câu hỏi giữa chừng: khi gặp chỗ mơ hồ, chọn giả định hợp lý nhất, ghi lại, rồi làm tiếp.
 
 ## 0. Mục tiêu
 
@@ -159,7 +165,7 @@ Sau khi chạy, ghi kết quả, kết luận và quyết định tiếp theo. M
 
 ### Giai đoạn L: tổng quan tài liệu (làm song song với A, và quay lại bất cứ lúc nào cần)
 
-Dùng `web_search` để tìm và `web_extract` để đọc (ưu tiên arXiv, OpenReview, ACL Anthology, trang của các hội nghị NeurIPS, ICML và ICLR). Các mảng cần tìm:
+Dùng tool web của bạn để tìm và đọc (trong Hermes là `web_search` và `web_extract`; trong Codex là web search). Ưu tiên arXiv, OpenReview, ACL Anthology, trang của các hội nghị NeurIPS, ICML và ICLR). Các mảng cần tìm:
 - LLM routing và cascade: RouteLLM, FrugalGPT, AutoMix, Hybrid LLM, router theo chất lượng hoặc chi phí, và các benchmark router;
 - định tuyến hoặc chọn model **theo bước** trong tác tử nhiều bước, model lớn lập kế hoạch còn model nhỏ thực thi, và cách hai model chuyển giao cho nhau;
 - dự đoán sớm thất bại của tác tử, hoặc tự đánh giá độ tự tin, từ quỹ đạo;
@@ -175,7 +181,7 @@ Ghi vào `literature.md`, mỗi công trình một mục, gồm:
 - **điều áp dụng được, hoặc không áp dụng được, cho bài toán này, và vì sao**;
 - bạn đã đọc phần nào (abstract, phương pháp hay kết quả).
 
-**Chỉ trích dẫn công trình bạn đã mở được bằng `web_extract`.** Không trích dẫn theo trí nhớ. Một con số lấy từ paper phải ghi rõ lấy ở đâu. Mỗi phần nội dung đọc được, hãy ghi ghi chú vào file ngay để không mất khi ngữ cảnh bị nén. Trong báo cáo, ghi rõ ý tưởng nào lấy từ tài liệu (kèm trích dẫn) và ý tưởng nào là mới. Kiểm tra xem ý tưởng "mới" của bạn đã có ai làm chưa.
+**Chỉ trích dẫn công trình bạn đã thật sự mở và đọc được bằng tool web.** Không trích dẫn theo trí nhớ. Một con số lấy từ paper phải ghi rõ lấy ở đâu. Mỗi phần nội dung đọc được, hãy ghi ghi chú vào file ngay để không mất khi ngữ cảnh bị nén. Trong báo cáo, ghi rõ ý tưởng nào lấy từ tài liệu (kèm trích dẫn) và ý tưởng nào là mới. Kiểm tra xem ý tưởng "mới" của bạn đã có ai làm chưa.
 
 Đừng để tổng quan chiếm hết thời gian: đọc khoảng 12–25 công trình là đủ. Sau đó quay lại tìm thêm khi một thực nghiệm cần.
 
@@ -202,7 +208,7 @@ Lặp lại các bước sau:
 
 Ý tưởng sống sót được đào sâu hơn: học từ dữ liệu, ước lượng offline đúng cách, phân tích độ nhạy.
 
-Các loại thực nghiệm hợp lệ trong sandbox:
+Các loại thực nghiệm hợp lệ:
 - phân tích lại dữ liệu;
 - học mô hình với cross-validation theo task;
 - đánh giá policy offline bằng IPW, doubly robust, hoặc giữ các quỹ đạo random khớp với policy;
@@ -231,12 +237,15 @@ Sau đó đề xuất ít run thật nhất có thể để xác nhận:
 - Không fine-tune LLM. Router chỉ đọc metadata (nếu đề xuất đọc nội dung, tách riêng thành phương án mở rộng và nêu chi phí). Không dùng tập test để chọn bất cứ thứ gì.
 - Đề tài là đồ án tốt nghiệp, nên phương án phải triển khai và kiểm chứng được trong vài tuần.
 - Chỉ dùng số liệu bạn tính được từ CSV. Không bịa con số. Khi một kết luận dựa trên dưới khoảng 20 task, ghi rõ là "gợi ý, chưa đủ bằng chứng".
-- **Sandbox:**
-  - Chỉ làm offline trên hai file CSV.
-  - Không gọi API model và không chạy benchmark thật. Run thật chỉ được đề xuất ở giai đoạn D.
-  - Sandbox chạy code không có mạng và không cài thêm được gì. Đã có sẵn pandas, numpy, scipy, scikit-learn và statsmodels. Internet chỉ dùng qua `web_search` / `web_extract`, để đọc tài liệu.
-  - Không đưa dữ liệu từ CSV lên web, và không đưa nó vào truy vấn tìm kiếm.
-  - Thư mục làm việc là `/workspace`, chứa hai file CSV và các tài liệu đính kèm. Mọi file bạn tạo nằm trong đó. Không sửa hai file CSV gốc.
+- **Môi trường và an toàn:**
+  - Thư mục làm việc là thư mục hiện tại khi bạn khởi động (trong Hermes là `/workspace`). Nó chứa hai file CSV, các tài liệu đính kèm và `PROMPT.md`.
+  - Mọi file bạn tạo nằm trong thư mục này. Không sửa hai file CSV gốc.
+  - Không ghi, sửa hay xoá bất cứ thứ gì ngoài thư mục này. Không dùng `sudo`, `git` hay `docker`. Không đụng tới các tiến trình khác trên máy.
+  - Chỉ làm offline trên hai file CSV. Không gọi API model nào và không chạy benchmark thật. Run thật chỉ được đề xuất ở giai đoạn D.
+  - **Python:**
+    - Trong Hermes, sandbox đã có sẵn pandas, numpy, scipy, scikit-learn và statsmodels, và không có mạng.
+    - Trong Codex, tạo `.venv` trong thư mục này (`python3 -m venv .venv`), rồi cài năm thư viện đó cùng matplotlib nếu cần. Chạy code bằng `.venv/bin/python`.
+  - Internet chỉ dùng để đọc tài liệu và cài các thư viện trên. Không đưa dữ liệu từ CSV lên web và không đưa nó vào truy vấn tìm kiếm. Không tải hay chạy code lạ từ web.
   - Mỗi lệnh chạy tối đa 15 phút. Một tính toán dài hơn thì chia nhỏ ra hoặc ghi kết quả trung gian ra file.
 - **Chống tự lừa:**
   - Mọi lựa chọn mô hình hay tham số đều làm bằng cross-validation theo task, hoặc trên một nửa task được giữ riêng. Báo cáo kết quả trên phần không dùng để chọn.
