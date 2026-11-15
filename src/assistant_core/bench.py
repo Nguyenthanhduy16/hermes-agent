@@ -107,7 +107,10 @@ STALE_AFTER_S = 900
 HEARTBEAT_S = 20
 # Hermes answers HTTP 200 with a notice when every retry to the model provider failed (network down,
 # provider outage). That is an infrastructure failure, not the agent's answer: record it as an error.
-PROVIDER_DOWN = re.compile(r"didn't respond in time on any of \d+ attempts|Hermes can't reach the model provider")
+# Variants seen: "didn't respond in time on any of 3 attempts", "reported it was overloaded on all 3
+# attempts" (HTTP 503), "returned a server error on all 3 attempts" (HTTP 502), "can't reach".
+PROVIDER_DOWN = re.compile(r"on (?:any of|all) \d+ attempts\W+it looks temporarily unavailable"
+                           r"|Hermes can't reach the model provider")
 # Result errors that say nothing about the agent and are run again on resume by default.
 RETRYABLE_ERRORS = ("connection_error", "provider_unavailable", "suspended")
 # A failed request during which the wall clock ran this much ahead of the monotonic clock spanned a

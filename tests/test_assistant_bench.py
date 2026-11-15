@@ -551,5 +551,15 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(2, bench.main(["run", "--suite", "nope"], env, io.StringIO()))
 
 
+class ProviderDownNoticeTests(unittest.TestCase):
+    def test_every_hermes_retry_exhausted_notice_is_matched(self):
+        tail = " — it looks temporarily unavailable. Wait a minute and send /retry, or switch models with /model."
+        for head in ("DeepSeek didn't respond in time on any of 3 attempts", "custom reported it was overloaded on all 3 attempts",
+                     "custom returned a server error on all 3 attempts"):
+            self.assertTrue(bench.PROVIDER_DOWN.search(head + tail), head)
+        self.assertTrue(bench.PROVIDER_DOWN.search("Provider said: Hermes can't reach the model provider."))
+        self.assertIsNone(bench.PROVIDER_DOWN.search("The API was overloaded on all 3 attempts in the log, so I retried."))
+
+
 if __name__ == "__main__":
     unittest.main()
