@@ -576,6 +576,7 @@ class BenchStore:
         row = {key: result.get(key) for key in RESULT_FIELDS if key != "checks_json"}
         row["checks_json"] = json.dumps(result.get("checks") or [], ensure_ascii=False)
         row["passed"] = int(bool(result.get("passed")))
+        row["finished_at"] = row.get("finished_at") or time.time()
         with self._lock:
             self.db.execute("BEGIN IMMEDIATE")
             try:

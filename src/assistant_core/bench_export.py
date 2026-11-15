@@ -10,7 +10,11 @@ writes two files (docs/thiet-ke-thuc-nghiem.md, section 8, tool 1):
                 and the outcome of the task it belongs to (the training label)
 
 Steps are joined to tasks through the Hermes session id; a retried step (several
-rows with one ``api_request_id``) is one step. Tool calls belong to the step whose
+rows with one ``api_request_id``) is one step. The session id is the same for every
+attempt of a task in a run, so a task sent again (resume after a provider outage or a
+machine sleep) also has the calls of the attempt that did not count. Each attempt is one
+Hermes turn (one prompt), so only the calls of the session's last turn are the task's
+steps; the others are counted in ``earlier_steps`` / ``earlier_cost_usd`` of the task row. Tool calls belong to the step whose
 model call requested them. Nothing here reads message text.
 
 Cost uses pricing.yaml (off-peak list prices). DeepSeek bills twice that in its peak
@@ -32,7 +36,7 @@ TASK_COLUMNS = [
     "run_id", "label", "suite", "suite_hash", "config_hash", "policy", "task_id", "attempt", "level", "category",
     "passed", "score", "error", "latency_s", "session_id", "steps", "strong_steps", "cheap_steps", "switches",
     "input_tokens", "output_tokens", "cache_read_tokens", "strong_output_tokens", "cost_usd", "cost_usd_billed",
-    "tool_calls", "tool_errors", "tool_timeouts", "first_ts", "last_ts"]
+    "tool_calls", "tool_errors", "tool_timeouts", "first_ts", "last_ts", "earlier_steps", "earlier_cost_usd"]
 STEP_COLUMNS = [
     "run_id", "label", "task_id", "attempt", "session_id", "step_index", "api_request_id", "api_call_count",
     "ts", "provider", "model", "policy", "choice", "reason", "score", "switched", "retries",
@@ -87,6 +91,7 @@ def _steps(db, session_id, pricing):
                 features = {}
             by_step[key] = step = dict(
                 api_request_id=call["api_request_id"], api_call_count=call["api_call_count"], ts=call["ts"],
+                turn_id=call["turn_id"],
                 provider=call["provider"], model=model, policy=call["route_policy"], choice=call["route_choice"],
                 reason=call["route_reason"], score=call["route_score"], switched=call["route_switched"], retries=0,
                 input_tokens=0, output_tokens=0, cache_read_tokens=0, reasoning_tokens=0, duration_s=0.0,
@@ -148,10 +153,14 @@ def export(store, data_dir: Path, run_ids, out_dir: Path, pricing=None, prompts=
                     session_id = expected_session_id(
                         f"Benchmark run {run['id']}, task {result['task_id']}, attempt {result['attempt']}.", prompt)
                 steps = _steps(db, session_id, pricing) if db is not None and session_id else []
+                last_turn = steps[-1]["turn_id"] if steps else None
+                earlier = [s for s in steps if last_turn and s["turn_id"] != last_turn]
+                steps = [s for s in steps if not (last_turn and s["turn_id"] != last_turn)]
                 if not steps:
                     unjoined.append(f"{run['id']}:{result['task_id']}#{result['attempt']}")
                 score = _score(result)
                 for index, step in enumerate(steps, 1):
+                    step.pop("turn_id")
                     features = step.pop("features")
                     for name in features:
                         if name not in feature_names:
@@ -180,7 +189,9 @@ def export(store, data_dir: Path, run_ids, out_dir: Path, pricing=None, prompts=
                     cost_usd_billed=None if not steps or None in billed else round(sum(billed), 6),
                     tool_calls=sum(s["tool_calls"] for s in steps), tool_errors=sum(s["tool_errors"] for s in steps),
                     tool_timeouts=sum(s["tool_timeouts"] for s in steps),
-                    first_ts=steps[0]["ts"] if steps else None, last_ts=steps[-1]["ts"] if steps else None))
+                    first_ts=steps[0]["ts"] if steps else None, last_ts=steps[-1]["ts"] if steps else None,
+                    earlier_steps=len(earlier),
+                    earlier_cost_usd=round(sum(s["cost_usd"] or 0.0 for s in earlier), 6)))
     finally:
         if db is not None:
             db.close()

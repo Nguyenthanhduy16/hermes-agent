@@ -108,5 +108,34 @@ class ExportTests(unittest.TestCase):
         self.assertEqual(1.0, bench_export.peak_factor(None, None))
 
 
+class EarlierAttemptTests(unittest.TestCase):
+    def test_calls_of_an_attempt_that_did_not_count_are_left_out(self):
+        import time
+        directory = Path(tempfile.mkdtemp())
+        store = bench.BenchStore(directory / "bench.sqlite3")
+        self.addCleanup(store.close)
+        suite = bench.parse_suite({"name": "mini", "tasks": [
+            {"id": "a", "prompt": PROMPT, "level": "L1", "checks": [{"type": "external", "value": "dacode"}]}]})
+        run_id = store.create_run(suite, label="R75", repeats=1, concurrency=1)["id"]
+        telemetry = TelemetryStore(directory / "telemetry.sqlite3", run_id="gw")
+        now = time.time()
+        # same session: two calls of a first attempt two hours ago (provider outage), then the attempt that counts
+        for n, (when, out) in enumerate([(now - 7200, 50), (now - 7190, 0), (now - 50, 100), (now - 40, 100)], 1):
+            telemetry.db.execute("INSERT INTO api_calls (run_id, ts, session_id, api_request_id, api_call_count, "
+                                 "provider, model, input_tokens, output_tokens, cache_read_tokens, route_choice, "
+                                 "turn_id) VALUES ('gw', ?, 'api-a', ?, ?, 'openai-codex', 'big-1', 1000, ?, 0, "
+                                 "'strong', ?)", (when, f"api-a:api:{n}", n, out, "t1" if n <= 2 else "t2"))
+        telemetry.db.close()
+        store.add_result(run_id, dict(task_id="a", attempt=1, level="L1", passed=True, latency_s=60.0, finished_at=now,
+                                      checks=[{"type": "external", "score": 1.0, "passed": True}], session_id="api-a"))
+        out = directory / "out"
+        done = bench_export.export(store, directory, [run_id], out, PRICING)
+        with open(out / "tasks.csv", encoding="utf-8") as handle:
+            task = next(csv.DictReader(handle))
+        self.assertEqual(2, done["steps"])
+        self.assertEqual(("2", "2"), (task["steps"], task["earlier_steps"]))
+        self.assertAlmostEqual(2 * (1000 * 2.0) / 1e6 + 50 * 10.0 / 1e6, float(task["earlier_cost_usd"]), places=6)
+
+
 if __name__ == "__main__":
     unittest.main()
